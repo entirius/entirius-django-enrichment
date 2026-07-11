@@ -1,0 +1,61 @@
+[project]
+name = "entirius-django-enrichment"
+version = "2.0.0"
+description = "Enrichment Django module for Volkanos (content-quality bus: descriptions, attributes, SEO, media)"
+authors = [{ name = "Entirius" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MPL-2.0"
+dependencies = [
+    "celery>=5.0",
+    "django>=5.0",
+    "djangorestframework>=3.14",
+    "djangorestframework-simplejwt>=5.3",
+    "pydantic>=2.0",
+    "drf-spectacular>=0.27",
+    "entirius-django-utils>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev  = ["ruff", "pre-commit"]
+test = ["pytest", "pytest-django", "factory-boy"]
+# Pillow only for the seed_demo_proposals command (lazy import — placeholder PNGs)
+demo = ["Pillow"]
+
+[project.urls]
+Repository = "https://github.com/entirius/entirius-django-enrichment"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/django_enrichment"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "DJ", "S"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**" = ["S101", "S105"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["django_enrichment"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--no-migrations"
+
+[tool.deptry]
+pep621_dev_dependency_groups = ["dev", "test"]

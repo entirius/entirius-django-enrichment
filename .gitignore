@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtualenv / uv
+.venv/
+.python-version
+
+# Django (test project artifacts)
+db.sqlite3
+db.sqlite3-journal
+*.log
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Secret scanning (forbidden-names blocklist - local symlink, never committed)
+.gitleaks.toml

@@ -1,0 +1,10 @@
+# ERD configuration for django-enrichment — consumed by `make erd APP=django_enrichment`.
+# Output: D2 source committed to docs/erd/, rendered PNGs deployed alongside entirius-docs.
+app_label: django_enrichment
+groups:
+  - name: bus
+    title: "Enrichment Bus"
+    models:
+      - EnrichmentTask
+      - ContentProposal
+      - SpawnRule
