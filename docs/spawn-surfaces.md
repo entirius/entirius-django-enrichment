@@ -1,4 +1,7 @@
-# Spawn surfaces
+---
+title: Spawn Surfaces
+description: Five ways an EnrichmentTask is born — API, CSV, spawn rules, CMS, and shell.
+---
 
 Every enrichment task is an `EnrichmentTask` born from `POST /tasks/` (or its CSV sibling). The bus
 does not care where a task came from — five surfaces feed the same backend, the same
