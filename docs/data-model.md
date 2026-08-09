@@ -1,4 +1,7 @@
-# Data Model — django-enrichment
+---
+title: Data Model
+description: EnrichmentTask and proposal rows — the work order and its per-field results.
+---
 
 Two models carry the whole bus: a thin work order and its row-per-field results. Both inherit
 `BaseModel` (`created_at` / `modified_at` from `django-utils`). The models hold **no business
