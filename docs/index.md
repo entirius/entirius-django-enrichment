@@ -68,4 +68,4 @@ The operator works from the **Enricher** panel (CMS Blueprint). It has two surfa
 The pattern grows by adding adapters, not by rewriting the bus.
 
 - [Adapter Guide](/volkanos/modules/enrichment/adapter-guide/) — the recipe: the contract, registration, and PIM as the reference implementation. Read it, write an adapter for your module, register it.
-- [Gaps Per Module](/architecture/gaps-per-module/) — the cross-module pattern behind it: quality flags, gap definitions, and how candidates map onto proposals.
+- Quality flags and gap definitions feed the bus — every candidate maps onto a proposal (see the PIM [Quality Gaps](/volkanos/modules/pim/quality/) docs).

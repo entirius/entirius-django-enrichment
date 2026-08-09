@@ -224,4 +224,4 @@ That is the whole surface. The bus, `GapDefinition`, `resolve`, and `apply_servi
 the pattern grows by adding adapters, not by rewriting the consumer. ContentDB is the intended second
 adapter and follows this same recipe. For the cross-module pattern behind it — quality flags,
 `GapDefinition`, and how candidates map onto proposals — see
-[Gaps Per Module](/architecture/gaps-per-module/).
+the PIM [Quality Gaps](/volkanos/modules/pim/quality/) docs.
