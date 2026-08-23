@@ -78,6 +78,19 @@ class EnrichmentAdapter(Protocol):
         """Restore the target to `proposal.current_snapshot` (WRITE, undo — etap-09)."""
         ...
 
+    def on_reject(self, proposal: Any) -> None:
+        """React to an operator rejecting a proposal (WRITE, OPTIONAL).
+
+        Optional: `proposal_service` calls it via `getattr`, so an adapter that has nothing to
+        remember (PIM — a rejected text suggestion leaves no trace) need not implement it. The
+        atlas duplicate adapter does: "these two are NOT the same product" is a durable fact its
+        next `find_gaps` must honour, while the bus's own reject cooldown expires.
+
+        Best-effort and idempotent: the rejection is already committed when it runs, so a failure
+        is logged and swallowed — it must never turn a completed review action into a 500.
+        """
+        ...
+
     def release_undo_anchor(self, proposal: Any) -> int:
         """GC the module's external undo anchor for a proposal being pruned (WRITE, OPTIONAL — etap-10).
 
