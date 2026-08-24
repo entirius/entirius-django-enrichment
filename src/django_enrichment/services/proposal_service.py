@@ -270,7 +270,32 @@ def reject(proposal: ContentProposal, reason: str, *, user: AbstractBaseUser | N
     # Reject deletes the staged binary → the target module has zero trace (etap-08, decision #8).
     if proposal.staged_file:
         staging_store.delete(proposal.staged_file)
-    return transition_status(proposal, ProposalStatus.REJECTED.value, user=user, reason=reason)
+    rejected = transition_status(proposal, ProposalStatus.REJECTED.value, user=user, reason=reason)
+    _fire_reject_hook(rejected)
+    return rejected
+
+
+def _reject_hook(target_module: str) -> Any:
+    """The module's optional `on_reject` adapter callable, or None (most adapters have none)."""
+    try:
+        return getattr(get_adapter(target_module), "on_reject", None)
+    except ValueError:
+        return None  # no adapter registered for that module — nothing to notify
+
+
+def _fire_reject_hook(proposal: ContentProposal) -> None:
+    """Tell the source module its proposal was rejected — best-effort, never fails the review.
+
+    Some modules keep a durable "no" of their own (atlas: the pair must never be proposed again);
+    the rejection is already committed when this runs, so a broken hook is logged, not raised.
+    """
+    hook = _reject_hook(proposal.target_module)
+    if hook is None:
+        return
+    try:
+        hook(proposal)
+    except Exception:  # noqa: BLE001 — an opaque adapter hook must not undo a committed rejection
+        _logger.exception("on_reject hook failed for proposal %s", proposal.pk)
 
 
 def apply_many(proposal_ids: list[int], *, user_id: int | None = None) -> dict[str, Any]:
@@ -386,13 +411,17 @@ def bulk_undo(filters: dict[str, Any], *, user: AbstractBaseUser | None = None) 
 
 
 def bulk_reject(filters: dict[str, Any], reason: str, *, user: AbstractBaseUser | None = None) -> dict[str, Any]:
-    """Synchronous bulk reject — no adapter write, so a single `.update()` is enough (perf)."""
+    """Synchronous bulk reject — no adapter write, so a single `.update()` is enough (perf).
+
+    The optional `on_reject` hook is fanned out afterwards, and only for modules that implement it
+    (`_fire_reject_hooks`), so the single-UPDATE path is preserved for everyone else."""
     qs = list_for_review(**filters).filter(status=ProposalStatus.PENDING.value)
-    # One scan for both ids and staged refs (staged refs cleaned after the update so media rejects
-    # leave no orphaned binaries; text-only rows simply have an empty staged_file).
-    rows = list(qs.values_list("id", "staged_file"))
-    ids = [pk for pk, _ in rows]
-    staged_refs = [ref for _, ref in rows if ref]
+    # One scan for ids, staged refs and modules (staged refs cleaned after the update so media
+    # rejects leave no orphaned binaries; text-only rows simply have an empty staged_file).
+    rows = list(qs.values_list("id", "staged_file", "target_module"))
+    ids = [pk for pk, _, _ in rows]
+    staged_refs = [ref for _, ref, _ in rows if ref]
+    modules = {module for _, _, module in rows}
     if ids:
         ContentProposal.objects.filter(pk__in=ids).update(
             status=ProposalStatus.REJECTED.value,
@@ -403,7 +432,20 @@ def bulk_reject(filters: dict[str, Any], reason: str, *, user: AbstractBaseUser 
         )
     for ref in staged_refs:
         staging_store.delete(ref)
+    _fire_reject_hooks(ids, modules)
     return {"rejected": len(ids)}
+
+
+def _fire_reject_hooks(proposal_ids: list[int], modules: set[str]) -> None:
+    """Fan the reject hook out over a bulk rejection — skipped whole when no module wants it.
+
+    The pre-check keeps `bulk_reject` a single UPDATE for every module without an `on_reject`
+    (PIM today): only a module that opted in pays for re-reading the rows.
+    """
+    if not any(_reject_hook(module) for module in modules):
+        return
+    for proposal in ContentProposal.objects.filter(pk__in=proposal_ids).iterator():
+        _fire_reject_hook(proposal)
 
 
 def _resolve_user(user_id: int | None) -> AbstractBaseUser | None:

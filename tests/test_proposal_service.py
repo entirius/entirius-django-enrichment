@@ -11,6 +11,10 @@ from django_enrichment.models import ContentProposal
 from django_enrichment.services import proposal_service
 
 
+def _boom(proposal) -> None:
+    raise RuntimeError("adapter exploded")
+
+
 def _intake(fake_adapter, *, subject_ref="SKU-1", proposed=None, **extra) -> ContentProposal:
     return proposal_service.intake(
         target_module="pim",
@@ -134,6 +138,26 @@ def test_reject_sets_reason_and_audit(fake_adapter, admin_user):
 
 
 @pytest.mark.django_db
+def test_reject_notifies_the_source_module(fake_adapter, admin_user):
+    proposal = _intake(fake_adapter)
+
+    proposal_service.reject(proposal, "not the same product", user=admin_user)
+
+    assert fake_adapter.rejected() == [proposal.pk]
+
+
+@pytest.mark.django_db
+def test_reject_survives_a_broken_adapter_hook(fake_adapter, admin_user, monkeypatch):
+    """The rejection is already committed — a failing hook must not turn it into a 500."""
+    proposal = _intake(fake_adapter)
+    monkeypatch.setattr(fake_adapter, "on_reject", _boom)
+
+    result = proposal_service.reject(proposal, "low quality", user=admin_user)
+
+    assert result.status == ProposalStatus.REJECTED.value
+
+
+@pytest.mark.django_db
 def test_apply_many_buckets_applied_drifted_failed(fake_adapter, admin_user):
     p_ok = _intake(fake_adapter, subject_ref="SKU-OK")
     p_drift = _intake(fake_adapter, subject_ref="SKU-DRIFT")
@@ -196,6 +220,18 @@ def test_bulk_reject_is_synchronous_update(fake_adapter, admin_user):
 
     assert result == {"rejected": 2}
     assert ContentProposal.objects.filter(status=ProposalStatus.REJECTED.value).count() == 2
+    assert len(fake_adapter.rejected()) == 2  # every rejected row reaches the source module
+
+
+@pytest.mark.django_db
+def test_bulk_reject_skips_the_hook_for_an_adapter_without_one(fake_adapter, admin_user, monkeypatch):
+    """Most adapters (PIM) have no `on_reject` — the single-UPDATE path must stay untouched."""
+    _intake(fake_adapter, subject_ref="SKU-A")
+    monkeypatch.delattr(fake_adapter, "on_reject")
+
+    result = proposal_service.bulk_reject({"module": "pim"}, "batch reject", user=admin_user)
+
+    assert result == {"rejected": 1}
 
 
 @pytest.mark.django_db

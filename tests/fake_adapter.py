@@ -22,6 +22,10 @@ _STORE: dict[tuple[str, str, str], dict] = {}
 # the bus invokes the GC hook for the right (picture) proposals.
 _RELEASED: list[int] = []
 
+# Records every proposal pk passed to the optional `on_reject` hook, so the reject tests can assert
+# the bus notifies the source module (atlas keeps a durable "not the same product" this way).
+_REJECTED: list[int] = []
+
 
 def _key(subject_ref: str, target_kind: str, target_locator: dict) -> tuple[str, str, str]:
     return subject_ref, target_kind, compute_locator_hash(target_locator)
@@ -52,6 +56,11 @@ def revert(proposal: Any) -> None:
     _STORE[_key(proposal.subject_ref, proposal.target_kind, proposal.target_locator)] = dict(proposal.current_snapshot)
 
 
+def on_reject(proposal: Any) -> None:
+    """Optional reject hook — the fake only records that the bus called it."""
+    _REJECTED.append(proposal.pk)
+
+
 def release_undo_anchor(proposal: Any) -> int:
     """Etap-10 GC hook — the fake has no external blob store, so it just records the call and
     reports zero reclaimed. Lets cleanup tests assert which proposals the bus offered for GC."""
@@ -71,6 +80,12 @@ def released() -> list[int]:
     return list(_RELEASED)
 
 
+def rejected() -> list[int]:
+    """Proposal pks passed to `on_reject` since the last reset."""
+    return list(_REJECTED)
+
+
 def reset() -> None:
     _STORE.clear()
     _RELEASED.clear()
+    _REJECTED.clear()
