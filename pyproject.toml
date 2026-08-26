@@ -1,6 +1,6 @@
 [project]
 name = "entirius-django-enrichment"
-version = "2.0.0"
+version = "2.1.0"
 description = "Enrichment Django module for Volkanos (content-quality bus: descriptions, attributes, SEO, media)"
 authors = [{ name = "Entirius" }]
 readme = "README.md"
