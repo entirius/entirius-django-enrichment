@@ -1,4 +1,7 @@
-# Scale & Undo (etap-09)
+---
+title: Scale & Undo
+description: Undo applied proposals and mass-apply at catalogue scale.
+---
 
 Two things the bus needs before a real operator accepts at catalogue scale: a way back (undo) and a
 way to apply 10k proposals without melting a worker (mass apply). Both hang off the same choke point —

@@ -1,4 +1,7 @@
-# Service layer — contracts
+---
+title: Service Layer
+description: Framework-agnostic service contracts — state machine, intake, review, and the write choke point.
+---
 
 The service layer is the bus's brain: framework-agnostic (Pydantic/primitives in, models out, zero
 DRF), it owns the state machine, intake, review, and the single write choke point. Source-module

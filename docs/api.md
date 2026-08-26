@@ -1,4 +1,7 @@
-# Admin API
+---
+title: Admin API
+description: v2 admin API for enrichment tasks, proposals, review, and apply.
+---
 
 v2 admin API under `/api/enrichment/v2/admin/`. JWT + `IsAdminUser` on every ViewSet (the n8n
 worker authenticates with an admin service account — no separate auth tor). Pydantic v2 schemas,

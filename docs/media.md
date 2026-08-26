@@ -1,4 +1,7 @@
-# Media proposals (etap-08)
+---
+title: Media Proposals
+description: Picture proposals on the enrichment bus — accept-before-write for binaries.
+---
 
 The second `target_kind` on the bus: **`picture`**. Same accept-before-write loop as text, with one
 hard rule — the binary never touches the target module until an operator accepts.

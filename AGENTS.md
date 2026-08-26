@@ -71,6 +71,14 @@ path, and caches by path. An adapter is a *module* exposing five duck-typed call
 `apply`, `revert`. No entry → `ValueError` (a client without the module simply has no entry). The
 bus never imports a source module — dependency points one way: bus → contract, never bus → PIM.
 
+**Optional adapter hooks:** two callables are looked up with `getattr`, so an adapter may simply not
+have them — `release_undo_anchor` (cleanup GC, etap-10) and `on_reject`. `on_reject(proposal)` fires
+after a proposal is rejected (single **and** bulk) for the modules that implement it; the atlas
+duplicate adapter uses it to remember "these two are NOT the same product" durably, because the
+bus's own reject cooldown expires. Best-effort: the rejection is already committed, so a failing
+hook is logged and swallowed. `bulk_reject` stays a single UPDATE for adapters without the hook —
+it only re-reads the rows when some module in the batch implements it.
+
 **Service contracts:** see `docs/services.md` for the full per-service contract, the `scope_spec`
 shape, and the `filter ⇄ gap` decision.
 
