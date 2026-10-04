@@ -44,6 +44,7 @@ def _get_task_or_404(task_id: int):
 class TaskViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
+    access_area = "enrichment.proposals"
     # Multipart is needed for `import_csv`; JSON/form keep every other action working as before.
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     serializer_class = None

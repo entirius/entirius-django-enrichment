@@ -75,6 +75,7 @@ def _parse_confidence_min(raw: str | None) -> Decimal | None:
 class ProposalViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
+    access_area = "enrichment.proposals"
     # Multipart is needed for `upload_media`; JSON/form keep every other action working as before.
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     serializer_class = None
