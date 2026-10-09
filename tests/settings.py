@@ -3,6 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import tempfile
+from importlib.util import find_spec
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = "not so secret test secret"  # noqa: S105 — test-only key, never used in production
@@ -29,6 +30,9 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "django_enrichment",
 ]
+# django_access when importable (zeno): tests/test_access_ownership.py proves the access declarations.
+if find_spec("django_access"):
+    INSTALLED_APPS.append("django_access")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
