@@ -8,6 +8,32 @@ worker authenticates with an admin service account — no separate auth tor). Py
 v2 error envelope, standard pagination. Views are thin: parse → service → Response; all ORM lives
 in the services.
 
+## Endpoints
+
+Error envelope `{error, message, debug_id, details}`, pagination `count/next/previous/results`.
+
+| Method | Endpoint | Service | Notes |
+|--------|----------|---------|-------|
+| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. Throttled (`enrichment_spawn`, 120/min). → 201 |
+| `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
+| `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status`/`batch_key`, paginated |
+| `GET` | `tasks/{id}/` | `task_service.get_task` | Retrieve |
+| `GET` | `tasks/{id}/targets/?page=` | `task_service.resolve_targets` | Lazy worker pull (adapter-resolved) |
+| `PATCH` | `tasks/{id}/` | `task_service.transition_status` | Drive the state machine (e.g. `in_progress`, `done`) |
+| `GET/POST` | `spawn-rules/` | `spawn_rule_service.list_rules`/`create_rule` | SpawnRule CRUD. Filters: `active`, `search`. → 200/201 |
+| `GET/PATCH/DELETE` | `spawn-rules/{key}/` | `spawn_rule_service` | `key` immutable (schema drops it) |
+| `POST` | `spawn-rules/{key}/run/` | `spawn_rule_service.run_rule` | Throttled (`enrichment_spawn`). → 201 `spawned` / 200 `already_running` / 200 `no_candidates` |
+| `POST` | `proposals/` | `proposal_service.intake` | Worker intake — idempotent on `external_ref`. Throttled (`enrichment_intake`, 100/min). → 201 |
+| `POST` | `proposals/upload-media/` | `proposal_service.intake_media` | Multipart media intake — stages the binary, `target_kind=picture`. Size + MIME caps. Throttled. → 201 |
+| `GET` | `proposals/{id}/staged-file/` | `staging_store` | Stream a proposal's staged binary (admin-only) — the CMS "after" preview |
+| `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search; `ordering` allowlisted |
+| `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
+| `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter |
+| `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
+| `POST` | `proposals/bulk-accept/` | `proposal_service.bulk_accept` | Pending-only. Sync in-request `≤ ENRICHMENT_ASYNC_APPLY_THRESHOLD`, else Celery canvas. → 200 `{mode, enqueued, applied, drifted, failed}` |
+| `POST` | `proposals/bulk-reject/` | `proposal_service.bulk_reject` | Sync `.update()`. → `{rejected}` |
+| `POST` | `proposals/bulk-undo/` | `proposal_service.bulk_undo` | Single-level undo of the filtered APPLIED set; same sync/canvas routing. Drift-blocked items stay applied. → 200 `{mode, enqueued, reverted, blocked, failed}` |
+
 ## The n8n worker pull-loop
 
 The worker owns no selection logic — it pulls typed tasks, generates, and posts proposals back:
