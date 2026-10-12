@@ -47,6 +47,7 @@ def _get_rule_or_404(key: str):
 class SpawnRuleViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
+    access_area = "enrichment.rules"
     serializer_class = None
 
     def get_throttles(self):

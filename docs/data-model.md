@@ -76,3 +76,15 @@ Enrichment is a horizontal content-quality bus; PIM is just the first client. Ke
 generic (`target_module` + `subject_ref` + `target_locator`) is cheap now and saves a nightmare
 migration of the core table once a second module (contentdb, blog) needs an adapter. `apply_service`
 routes by `target_module` to the registered adapter — never `if target_module == "pim"`.
+
+## SpawnRule
+
+`SpawnRule` is standalone operator config (no FK to either model above — it references tasks only through the
+deterministic `gaprule:` batch_key). Fields and semantics: `docs/spawn-rules.md`.
+
+## Indexes
+
+Sized for a million-row proposal table: task `(status, type)` + `batch_key`; proposal `(status, subject_ref)`,
+`(target_module, subject_ref, target_kind, locator_hash)`, `(status, applied_at)` + `subject_ref` /
+`target_module` / `batch_id` / `external_ref`. No partitioning yet (deferred); `(status, applied_at)`
+keeps the cleanup beat and a future partition cheap.
