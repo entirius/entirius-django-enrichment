@@ -1,7 +1,21 @@
 [project]
 name = "entirius-django-enrichment"
 version = "2.1.0"
-description = "Enrichment Django module for Volkanos (content-quality bus: descriptions, attributes, SEO, media)"
+description = "Content enrichment module for Entirius: proposals for descriptions, attributes, SEO and media with review and undo"
+keywords = ["django", "enrichment", "product-content", "review-workflow", "ecommerce", "entirius"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: Django",
+    "Framework :: Django :: 5.2",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+]
 authors = [{ name = "Entirius" }]
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +37,11 @@ test = ["pytest", "pytest-django", "factory-boy"]
 demo = ["Pillow"]
 
 [project.urls]
+Homepage = "https://docs.entirius.com/"
+Documentation = "https://github.com/entirius/entirius-django-enrichment/tree/develop/docs"
 Repository = "https://github.com/entirius/entirius-django-enrichment"
+Changelog = "https://github.com/entirius/entirius-django-enrichment/blob/develop/CHANGELOG.md"
+Issues = "https://github.com/entirius/entirius-django-enrichment/issues"
 
 [build-system]
 requires = ["hatchling"]
