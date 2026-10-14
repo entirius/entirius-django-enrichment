@@ -23,7 +23,7 @@ from django_enrichment.services import (
     toolbox_calls,
     worker_service,
 )
-from django_enrichment.services.revise_prompt import VARIANTS, Correction
+from django_enrichment.services.revise_prompt import FIX_WARNINGS, VARIANTS, Correction
 from django_enrichment.services.revise_values import RevisionNotApplicableError
 
 __all__ = ["RevisionNotApplicableError", "revise"]
@@ -43,7 +43,8 @@ def revise(
     `describe_fields` overrides the field-catalog lookup (a batch passes a cached one)."""
     revision_service.ensure_text_revisable(proposal)
     instruction = revise_prompt.expand_instruction(instruction, quick_action, warnings=proposal.warnings)
-    correction = Correction(instruction, _scope(scope, proposal))
+    warnings = proposal.warnings if quick_action == FIX_WARNINGS else []
+    correction = Correction(instruction, _scope(scope, proposal), warnings)
     meta = revise_prompt.field_meta(proposal, describe_fields)
     shape = revise_values.value_shape(proposal.proposed_value, meta)
     variants = quick_action == VARIANTS
