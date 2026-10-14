@@ -5,7 +5,10 @@
 - Generic kinds (contract A3 § 3): `write` (several text fields, one completion per subject × language,
   `maxLength` from the catalog, html sanitised, `languages: ["*"]`) and `pick` (select/multiselect enums, one
   completion per subject); `translate` takes `params.fields`. Adapter extras with fallbacks in `kinds/extras.py`;
-  `SubjectError(code)` records codes such as `FIELD_TYPE` in `task.errors`.
+  `SubjectError(code)` records codes such as `FIELD_TYPE` in `task.errors`. The item context is fenced so it
+  cannot close its data block; catalog and channel languages are memoised per task run. New optional extra
+  `field_key(*, locator)` (inverse of `make_locator`) gives corrections the field meta without the bus reading
+  adapter-specific locator keys. Rule limits moved to the leaf `services/rule_limits.py`.
 - Templates (contract A3 § 4): `TaskTemplate` model (migration `0007_task_template`, Django admin),
   `template_service`, API `GET/POST templates/`, `GET/PATCH/DELETE templates/{key}/`; `POST tasks/` accepts
   `template` (request params win, rules concatenated, `params.template` kept). Rule promotion to the template

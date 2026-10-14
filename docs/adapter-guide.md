@@ -34,6 +34,7 @@ Five callables are the contract; a sixth is optional.
 | `describe_fields(*, channel, language="") -> list[dict]` | READ | Optional. Field catalog for `write`/`pick`, corrections and `GET fields/` (contract A3 § 2). |
 | `channel_languages(*, channel) -> list[str]` | READ | Optional. Resolves `languages: ["*"]`; `GET languages/`. |
 | `make_locator(*, field_key, channel, language) -> dict` | READ | Optional. Locator of a catalog field (fallback `{channel, language, field}`). |
+| `field_key(*, locator) -> str \| None` | READ | Optional. Inverse of `make_locator`: the catalog field a locator points at, for correction field meta (fallback `locator["field"]`). |
 | `build_context(*, subject_ref, channel, language) -> dict` | READ | Optional. Item context for the AI kinds. |
 
 **Conformance kit:** subclass `django_enrichment.testing.adapter_conformance.AdapterConformance`

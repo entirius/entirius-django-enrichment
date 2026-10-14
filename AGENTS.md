@@ -42,7 +42,7 @@ src/django_enrichment/
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
 │                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
-│                       # (+ revise_prompt, revise_values), rules_service, revise_batch_service,
+│                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
@@ -116,7 +116,7 @@ flow: `docs/api.md` § Revisions and corrections.
 
 **Generic kinds & templates:** `write` (text fields, one call per subject × language) and `pick` (select
 values, one call per subject) read the optional adapter extras through `kinds/extras.py` (`describe_fields`,
-`channel_languages`, `make_locator`, `build_context`, each with a fallback); a kind refuses a subject with
+`channel_languages`, `make_locator`, `field_key`, `build_context`, each with a fallback; catalog memoised per task); a kind refuses a subject with
 `SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
 `template` merges them (`template_service.merge_into_task`). Details: `docs/api.md` § Generic kinds, § Templates.
 

@@ -75,8 +75,9 @@ Batch: each pending text proposal of the task gets one call; failures land in `t
 
 Both use the adapter extras with fallbacks (`kinds/extras.py`): `describe_fields` (absent → no catalog:
 labels = keys, no limits), `channel_languages` (resolves `languages: ["*"]`; absent → subject error
-`NOT_SUPPORTED`), `make_locator` (absent → `{channel, language, field}`), `build_context` (absent → `{}`,
-sent as an `<item_context>` data block).
+`NOT_SUPPORTED`), `make_locator` (absent → `{channel, language, field}`), `field_key` (absent → `locator["field"]`),
+`build_context` (absent → `{}`, sent as an `<item_context>` data block the context cannot close). Catalog and
+channel languages are asked once per language per task, not per subject.
 
 | Kind | Params | Calls | Drafts |
 |---|---|---|---|
