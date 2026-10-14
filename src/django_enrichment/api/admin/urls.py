@@ -13,6 +13,7 @@ from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
 from django_enrichment.api.admin.views.template_views import TemplateViewSet
 from django_enrichment.api.admin.views.worker_views import WorkerViewSet
+from django_enrichment.api.admin.views.workflow_views import RunViewSet, WorkflowViewSet
 
 urlpatterns = [
     # Spawn rules (etap-13)
@@ -34,6 +35,16 @@ urlpatterns = [
     ),
     path("fields/", CatalogViewSet.as_view({"get": "fields"}), name="admin-fields"),
     path("languages/", CatalogViewSet.as_view({"get": "languages"}), name="admin-languages"),
+    # Workflows (contract A4 § 6)
+    path("workflows/", WorkflowViewSet.as_view({"get": "list"}), name="admin-workflows-list"),
+    path("runs/", RunViewSet.as_view({"get": "list", "post": "create"}), name="admin-runs-list"),
+    path("runs/<str:uid>/", RunViewSet.as_view({"get": "retrieve"}), name="admin-runs-detail"),
+    path(
+        "runs/<str:uid>/steps/<str:key>/regenerate/",
+        RunViewSet.as_view({"post": "regenerate"}),
+        name="admin-runs-step-regenerate",
+    ),
+    path("runs/<str:uid>/cancel/", RunViewSet.as_view({"post": "cancel"}), name="admin-runs-cancel"),
     # Tasks
     path("tasks/", TaskViewSet.as_view({"get": "list", "post": "create"}), name="admin-tasks-list"),
     path("tasks/import-csv/", TaskViewSet.as_view({"post": "import_csv"}), name="admin-tasks-import-csv"),

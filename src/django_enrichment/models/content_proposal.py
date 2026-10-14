@@ -74,6 +74,9 @@ class ContentProposal(BaseModel):
     rules = models.JSONField(default=list, blank=True)
     # Cost of the toolbox call that produced this proposal, split evenly across that call's drafts; null = unknown.
     cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+    # What applying this proposal created, when the adapter's `apply` returned `{"subject_ref"}` (a document
+    # created from a workflow) — blank otherwise. Revert of a created subject reads it.
+    result_ref = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         indexes = [

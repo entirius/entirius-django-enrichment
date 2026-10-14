@@ -19,7 +19,7 @@ from typing import Any
 from django_enrichment.enums import TaskStatus, WorkerMode
 from django_enrichment.kinds import Kind, ProposalDraft, extras, get_kind
 from django_enrichment.models import EnrichmentTask, Worker
-from django_enrichment.services import proposal_service, task_service, toolbox_calls, worker_service
+from django_enrichment.services import proposal_service, task_service, toolbox_calls, worker_service, workflow_service
 
 _logger = logging.getLogger("process")
 
@@ -41,6 +41,15 @@ def run_task(task_id: int) -> None:
         extras.clear_cache()
     status = TaskStatus.FAILED if failed and not succeeded else TaskStatus.DONE
     _finish(task, status.value)
+    _notify_workflow(task)
+
+
+def _notify_workflow(task: EnrichmentTask) -> None:
+    """A workflow step's task finished → its run moves on (`workflow_service`). Never fails the runner."""
+    try:
+        workflow_service.on_task_finished(task)
+    except Exception:  # noqa: BLE001 — the task itself is finished; a run hook must not undo that
+        _logger.exception("workflow hook failed for task %s", task.pk)
 
 
 def _finish(task: EnrichmentTask, status: str) -> None:

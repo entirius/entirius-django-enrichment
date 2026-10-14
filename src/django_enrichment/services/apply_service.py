@@ -49,9 +49,14 @@ def _target_missing_error(proposal: ContentProposal) -> ValueError:
     )
 
 
+def _result_ref(outcome: object) -> str:
+    """`adapter.apply` may return `{"subject_ref"}` — the subject it created (contract A4 § 6)."""
+    return str(outcome.get("subject_ref") or "") if isinstance(outcome, dict) else ""
+
+
 def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) -> ContentProposal:
     """Drift-check then write `proposed_value` through the target module's adapter."""
-    from django_enrichment.services import proposal_service  # local import: avoids service import cycle
+    from django_enrichment.services import proposal_service, workflow_service  # local: avoids import cycles
 
     if proposal.status not in _APPLYABLE_STATUSES:
         raise ValueError(f"cannot apply proposal in status {proposal.status!r}")
@@ -81,9 +86,10 @@ def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) ->
     # cannot be rolled back — its own concern.)
     with transaction.atomic():
         try:
-            adapter.apply(proposal)
+            outcome = adapter.apply(proposal)
         except ObjectDoesNotExist as exc:
             raise _target_missing_error(proposal) from exc
+        proposal.result_ref = _result_ref(outcome)
         # Capture the post-write live value as the undo drift anchor (etap-09). Re-reading through the
         # adapter (rather than assuming `proposed_value`) keeps this generic across target kinds — for a
         # picture `proposed_value` never holds the resulting sha1, but `read_current` does. Undo later
@@ -92,8 +98,11 @@ def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) ->
         proposal.applied_snapshot = adapter.read_current(
             subject_ref=proposal.subject_ref, target_kind=proposal.target_kind, target_locator=proposal.target_locator
         )
-        proposal.save(update_fields=["applied_snapshot", "modified_at"])
+        proposal.save(update_fields=["applied_snapshot", "result_ref", "modified_at"])
         result = proposal_service.transition_status(proposal, ProposalStatus.APPLIED.value, user=user)
+        # A workflow step's output was approved → advance its run (same transaction: a failing next step
+        # rolls the approval back).
+        workflow_service.on_proposal_applied(result)
 
     # The binary now lives in the target module (media — etap-08); drop the staged copy. The undo
     # anchor is the OLD source object (e.g. PIM Picture), never this file. Outside the transaction

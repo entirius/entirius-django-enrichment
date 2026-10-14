@@ -40,4 +40,9 @@ def test_get_adapters_maps_every_entry():
     with override_settings(ENRICHMENT_ADAPTERS={"pim": "tests.fake_adapter"}):
         adapters = get_adapters()
 
-    assert set(adapters) == {"pim"}
+    assert set(adapters) == {"pim", "enrichment"}  # + the built-in artifact adapter
+
+
+def test_builtin_artifact_adapter_needs_no_setting():
+    with override_settings(ENRICHMENT_ADAPTERS={}):
+        assert get_adapter("enrichment").TARGET_KIND == "artifact"

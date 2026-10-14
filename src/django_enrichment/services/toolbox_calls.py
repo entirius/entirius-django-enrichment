@@ -7,7 +7,8 @@ Prompts live in the kinds. Toolbox errors propagate: the runner counts the subje
 
 Every call returns `Costed(value, cost)` and charges its task (`cost_service.charge`); `cost_of` is the one
 place that knows which response field carries the cost today. Completion tags: the selector
-`enrichment.<kind>[.<template>]` first (the toolbox fake provider picks fixtures by it), then `task:<id>`.
+`enrichment.<kind>[.<template>]` first (the toolbox fake provider picks fixtures by it), then `task:<id>` and,
+for a workflow step, `run:<uid>`.
 A call that fails after its request left may already be billed: it charges an unknown cost (`None`), so the
 task is never reported complete with a too-low total.
 """
@@ -93,11 +94,14 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
 
 
 def _tags(kind: str, task: Any) -> list[str]:
-    """`["enrichment.<kind>[.<template>]", "task:<id>"]` — the selector always first."""
-    template = (getattr(task, "params", None) or {}).get("template") or ""
+    """`["enrichment.<kind>[.<template>]", "task:<id>", "run:<uid>"]` — the selector always first."""
+    params = getattr(task, "params", None) or {}
+    template = params.get("template") or ""
     tags = [_tag(".".join(part for part in ("enrichment", kind, template) if part))]
     if (task_id := getattr(task, "pk", None)) is not None:
         tags.append(f"task:{task_id}")
+    if run := params.get("run"):
+        tags.append(_tag(f"run:{run}"))
     return tags
 
 

@@ -21,8 +21,11 @@ class EnrichmentConfig(AppConfig):
 
     def ready(self) -> None:
         from django_enrichment.kinds import register_kind
+        from django_enrichment.kinds.compose import ComposeKind
         from django_enrichment.kinds.field import FieldKind
+        from django_enrichment.kinds.generate import GenerateKind
         from django_enrichment.kinds.pick import PickKind
+        from django_enrichment.kinds.questions import QuestionsKind
         from django_enrichment.kinds.translate import TranslateKind
         from django_enrichment.kinds.video import VideoKind
         from django_enrichment.kinds.write import WriteKind
@@ -32,3 +35,6 @@ class EnrichmentConfig(AppConfig):
         register_kind("video", VideoKind)
         register_kind("write", WriteKind)
         register_kind("pick", PickKind)
+        register_kind("generate", GenerateKind)
+        register_kind("questions", QuestionsKind)
+        register_kind("compose", ComposeKind)

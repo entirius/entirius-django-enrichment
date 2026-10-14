@@ -70,3 +70,43 @@ class RevisionAuthor(models.TextChoices):
 
 # Proposals that still accept new revisions (correction, manual edit, restore).
 REVISABLE_STATUSES = frozenset({ProposalStatus.PENDING.value, ProposalStatus.DRIFTED.value})
+
+
+class RunStatus(models.TextChoices):
+    """`WorkflowRun.status` — derived from its steps by `workflow_service` (cancelled is final)."""
+
+    RUNNING = "running", "Running"
+    WAITING = "waiting", "Waiting for review"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class StepStatus(models.TextChoices):
+    """One step of a run: waiting (needs not approved yet) → running → review → approved | failed."""
+
+    WAITING = "waiting", "Waiting"
+    RUNNING = "running", "Running"
+    REVIEW = "review", "Needs review"
+    APPROVED = "approved", "Approved"
+    FAILED = "failed", "Failed"
+
+
+class StepGate(models.TextChoices):
+    REVIEW = "review", "Operator approves"
+    AUTO = "auto", "Approved automatically"
+
+
+class StepOutput(models.TextChoices):
+    """What a step produces; each output is made by one kind (`STEP_OUTPUT_KINDS`)."""
+
+    ARTIFACT = "artifact", "Artifact (text or data)"
+    QUESTIONS = "questions", "Questions for the operator"
+    DOCUMENT = "document", "Document in the target module"
+
+
+STEP_OUTPUT_KINDS: dict[str, str] = {
+    StepOutput.ARTIFACT.value: "generate",
+    StepOutput.QUESTIONS.value: "questions",
+    StepOutput.DOCUMENT.value: "compose",
+}

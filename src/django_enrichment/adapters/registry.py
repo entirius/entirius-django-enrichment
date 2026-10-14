@@ -24,8 +24,12 @@ from django.conf import settings
 _ADAPTER_CACHE: dict[str, Any] = {}
 
 
+# Adapters the bus ships itself; a host entry with the same key wins.
+BUILTIN_ADAPTERS = {"enrichment": "django_enrichment.adapters.artifact"}
+
+
 def _registry() -> dict[str, str]:
-    return getattr(settings, "ENRICHMENT_ADAPTERS", {})
+    return {**BUILTIN_ADAPTERS, **getattr(settings, "ENRICHMENT_ADAPTERS", {})}
 
 
 def get_adapter(target_module: str) -> Any:

@@ -289,3 +289,17 @@ class CatalogQuery(BaseModel):
     target_module: str = Field(min_length=1, max_length=32, examples=["pim"])
     channel: str = Field(min_length=1, max_length=64, examples=["default"])
     language: str = Field("", max_length=8, description="Label language (fields only)", examples=["pl"])
+
+
+class RunStartRequest(BaseModel):
+    """`POST runs/` — start a workflow; `inputs` (the brief) is validated against the definition's `inputs_schema`."""
+
+    definition: str = Field(min_length=1, max_length=64, examples=["article"])
+    inputs: dict = Field(default_factory=dict, examples=[{"topic": "How to care for a linen sofa"}])
+    channel: str = Field("", max_length=64, examples=["default"])
+
+
+class StepRegenerateRequest(BaseModel):
+    """`POST runs/{uid}/steps/{key}/regenerate/` — optional operator instruction for the new version."""
+
+    instruction: str = Field("", max_length=2000, examples=["Shorter, and lead with the main benefit."])

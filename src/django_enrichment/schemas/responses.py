@@ -97,6 +97,7 @@ class ProposalResponse(BaseModel):
     cost_usd: Decimal | None = Field(
         description="Share of the producing call's cost; null = unknown", examples=["0.0014"]
     )
+    result_ref: str = Field(description="What applying it created (a document ref); blank otherwise", examples=[""])
     created_at: datetime
     modified_at: datetime
 
@@ -243,3 +244,58 @@ class FieldResponse(BaseModel):
     translatable: bool = True
     options: list[FieldOptionResponse] | None = None
     options_truncated: bool | None = None
+
+
+class WorkflowStepResponse(BaseModel):
+    """One step of a workflow definition."""
+
+    key: str = Field(examples=["outline"])
+    label: str = Field(examples=["Outline"])
+    template: str = Field(examples=["article.outline"])
+    needs: list[str] = Field(examples=[["keywords"]])
+    gate: str = Field(description="review | auto", examples=["review"])
+    output: str = Field(description="artifact | questions | document", examples=["artifact"])
+
+
+class WorkflowDefinitionResponse(BaseModel):
+    """`GET workflows/` item — an active workflow the CMS can start."""
+
+    key: str = Field(examples=["article"])
+    label: str = Field(examples=["Article"])
+    target_module: str = Field(examples=["contentdb"])
+    inputs_schema: dict = Field(description="JSON Schema of the brief", examples=[{"type": "object"}])
+    steps: list[WorkflowStepResponse]
+
+
+class RunStepResponse(WorkflowStepResponse):
+    """A step of a run with its state; the output is the proposal `proposal_id` (`GET proposals/{id}/`)."""
+
+    status: str = Field(description="waiting | running | review | approved | failed", examples=["review"])
+    task_id: int | None = Field(examples=[42])
+    proposal_id: int | None = Field(examples=[310])
+
+
+class RunResponse(BaseModel):
+    """A workflow run (`GET runs/{uid}/`, list item, start / regenerate / cancel result)."""
+
+    uid: str = Field(examples=["3f2a9c0d4b6e4f1a8c7d2e5b9a0c1d3e"])
+    definition: str = Field(examples=["article"])
+    definition_label: str = Field(examples=["Article"])
+    channel: str = Field(examples=["default"])
+    inputs: dict = Field(examples=[{"topic": "How to care for a linen sofa"}])
+    subject_ref: str = Field(description="What the final step created; blank before", examples=[""])
+    status: str = Field(description="running | waiting | done | failed | cancelled", examples=["waiting"])
+    current_step: str | None = Field(description="First step not approved yet", examples=["outline"])
+    steps: list[RunStepResponse]
+    cost_usd: Decimal | None = Field(description="Sum of the known costs of the run's tasks", examples=["0.0123"])
+    cost_complete: bool = Field(description="False once one of its tasks has an unknown cost", examples=[True])
+    created_by_id: int | None
+    created_at: datetime
+    modified_at: datetime
+
+
+class RunListResponse(BaseModel):
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[RunResponse]

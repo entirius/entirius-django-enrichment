@@ -30,6 +30,7 @@ dependencies = [
     "entirius-django-utils>=2.1.0",
     "nh3>=0.2",
     "httpx>=0.27",
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]

@@ -58,8 +58,11 @@ class EnrichmentAdapter(Protocol):
         """
         ...
 
-    def apply(self, proposal: Any) -> None:
+    def apply(self, proposal: Any) -> dict | None:
         """Write `proposal.proposed_value` into the source module (WRITE).
+
+        May return `{"subject_ref": <ref>}` when the write created a subject (a `document` of a workflow);
+        the bus keeps it in `proposal.result_ref`, which `revert` reads to undo the creation.
 
         The ONLY place enrichment writes back to a module. Body is module-specific and opaque
         to the bus. `apply_service` calls this after the drift check passes.

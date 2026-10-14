@@ -8,10 +8,11 @@ Thin layer: parse → service → Response. ZERO Django models imported. Intake 
 path (throttled + idempotent on `external_ref`); accept routes through the drift-aware apply.
 """
 
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.http import FileResponse
-from django_utils.api.v2_errors import raise_pydantic_as_drf
+from django_utils.api.v2_errors import ErrorDetail, ErrorResponse, raise_pydantic_as_drf
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from pydantic import ValidationError
 from rest_framework import exceptions as drf_exceptions
@@ -25,6 +26,7 @@ from django_enrichment.api.admin.pagination import AdminPageNumberPagination
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle, IntakeThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.schemas.requests import (
     BulkAcceptRequest,
     BulkRejectRequest,
@@ -61,6 +63,20 @@ def _get_proposal_or_404(proposal_id: int):
         return proposal_service.get_proposal(proposal_id)
     except ValueError as exc:
         raise_as_drf(exc)
+
+
+def _answers_missing(exc: AnswersMissingError) -> Response:
+    """400 `ANSWERS_MISSING` (v2 error shape): a questions step approved without its required answers."""
+    details = [
+        ErrorDetail(field=qid, issue="REQUIRED", description="This question needs an answer.") for qid in exc.missing
+    ]
+    body = ErrorResponse(
+        error="ANSWERS_MISSING",
+        message="Answer every required question before approving.",
+        debug_id=uuid.uuid4().hex[:8],
+        details=details,
+    )
+    return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
 
 
 def _parse_confidence_min(raw: str | None) -> Decimal | None:
@@ -248,11 +264,17 @@ class ProposalViewSet(viewsets.ViewSet):
             raise_as_drf(exc)
         return Response(_serialize(proposal))
 
-    @extend_schema(tags=_TAGS, summary="Accept proposal (drift-aware apply)", responses={200: ProposalResponse})
+    @extend_schema(
+        tags=_TAGS,
+        summary="Accept proposal (drift-aware apply; approves a workflow step)",
+        responses={200: ProposalResponse, 400: ErrorResponse},
+    )
     def accept(self, request: Request, pk: int) -> Response:
         proposal = _get_proposal_or_404(pk)
         try:
             proposal = proposal_service.accept(proposal, user=request.user)
+        except AnswersMissingError as exc:
+            return _answers_missing(exc)
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(_serialize(proposal))
