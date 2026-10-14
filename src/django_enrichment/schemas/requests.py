@@ -11,6 +11,7 @@ OpenAPI schema via drf-spectacular.
 
 import json
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -216,3 +217,39 @@ class SpawnRuleUpdateRequest(BaseModel):
     cooldown_days: int | None = Field(None, ge=0)
     auto: bool | None = None
     active: bool | None = None
+
+
+QuickAction = Literal["shorten", "expand", "formal", "casual", "fit_limit", "variants"]
+
+
+class ReviseScope(BaseModel):
+    type: Literal["all", "selection"] = Field("all", examples=["selection"])
+    text: str = Field("", max_length=20000, description="The selected fragment (selection scope)")
+
+
+class ReviseRequest(BaseModel):
+    """`POST proposals/{id}/revise/` — one AI correction (instruction and/or quick action)."""
+
+    instruction: str = Field("", max_length=2000, examples=["Mention the 2-year warranty."])
+    quick_action: QuickAction | None = Field(None, examples=["shorten"])
+    scope: ReviseScope | None = None
+
+
+class TaskReviseRequest(BaseModel):
+    """`POST tasks/{id}/revise/` — correct every pending proposal of a task (async)."""
+
+    instruction: str = Field("", max_length=2000, examples=["Use the informal 'you'."])
+    quick_action: QuickAction | None = Field(None, examples=["formal"])
+
+
+class RulesUpdateRequest(BaseModel):
+    """`PUT proposals/{id}/rules/` — replace the proposal's correction rules (limits enforced by the service)."""
+
+    rules: list[str] = Field(examples=[["Never mention the price."]])
+
+
+class RulePromoteRequest(BaseModel):
+    """`POST proposals/{id}/rules/promote/` — copy one rule to the task's template or to the worker."""
+
+    rule: str = Field(min_length=1, examples=["Never mention the price."])
+    target: Literal["template", "worker"] = Field(examples=["worker"])

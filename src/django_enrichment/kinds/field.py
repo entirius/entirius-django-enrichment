@@ -84,7 +84,10 @@ def _answer_schema(options: FieldOptions) -> dict:
 
 
 def _clean(value: str, options: FieldOptions) -> str:
-    if options.format != "html":
-        return value
-    # Models sometimes escape the markup inside the JSON string; nh3 sanitises after unescaping.
+    return sanitize_html(value) if options.format == "html" else value
+
+
+def sanitize_html(value: str) -> str:
+    """The field kind's HTML allowlist. Models sometimes escape the markup inside the JSON string;
+    nh3 sanitises after unescaping."""
     return nh3.clean(html.unescape(value), tags=set(HTML_TAGS), attributes={}, url_schemes=set())

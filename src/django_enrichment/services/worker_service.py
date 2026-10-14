@@ -9,6 +9,7 @@ internal Worker exists, a freshly spawned task is handed to the runner after com
 workers (n8n) keep pulling through the API exactly as before.
 """
 
+import re
 from typing import Any
 
 from django.db import transaction
@@ -19,6 +20,15 @@ from django_enrichment.enums import WorkerMode
 from django_enrichment.kinds import get_kind
 from django_enrichment.models import EnrichmentTask, Worker
 from django_enrichment.models.worker import VERSIONED_FIELDS
+
+_SOURCE_PATTERN = re.compile(r"^worker:(?P<key>[a-z0-9][a-z0-9_.-]*)@v\d+$")
+
+
+def from_source(source: str) -> Worker | None:
+    """The Worker that produced a proposal (`source` = `worker:<key>@v<n>`), active or not; else None."""
+    if not (match := _SOURCE_PATTERN.match(source)):
+        return None
+    return Worker.objects.filter(key=match["key"]).first()
 
 
 def find_active(key: str) -> Worker | None:

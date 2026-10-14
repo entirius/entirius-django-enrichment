@@ -7,6 +7,7 @@
 from django.urls import path
 
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
+from django_enrichment.api.admin.views.revision_views import RevisionViewSet
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
 from django_enrichment.api.admin.views.worker_views import WorkerViewSet
@@ -30,6 +31,7 @@ urlpatterns = [
         TaskViewSet.as_view({"get": "retrieve", "patch": "partial_update"}),
         name="admin-tasks-detail",
     ),
+    path("tasks/<int:pk>/revise/", RevisionViewSet.as_view({"post": "revise_task"}), name="admin-tasks-revise"),
     path("tasks/<int:pk>/targets/", TaskViewSet.as_view({"get": "targets"}), name="admin-tasks-targets"),
     # Proposals
     path("proposals/", ProposalViewSet.as_view({"get": "list", "post": "create"}), name="admin-proposals-list"),
@@ -47,6 +49,24 @@ urlpatterns = [
         "proposals/<int:pk>/staged-file/",
         ProposalViewSet.as_view({"get": "staged_file"}),
         name="admin-proposals-staged-file",
+    ),
+    # Revisions & corrections (contract A3 § 1)
+    path(
+        "proposals/<int:pk>/revisions/",
+        RevisionViewSet.as_view({"get": "revisions"}),
+        name="admin-proposals-revisions",
+    ),
+    path(
+        "proposals/<int:pk>/revisions/<int:number>/restore/",
+        RevisionViewSet.as_view({"post": "restore"}),
+        name="admin-proposals-revision-restore",
+    ),
+    path("proposals/<int:pk>/revise/", RevisionViewSet.as_view({"post": "revise"}), name="admin-proposals-revise"),
+    path("proposals/<int:pk>/rules/", RevisionViewSet.as_view({"put": "rules"}), name="admin-proposals-rules"),
+    path(
+        "proposals/<int:pk>/rules/promote/",
+        RevisionViewSet.as_view({"post": "promote_rule"}),
+        name="admin-proposals-rules-promote",
     ),
     path("proposals/<int:pk>/accept/", ProposalViewSet.as_view({"post": "accept"}), name="admin-proposals-accept"),
     path("proposals/<int:pk>/reject/", ProposalViewSet.as_view({"post": "reject"}), name="admin-proposals-reject"),

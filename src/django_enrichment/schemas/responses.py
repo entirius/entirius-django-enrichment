@@ -86,6 +86,7 @@ class ProposalResponse(BaseModel):
     reviewed_at: datetime | None
     applied_at: datetime | None
     reject_reason: str
+    rules: list[str]
     created_at: datetime
     modified_at: datetime
 
@@ -166,3 +167,34 @@ class WorkerResponse(BaseModel):
     target_module: str = Field(description="Adapter key", examples=["pim"])
     mode: str = Field(description="internal | external", examples=["internal"])
     params_schema: dict = Field(description="JSON schema of the task params", examples=[{"type": "object"}])
+
+
+class RevisionResponse(BaseModel):
+    """One version of a proposal's value (`GET proposals/{id}/revisions/` item, revise/restore result)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    number: int = Field(examples=[2])
+    value: dict = Field(examples=[{"text": "Shorter copy."}])
+    instruction: str = Field(examples=["Make the text noticeably shorter; keep the key information."])
+    scope: dict = Field(examples=[{"type": "all"}])
+    author_kind: str = Field(description="ai | user | restore", examples=["ai"])
+    author: int | None = Field(validation_alias="author_id", description="User id", examples=[1])
+    created_at: datetime
+
+
+class VariantsResponse(BaseModel):
+    """`POST proposals/{id}/revise/` with `variants` — candidate values, nothing saved."""
+
+    candidates: list[dict] = Field(examples=[[{"text": "Variant A"}, {"text": "Variant B"}]])
+
+
+class RulePromoteResponse(BaseModel):
+    target: str = Field(examples=["worker"])
+    rules: list[str] = Field(
+        description="The target's rules after the promotion", examples=[["Never mention the price."]]
+    )
+
+
+class TaskReviseResponse(BaseModel):
+    queued: int = Field(description="Pending proposals queued for correction", examples=[12])

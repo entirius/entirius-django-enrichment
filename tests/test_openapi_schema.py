@@ -23,6 +23,12 @@ _EXPECTED = {
     "/api/enrichment/v2/admin/proposals/bulk-accept/": {"post"},
     "/api/enrichment/v2/admin/proposals/bulk-reject/": {"post"},
     "/api/enrichment/v2/admin/proposals/bulk-undo/": {"post"},
+    "/api/enrichment/v2/admin/proposals/{id}/revisions/": {"get"},
+    "/api/enrichment/v2/admin/proposals/{id}/revisions/{number}/restore/": {"post"},
+    "/api/enrichment/v2/admin/proposals/{id}/revise/": {"post"},
+    "/api/enrichment/v2/admin/proposals/{id}/rules/": {"put"},
+    "/api/enrichment/v2/admin/proposals/{id}/rules/promote/": {"post"},
+    "/api/enrichment/v2/admin/tasks/{id}/revise/": {"post"},
 }
 
 

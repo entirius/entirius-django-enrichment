@@ -73,6 +73,14 @@ def _parse_confidence_min(raw: str | None) -> Decimal | None:
         raise drf_exceptions.ValidationError("confidence_min must be a decimal") from exc
 
 
+def _parse_task_id(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    if not raw.isdigit():
+        raise drf_exceptions.ValidationError("task must be an integer id")
+    return int(raw)
+
+
 class ProposalViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
@@ -190,6 +198,7 @@ class ProposalViewSet(viewsets.ViewSet):
             OpenApiParameter("confidence_min", float, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("subject_ref", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("task", int, OpenApiParameter.QUERY, required=False, description="Owning task id"),
             OpenApiParameter("ordering", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page", int, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page_size", int, OpenApiParameter.QUERY, required=False),
@@ -210,6 +219,7 @@ class ProposalViewSet(viewsets.ViewSet):
             confidence_min=_parse_confidence_min(qp.get("confidence_min")),
             search=qp.get("search"),
             subject_ref=qp.get("subject_ref"),
+            task_id=_parse_task_id(qp.get("task")),
             ordering=ordering,
         )
         paginator = AdminPageNumberPagination()
@@ -222,7 +232,7 @@ class ProposalViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Edit a pending proposal's value",
+        summary="Edit a pending proposal's value (new user revision)",
         request=ProposalUpdateRequest,
         responses={200: ProposalResponse, 400: None, 404: None},
     )
@@ -233,7 +243,7 @@ class ProposalViewSet(viewsets.ViewSet):
             raise_pydantic_as_drf(exc)
         proposal = _get_proposal_or_404(pk)
         try:
-            proposal = proposal_service.update_value(proposal, data.proposed_value)
+            proposal = proposal_service.update_value(proposal, data.proposed_value, user=request.user)
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(_serialize(proposal))
