@@ -22,6 +22,15 @@ _STORE: dict[tuple[str, str, str], dict] = {}
 # the bus invokes the GC hook for the right (picture) proposals.
 _RELEASED: list[int] = []
 
+# Field catalog served by the optional extras (`describe_fields`, `make_locator`); empty by default so
+# tests that expect "no catalog" keep that behaviour — seed it with `set_catalog`.
+_CATALOG: list[dict] = []
+_LANGUAGES = ["pl", "en", "de"]
+
+# Documents created by `apply` of a `target_kind="document"` proposal, keyed by the returned subject ref.
+DOCUMENT_KIND = "document"
+_DOCUMENTS: dict[str, dict] = {}
+
 # Records every proposal pk passed to the optional `on_reject` hook, so the reject tests can assert
 # the bus notifies the source module (atlas keeps a durable "not the same product" this way).
 _REJECTED: list[int] = []
@@ -48,12 +57,25 @@ def read_current(*, subject_ref: str, target_kind: str, target_locator: dict) ->
     return dict(_STORE.get(_key(subject_ref, target_kind, target_locator), {}))
 
 
-def apply(proposal: Any) -> None:
+def apply(proposal: Any) -> dict | None:
+    if proposal.target_kind == DOCUMENT_KIND:
+        return _create_document(proposal)
     _STORE[_key(proposal.subject_ref, proposal.target_kind, proposal.target_locator)] = dict(proposal.proposed_value)
+    return None
 
 
 def revert(proposal: Any) -> None:
+    if proposal.target_kind == DOCUMENT_KIND:
+        _DOCUMENTS.pop(proposal.result_ref, None)
+        return
     _STORE[_key(proposal.subject_ref, proposal.target_kind, proposal.target_locator)] = dict(proposal.current_snapshot)
+
+
+def _create_document(proposal: Any) -> dict:
+    """`target_kind="document"` creates a new subject and returns its ref (contract A4 § 6)."""
+    ref = f"doc-{len(_DOCUMENTS) + 1}"
+    _DOCUMENTS[ref] = dict(proposal.proposed_value)
+    return {"subject_ref": ref}
 
 
 def on_reject(proposal: Any) -> None:
@@ -68,11 +90,38 @@ def release_undo_anchor(proposal: Any) -> int:
     return 0
 
 
+# ── optional extras (contract A3 § 2) ──────────────────────────────────────────────────────
+
+
+def describe_fields(*, channel: str, language: str = "") -> list[dict]:  # noqa: ARG001 — one catalog for all
+    return [dict(field) for field in _CATALOG]
+
+
+def channel_languages(*, channel: str) -> list[str]:  # noqa: ARG001 — one language set for all channels
+    return list(_LANGUAGES)
+
+
+def make_locator(*, field_key: str, channel: str, language: str | None) -> dict:
+    return {"channel": channel, "language": language, "feature_idx": field_key}
+
+
+def build_context(*, subject_ref: str, channel: str, language: str) -> dict:
+    return {"sku": subject_ref, "channel": channel, "language": language}
+
+
 # ── test helpers ──────────────────────────────────────────────────────────────────────────
 
 
 def set_current(subject_ref: str, target_kind: str, target_locator: dict, value: dict) -> None:
     _STORE[_key(subject_ref, target_kind, target_locator)] = dict(value)
+
+
+def set_catalog(fields: list[dict]) -> None:
+    _CATALOG[:] = [dict(field) for field in fields]
+
+
+def documents() -> dict[str, dict]:
+    return dict(_DOCUMENTS)
 
 
 def released() -> list[int]:
@@ -87,5 +136,7 @@ def rejected() -> list[int]:
 
 def reset() -> None:
     _STORE.clear()
+    _CATALOG.clear()
+    _DOCUMENTS.clear()
     _RELEASED.clear()
     _REJECTED.clear()
