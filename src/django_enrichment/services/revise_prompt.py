@@ -5,7 +5,8 @@
 """Prompt of a correction (contract A3 § 1): rules → original task prompt → field meta → current
 value → scope → instruction → answer format. The worker system prompt goes in the system message.
 
-Quick actions expand to fixed English instructions here, server-side.
+Quick actions expand to fixed English instructions here, server-side; `fix_warnings` also lists the
+proposal's QA warnings.
 """
 
 import json
@@ -23,6 +24,7 @@ from django_enrichment.services.catalog_service import NotSupportedError
 DescribeFields = Callable[..., list[dict]]
 
 VARIANTS = "variants"
+FIX_WARNINGS = "fix_warnings"
 QUICK_ACTIONS = {
     "shorten": "Make the text noticeably shorter; keep the key information.",
     "expand": "Expand the text with more useful detail; do not invent facts.",
@@ -30,6 +32,7 @@ QUICK_ACTIONS = {
     "casual": "Rewrite the text in a more casual, friendly tone.",
     "fit_limit": "Shorten the text so it fits the field's maximum length.",
     VARIANTS: "Propose alternative versions of the value.",
+    FIX_WARNINGS: "Fix every problem the quality checks found below; change nothing else.",
 }
 
 
@@ -60,14 +63,28 @@ def company_context(proposal: ContentProposal, worker_kind: str) -> CompanyConte
     return CompanyContext(instructions, join_prompts(memory, seams.profile_block(profile)), versions)
 
 
-def expand_instruction(instruction: str, quick_action: str | None) -> str:
-    """Quick action text + the operator's own words. Raises `ValueError` when both are empty/unknown."""
+def expand_instruction(instruction: str, quick_action: str | None, warnings: list[dict] | None = None) -> str:
+    """Quick action text (+ the `warnings` for `fix_warnings`) + the operator's own words.
+    Raises `ValueError` when both are empty/unknown, or `fix_warnings` has no warnings to fix."""
     if quick_action is not None and quick_action not in QUICK_ACTIONS:
         raise ValueError(f"unknown quick action {quick_action!r}")
-    text = join_prompts(QUICK_ACTIONS.get(quick_action or "", ""), instruction.strip())
+    action = QUICK_ACTIONS.get(quick_action or "", "")
+    if quick_action == FIX_WARNINGS:
+        action = join_prompts(action, _warnings_list(warnings or []))
+    text = join_prompts(action, instruction.strip())
     if not text:
         raise ValueError("give an instruction or a quick action")
     return text
+
+
+def _warnings_list(warnings: list[dict]) -> str:
+    if not warnings:
+        raise ValueError("there are no warnings to fix")
+    return "\n".join(f"- {item['message']}" + _quoted(item.get("span")) for item in warnings)
+
+
+def _quoted(span: dict | None) -> str:
+    return f' (at "{span["text"]}")' if span and span.get("text") else ""
 
 
 def field_meta(proposal: ContentProposal, describe: DescribeFields | None = None) -> dict | None:

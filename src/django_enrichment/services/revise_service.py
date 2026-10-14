@@ -42,7 +42,8 @@ def revise(
     (not revisable / invalid input) or `RevisionNotApplicableError` (answer does not fit the value).
     `describe_fields` overrides the field-catalog lookup (a batch passes a cached one)."""
     revision_service.ensure_text_revisable(proposal)
-    correction = Correction(revise_prompt.expand_instruction(instruction, quick_action), _scope(scope, proposal))
+    instruction = revise_prompt.expand_instruction(instruction, quick_action, warnings=proposal.warnings)
+    correction = Correction(instruction, _scope(scope, proposal))
     meta = revise_prompt.field_meta(proposal, describe_fields)
     shape = revise_values.value_shape(proposal.proposed_value, meta)
     variants = quick_action == VARIANTS

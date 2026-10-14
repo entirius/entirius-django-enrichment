@@ -6,11 +6,13 @@
 
 `recall` answers a data block — the subject's entries, then its category's (adapter extra `category_of`),
 newest first, only active and unexpired ones, cut to a character budget. Writers: `record_answers` (approved
-workflow questions), `suggest_rule` (rule promotion target `"profile"`) and `remember` for the rest
+workflow questions), `suggest_rule` (rule promotion target `"profile"`), `suggest_fact` (a number QA flagged,
+vouched for by the operator) and `remember` for the rest
 (augmentations). Promotion into the profile lives in `memory_promotion`.
 """
 
 import json
+from typing import Any
 
 from django.db.models import Q, QuerySet
 from django.utils import timezone
@@ -115,6 +117,20 @@ def suggest_rule(proposal: ContentProposal, rule: str) -> MemoryEntry:
         title=rule,
         text=rule,
         source=f"proposal:{proposal.pk}",
+    )
+    return remember(entry)
+
+
+def suggest_fact(proposal: ContentProposal, *, value: str, label: str = "", user: Any = None) -> MemoryEntry:
+    """A `fact_suggestion` for the profile facts registry, from a number QA flagged in `proposal`."""
+    entry = MemoryEntry(
+        channel=proposal_scope.channel_of(proposal),
+        kind=MemoryKind.FACT_SUGGESTION.value,
+        title=label or value,
+        text=value,
+        data={"label": label or value, "value": value, "source": f"proposal:{proposal.pk}"},
+        source=f"proposal:{proposal.pk}",
+        created_by=user,
     )
     return remember(entry)
 

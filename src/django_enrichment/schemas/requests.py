@@ -225,6 +225,10 @@ class SpawnRuleUpdateRequest(BaseModel):
 
 
 QuickAction = Literal["shorten", "expand", "formal", "casual", "fit_limit", "variants"]
+# One proposal only: `check_standard` (checklist warnings, no revision) and `fix_warnings` (corrects its warnings).
+ProposalQuickAction = Literal[
+    "shorten", "expand", "formal", "casual", "fit_limit", "variants", "check_standard", "fix_warnings"
+]
 
 
 class ReviseScope(BaseModel):
@@ -236,7 +240,7 @@ class ReviseRequest(BaseModel):
     """`POST proposals/{id}/revise/` — one AI correction (instruction and/or quick action)."""
 
     instruction: str = Field("", max_length=2000, examples=["Mention the 2-year warranty."])
-    quick_action: QuickAction | None = Field(None, examples=["shorten"])
+    quick_action: ProposalQuickAction | None = Field(None, examples=["shorten"])
     scope: ReviseScope | None = None
 
 
@@ -245,6 +249,13 @@ class TaskReviseRequest(BaseModel):
 
     instruction: str = Field("", max_length=2000, examples=["Use the informal 'you'."])
     quick_action: QuickAction | None = Field(None, examples=["formal"])
+
+
+class FactSuggestRequest(BaseModel):
+    """`POST proposals/{id}/facts/suggest/` — the operator vouches for a number QA flagged ("Add to facts")."""
+
+    value: str = Field(min_length=1, max_length=200, examples=["12,5%"])
+    label: str = Field("", max_length=200, examples=["Energy saving"])
 
 
 class RulesUpdateRequest(BaseModel):

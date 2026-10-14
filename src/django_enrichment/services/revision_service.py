@@ -7,6 +7,7 @@
 Invariant: `proposal.proposed_value == value of the latest revision`. Intake records revision 1;
 every later revision (AI correction, manual edit, restore) goes through `add_revision`, which writes
 the revision and the proposal in one transaction. Only `pending` / `drifted` proposals are revisable.
+Every revision carries the QA warnings of its value (`qa_service.check`), copied onto the proposal.
 """
 
 from decimal import Decimal
@@ -17,13 +18,16 @@ from django.db.models import Max, QuerySet
 
 from django_enrichment.enums import REVISABLE_STATUSES, RevisionAuthor
 from django_enrichment.models import ContentProposal, ProposalRevision
+from django_enrichment.services import qa_service
 from django_enrichment.services.revise_values import RevisionNotApplicableError
 
 MEDIA_KINDS = frozenset({"picture", "video"})
 
 
 def record_initial(proposal: ContentProposal) -> ProposalRevision:
-    """Revision 1 of a freshly ingested proposal (`ai`, no instruction) — called by intake."""
+    """Revision 1 of a freshly ingested proposal (`ai`, no instruction) with its QA warnings — called by intake."""
+    proposal.warnings = qa_service.check(proposal, proposal.proposed_value)
+    proposal.save(update_fields=["warnings", "modified_at"])
     return ProposalRevision.objects.create(
         proposal=proposal,
         number=1,
@@ -31,6 +35,7 @@ def record_initial(proposal: ContentProposal) -> ProposalRevision:
         author_kind=RevisionAuthor.AI.value,
         cost_usd=proposal.cost_usd,
         profile_versions=list(proposal.task.profile_versions) if proposal.task else [],
+        warnings=proposal.warnings,
     )
 
 
@@ -65,6 +70,7 @@ def add_revision(
     concurrent accept / edit is never overwritten. `cost_usd` = the completion behind an AI revision,
     `profile_versions` = the profile versions in its prompt. Raises `ValueError` or `RevisionNotApplicableError`.
     The caller's `proposal` is refreshed from the database afterwards."""
+    warnings = qa_service.check(proposal, value)
     with transaction.atomic():
         locked = ContentProposal.objects.select_for_update().get(pk=proposal.pk)
         ensure_revisable(locked)
@@ -80,9 +86,10 @@ def add_revision(
             author=author,
             cost_usd=cost_usd,
             profile_versions=profile_versions or [],
+            warnings=warnings,
         )
-        locked.proposed_value = value
-        locked.save(update_fields=["proposed_value", "modified_at"])
+        locked.proposed_value, locked.warnings = value, warnings
+        locked.save(update_fields=["proposed_value", "warnings", "modified_at"])
     proposal.refresh_from_db()
     return revision
 

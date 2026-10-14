@@ -16,6 +16,7 @@ import nh3
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
+from django_enrichment.kinds import seams
 from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
@@ -50,6 +51,7 @@ class FieldKind(Kind):
                 if build_context
                 else {}
             )
+            seams.record_context(task, subject_ref, context)
             answer = toolbox_calls.complete(
                 system=worker.system_prompt,
                 user=_user_message(params.prompt, context, options, language),

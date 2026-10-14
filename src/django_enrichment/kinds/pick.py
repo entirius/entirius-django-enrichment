@@ -46,7 +46,9 @@ class PickKind(Kind):
         user = join_prompts(
             extras.rules_block([*options.rules, *params.rules]),
             params.prompt,
-            extras.context_block(adapter, subject_ref=subject_ref, channel=params.channel, language=language),
+            extras.context_block(
+                adapter, subject_ref=subject_ref, channel=params.channel, language=language, task=task
+            ),
             seams.memory_block(channel=params.channel, subject_module=worker.target_module, subject_ref=subject_ref),
             seams.profile_block(profile),
             _fields_block(fields),

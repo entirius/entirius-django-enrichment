@@ -28,6 +28,8 @@ class ProposalRevision(BaseModel):
     cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
     # `ProfileVersion` ids in the prompt behind this revision (revision 1 = the task's); empty = no profile used.
     profile_versions = models.JSONField(default=list, blank=True)
+    # QA warnings of this value `[{code, message, span}]` — deterministic checks, plus checklist ones once checked.
+    warnings = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["number"]

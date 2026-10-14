@@ -68,6 +68,26 @@ class CSVImportResponse(BaseModel):
     tasks: list[TaskResponse]
 
 
+class QaSpan(BaseModel):
+    start: int = Field(description="Offset of the first character in the text", examples=[14])
+    end: int = Field(description="Offset after the last character", examples=[18])
+    text: str = Field(examples=["25%"])
+
+
+class QaWarning(BaseModel):
+    """A QA warning of a text value (contract A4 § 4)."""
+
+    code: str = Field(description="rule | NUMBER_NOT_IN_FACTS | checklist", examples=["NUMBER_NOT_IN_FACTS"])
+    message: str = Field(examples=["The number 25% is not in the facts registry or the source context."])
+    span: QaSpan | None = Field(None, description="Where in the text; null when unknown")
+
+
+class WarningsResponse(BaseModel):
+    """`POST proposals/{id}/revise/` with `check_standard` — the proposal's warnings, no revision saved."""
+
+    warnings: list[QaWarning]
+
+
 class ProposalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,6 +119,7 @@ class ProposalResponse(BaseModel):
         description="Share of the producing call's cost; null = unknown", examples=["0.0014"]
     )
     result_ref: str = Field(description="What applying it created (a document ref); blank otherwise", examples=[""])
+    warnings: list[QaWarning] = Field(description="QA warnings of the current value")
     created_at: datetime
     modified_at: datetime
 
@@ -196,6 +217,7 @@ class RevisionResponse(BaseModel):
         description="Cost of the completion behind it; null = unknown or none", examples=["0.0007"]
     )
     profile_versions: list[int] = Field(description="Profile version ids in its prompt", examples=[[4, 9]])
+    warnings: list[QaWarning] = Field(description="QA warnings of this value")
     created_at: datetime
 
 

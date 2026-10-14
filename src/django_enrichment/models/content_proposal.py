@@ -77,6 +77,8 @@ class ContentProposal(BaseModel):
     # What applying this proposal created, when the adapter's `apply` returned `{"subject_ref"}` (a document
     # created from a workflow) — blank otherwise. Revert of a created subject reads it.
     result_ref = models.CharField(max_length=255, blank=True, default="")
+    # QA warnings of the current value `[{code, message, span}]` (`qa_service`) — equal to the latest revision's.
+    warnings = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [

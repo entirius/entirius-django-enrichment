@@ -24,16 +24,27 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
-from django_enrichment.schemas.requests import ReviseRequest, RulePromoteRequest, RulesUpdateRequest, TaskReviseRequest
+from django_enrichment.schemas.requests import (
+    FactSuggestRequest,
+    ReviseRequest,
+    RulePromoteRequest,
+    RulesUpdateRequest,
+    TaskReviseRequest,
+)
 from django_enrichment.schemas.responses import (
+    MemoryEntryResponse,
     ProposalResponse,
     RevisionResponse,
     RulePromoteResponse,
     TaskReviseResponse,
     VariantsResponse,
+    WarningsResponse,
 )
 from django_enrichment.services import (
+    memory_service,
     proposal_service,
+    qa_checklist,
+    qa_service,
     revise_batch_service,
     revise_service,
     revision_service,
@@ -78,6 +89,16 @@ def _revise_response(result) -> Response:
     return Response(_revision(result), status=status.HTTP_201_CREATED)
 
 
+def _check_standard(proposal) -> Response:
+    try:
+        warnings = qa_checklist.check_standard(proposal)
+    except ToolboxError as exc:
+        return handle_toolbox_error(exc)
+    except ValueError as exc:
+        raise_as_drf(exc)
+    return Response(WarningsResponse(warnings=warnings).model_dump(mode="json"))
+
+
 class RevisionViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
@@ -97,13 +118,16 @@ class RevisionViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="AI correction (201 revision, or 200 candidates for `variants`)",
+        summary="AI correction (201 revision; 200 candidates for `variants`, warnings for `check_standard`)",
         request=ReviseRequest,
+        description="`check_standard` answers 200 `{warnings: [...]}` (WarningsResponse) instead of candidates.",
         responses={201: RevisionResponse, 200: VariantsResponse, 400: None, 422: None},
     )
     def revise(self, request: Request, pk: int) -> Response:
         data = _parse(ReviseRequest, request.data)
         proposal = _get_or_404(proposal_service.get_proposal, pk)
+        if data.quick_action == qa_checklist.CHECK_STANDARD:
+            return _check_standard(proposal)
         scope = data.scope.model_dump() if data.scope else None
         try:
             result = revise_service.revise(
@@ -116,6 +140,26 @@ class RevisionViewSet(viewsets.ViewSet):
         except ValueError as exc:
             raise_as_drf(exc)
         return _revise_response(result)
+
+    @extend_schema(
+        tags=_TAGS, summary="Re-run the deterministic QA checks", request=None, responses={200: ProposalResponse}
+    )
+    def qa_check(self, request: Request, pk: int) -> Response:
+        proposal = qa_service.recheck(_get_or_404(proposal_service.get_proposal, pk))
+        return Response(ProposalResponse.model_validate(proposal).model_dump(mode="json"))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Suggest a flagged number for the facts registry (memory fact_suggestion)",
+        request=FactSuggestRequest,
+        responses={201: MemoryEntryResponse},
+    )
+    def suggest_fact(self, request: Request, pk: int) -> Response:
+        data = _parse(FactSuggestRequest, request.data)
+        proposal = _get_or_404(proposal_service.get_proposal, pk)
+        entry = memory_service.suggest_fact(proposal, value=data.value, label=data.label, user=request.user)
+        body = MemoryEntryResponse.model_validate(entry).model_dump(mode="json")
+        return Response(body, status=status.HTTP_201_CREATED)
 
     @extend_schema(tags=_TAGS, summary="Restore revision n as a new revision", responses={201: RevisionResponse})
     def restore(self, request: Request, pk: int, number: int) -> Response:

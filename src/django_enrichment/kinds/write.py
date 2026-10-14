@@ -79,7 +79,9 @@ class _WriteRun:
         return join_prompts(
             extras.rules_block([*self.options.rules, *self.params.rules]),
             self.params.prompt,
-            extras.context_block(self.adapter, subject_ref=subject_ref, channel=channel, language=language),
+            extras.context_block(
+                self.adapter, subject_ref=subject_ref, channel=channel, language=language, task=self.task
+            ),
             seams.memory_block(channel=channel, subject_module=self.worker.target_module, subject_ref=subject_ref),
             _fields_block(self.params.fields, catalog, self.options.field_rules),
             f'Write every field in language "{language}". Answer as one JSON object with one string per field key.',

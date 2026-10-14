@@ -105,6 +105,13 @@ urlpatterns = [
     ),
     path("proposals/<int:pk>/revise/", RevisionViewSet.as_view({"post": "revise"}), name="admin-proposals-revise"),
     path("proposals/<int:pk>/rules/", RevisionViewSet.as_view({"put": "rules"}), name="admin-proposals-rules"),
+    # QA checks (contract A4 § 4)
+    path("proposals/<int:pk>/check/", RevisionViewSet.as_view({"post": "qa_check"}), name="admin-proposals-check"),
+    path(
+        "proposals/<int:pk>/facts/suggest/",
+        RevisionViewSet.as_view({"post": "suggest_fact"}),
+        name="admin-proposals-facts-suggest",
+    ),
     path(
         "proposals/<int:pk>/rules/promote/",
         RevisionViewSet.as_view({"post": "promote_rule"}),

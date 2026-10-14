@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
+from django_enrichment.kinds import seams
 from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
@@ -45,6 +46,7 @@ class TranslateKind(Kind):
         texts = _source_texts(worker.target_module, subject_ref, params.fields or options.fields, params)
         if not texts:
             return []
+        seams.record_context(task, subject_ref, texts)
         context = join_prompts(worker.system_prompt, params.prompt)
         drafts: list[ProposalDraft] = []
         for language in params.target_languages:
