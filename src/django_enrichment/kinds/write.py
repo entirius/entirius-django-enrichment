@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds import extras
+from django_enrichment.kinds import extras, seams
 from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
 from django_enrichment.kinds.field import sanitize_html
 from django_enrichment.services import toolbox_calls
@@ -62,9 +62,10 @@ class _WriteRun:
         """One completion for the subject in `language` → one draft per field."""
         catalog = extras.catalog(self.adapter, channel=self.params.channel, language=language)
         _check_types(self.params.fields, catalog)
+        instructions, profile = seams.profile_for_task(self.task, channel=self.params.channel, kind="write")
         answer = toolbox_calls.complete(
-            system=self.worker.system_prompt,
-            user=self._user_message(subject_ref, language, catalog),
+            system=join_prompts(self.worker.system_prompt, instructions),
+            user=join_prompts(self._user_message(subject_ref, language, catalog), seams.profile_block(profile)),
             json_schema=_answer_schema(self.params.fields, catalog),
             model=self.worker.model,
             kind="write",
@@ -79,6 +80,7 @@ class _WriteRun:
             extras.rules_block([*self.options.rules, *self.params.rules]),
             self.params.prompt,
             extras.context_block(self.adapter, subject_ref=subject_ref, channel=channel, language=language),
+            seams.memory_block(channel=channel, subject_module=self.worker.target_module, subject_ref=subject_ref),
             _fields_block(self.params.fields, catalog, self.options.field_rules),
             f'Write every field in language "{language}". Answer as one JSON object with one string per field key.',
         )

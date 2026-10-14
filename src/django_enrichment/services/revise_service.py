@@ -13,6 +13,7 @@ values and saves nothing. Toolbox errors propagate (the API maps them).
 from django.contrib.auth.models import AbstractBaseUser
 
 from django_enrichment.enums import RevisionAuthor
+from django_enrichment.kinds.base import join_prompts
 from django_enrichment.models import ContentProposal, ProposalRevision
 from django_enrichment.services import (
     revise_prompt,
@@ -45,7 +46,7 @@ def revise(
     meta = revise_prompt.field_meta(proposal, describe_fields)
     shape = revise_values.value_shape(proposal.proposed_value, meta)
     variants = quick_action == VARIANTS
-    answer = _complete(proposal, correction, meta, shape, variants=variants)
+    answer, versions = _complete(proposal, correction, meta, shape, variants=variants)
     if variants:
         return revise_values.candidates(shape, answer.value, meta, original=proposal.proposed_value)
     selection = correction.scope.get("text")
@@ -59,6 +60,7 @@ def revise(
         scope=correction.scope,
         base_value=proposal.proposed_value,
         cost_usd=answer.cost,
+        profile_versions=versions,
     )
 
 
@@ -77,16 +79,19 @@ def _scope(scope: dict | None, proposal: ContentProposal) -> dict:
 
 def _complete(
     proposal: ContentProposal, correction: Correction, meta: dict | None, shape: str, *, variants: bool
-) -> toolbox_calls.Costed:
+) -> tuple[toolbox_calls.Costed, list[int]]:
+    """The completion and the profile versions its prompt used."""
     worker = worker_service.from_source(proposal.source)
     rules = rules_service.rules_for(proposal, worker)
+    company = revise_prompt.company_context(proposal, worker.kind if worker else "")
     prompt = revise_prompt.user_message(proposal, rules=rules, meta=meta, correction=correction)
     schema = revise_values.variants_schema(shape, meta) if variants else revise_values.answer_schema(shape, meta)
-    return toolbox_calls.complete(
-        system=worker.system_prompt if worker else "",
-        user=f"{prompt}\n\n{revise_values.answer_hint(shape, variants=variants)}",
+    answer = toolbox_calls.complete(
+        system=join_prompts(worker.system_prompt if worker else "", company.instructions),
+        user=join_prompts(prompt, company.data, revise_values.answer_hint(shape, variants=variants)),
         json_schema=schema,
         model=worker.model if worker else "",
         kind="revise",
         task=proposal.task,
     )
+    return answer, company.versions

@@ -13,11 +13,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds import extras
+from django_enrichment.kinds import extras, seams
 from django_enrichment.kinds.base import fenced, join_prompts
 from django_enrichment.kinds.extras import rules_block
 from django_enrichment.models import ContentProposal
-from django_enrichment.services import catalog_service
+from django_enrichment.services import catalog_service, proposal_scope
 from django_enrichment.services.catalog_service import NotSupportedError
 
 DescribeFields = Callable[..., list[dict]]
@@ -37,6 +37,27 @@ QUICK_ACTIONS = {
 class Correction:
     instruction: str
     scope: dict
+
+
+@dataclass(frozen=True)
+class CompanyContext:
+    """The company profile and memory a correction sees, and the profile versions behind them."""
+
+    instructions: str
+    data: str
+    versions: list[int]
+
+
+def company_context(proposal: ContentProposal, worker_kind: str) -> CompanyContext:
+    """Profile routed like the original kind (the task type first) + memory about the proposal's subject."""
+    channel = proposal_scope.channel_of(proposal)
+    task_type = proposal.task.type if proposal.task else ""
+    instructions, profile = seams.profile(channel=channel, task_type=task_type, kind=worker_kind)
+    memory = seams.memory_block(
+        channel=channel, subject_module=proposal.target_module, subject_ref=proposal.subject_ref
+    )
+    versions = seams.profile_versions(channel) if instructions or profile else []
+    return CompanyContext(instructions, join_prompts(memory, seams.profile_block(profile)), versions)
 
 
 def expand_instruction(instruction: str, quick_action: str | None) -> str:

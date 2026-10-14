@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds import extras
+from django_enrichment.kinds import extras, seams
 from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
@@ -42,14 +42,17 @@ class PickKind(Kind):
         adapter = get_adapter(worker.target_module)
         fields = _select_fields(params.fields, extras.catalog(adapter, channel=params.channel))
         language = extras.main_language(adapter, channel=params.channel)
+        instructions, profile = seams.profile_for_task(task, channel=params.channel, kind="pick")
         user = join_prompts(
             extras.rules_block([*options.rules, *params.rules]),
             params.prompt,
             extras.context_block(adapter, subject_ref=subject_ref, channel=params.channel, language=language),
+            seams.memory_block(channel=params.channel, subject_module=worker.target_module, subject_ref=subject_ref),
+            seams.profile_block(profile),
             _fields_block(fields),
         )
         answer = toolbox_calls.complete(
-            system=worker.system_prompt,
+            system=join_prompts(worker.system_prompt, instructions),
             user=user,
             json_schema=_answer_schema(fields),
             model=worker.model,

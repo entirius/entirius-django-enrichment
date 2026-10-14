@@ -110,3 +110,18 @@ STEP_OUTPUT_KINDS: dict[str, str] = {
     StepOutput.QUESTIONS.value: "questions",
     StepOutput.DOCUMENT.value: "compose",
 }
+
+
+class MemoryKind(models.TextChoices):
+    """`MemoryEntry.kind` (contract A4 § 3)."""
+
+    SEO_BRIEF = "seo_brief", "SEO brief"
+    ANSWER = "answer", "Operator answer"
+    RULE_SUGGESTION = "rule_suggestion", "Rule suggestion"
+    FACT_SUGGESTION = "fact_suggestion", "Fact suggestion"
+
+
+class MemoryStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISMISSED = "dismissed", "Dismissed"
+    PROMOTED = "promoted", "Promoted to the profile"

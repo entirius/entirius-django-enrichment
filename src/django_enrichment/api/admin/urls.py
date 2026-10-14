@@ -7,6 +7,8 @@
 from django.urls import path
 
 from django_enrichment.api.admin.views.catalog_views import CatalogViewSet
+from django_enrichment.api.admin.views.memory_views import MemoryViewSet
+from django_enrichment.api.admin.views.profile_views import ProfileViewSet
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
 from django_enrichment.api.admin.views.revision_views import RevisionViewSet
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
@@ -45,6 +47,24 @@ urlpatterns = [
         name="admin-runs-step-regenerate",
     ),
     path("runs/<str:uid>/cancel/", RunViewSet.as_view({"post": "cancel"}), name="admin-runs-cancel"),
+    # Company profile (contract A4 § 2)
+    path("profile/", ProfileViewSet.as_view({"get": "retrieve", "put": "update"}), name="admin-profile"),
+    path("profile/versions/", ProfileViewSet.as_view({"get": "versions"}), name="admin-profile-versions"),
+    path(
+        "profile/versions/<int:number>/restore/",
+        ProfileViewSet.as_view({"post": "restore"}),
+        name="admin-profile-version-restore",
+    ),
+    path("profile/status/", ProfileViewSet.as_view({"get": "completeness"}), name="admin-profile-status"),
+    path("profile/schema/", ProfileViewSet.as_view({"get": "json_schema"}), name="admin-profile-schema"),
+    # Memory (contract A4 § 3)
+    path("memory/", MemoryViewSet.as_view({"get": "list"}), name="admin-memory-list"),
+    path(
+        "memory/<int:pk>/",
+        MemoryViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
+        name="admin-memory-detail",
+    ),
+    path("memory/<int:pk>/promote/", MemoryViewSet.as_view({"post": "promote"}), name="admin-memory-promote"),
     # Tasks
     path("tasks/", TaskViewSet.as_view({"get": "list", "post": "create"}), name="admin-tasks-list"),
     path("tasks/import-csv/", TaskViewSet.as_view({"post": "import_csv"}), name="admin-tasks-import-csv"),

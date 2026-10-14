@@ -40,7 +40,8 @@ CATALOG = [
         "options_truncated": False,
     },
 ]
-pytestmark = pytest.mark.usefixtures("toolbox_settings")
+# Kinds read the company profile and memory (database) for every prompt.
+pytestmark = [pytest.mark.usefixtures("toolbox_settings"), pytest.mark.django_db]
 
 
 def _worker(**over):
@@ -70,7 +71,9 @@ class TestWrite:
         worker = _worker(options=options or {"rules": ["No prices."], "field_rules": {"meta_title": "Brand first."}})
         with mock_toolbox() as router:
             route = router["complete"].mock(return_value=_answer(parsed))
-            drafts = WriteKind().run(worker, SimpleNamespace(params={**self._params, **(params or {})}), "SKU-1")
+            drafts = WriteKind().run(
+                worker, SimpleNamespace(type="t", params={**self._params, **(params or {})}), "SKU-1"
+            )
         return drafts, route
 
     def test_one_completion_with_multi_field_schema_and_max_length(self, catalog):
@@ -129,7 +132,9 @@ class TestPick:
         worker = _worker(options={"rules": ["Be strict."]})
         with mock_toolbox() as router:
             route = router["complete"].mock(return_value=_answer(parsed or {"color": "blue", "tags": ["eco", "new"]}))
-            drafts = PickKind().run(worker, SimpleNamespace(params={**self._params, **(params or {})}), "SKU-1")
+            drafts = PickKind().run(
+                worker, SimpleNamespace(type="t", params={**self._params, **(params or {})}), "SKU-1"
+            )
         return drafts, route
 
     def test_enum_schema_and_multiselect_array(self, catalog):
@@ -157,7 +162,9 @@ class TestPick:
         with mock_toolbox() as router:
             with pytest.raises(SubjectError) as exc:
                 PickKind().run(
-                    _worker(options={}), SimpleNamespace(params={**self._params, "fields": ["meta_title"]}), "S"
+                    _worker(options={}),
+                    SimpleNamespace(type="t", params={**self._params, "fields": ["meta_title"]}),
+                    "S",
                 )
             assert not router["complete"].called
         assert exc.value.code == "FIELD_TYPE"
@@ -179,7 +186,7 @@ class TestTranslateFieldsOverride:
         with mock_toolbox() as router:
             route = router.post(self.URL).mock(return_value=httpx.Response(200, json={"items": items}))
             drafts = TranslateKind().run(
-                _worker(options={"fields": ["description"]}), SimpleNamespace(params=params), "SKU-1"
+                _worker(options={"fields": ["description"]}), SimpleNamespace(type="t", params=params), "SKU-1"
             )
         assert _sent(route)["items"] == [{"key": "name", "text": "Krzesło"}]
         assert drafts[0].proposed_value == {"text": "Chair"}

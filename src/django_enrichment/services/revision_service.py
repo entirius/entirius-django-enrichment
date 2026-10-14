@@ -30,6 +30,7 @@ def record_initial(proposal: ContentProposal) -> ProposalRevision:
         value=proposal.proposed_value,
         author_kind=RevisionAuthor.AI.value,
         cost_usd=proposal.cost_usd,
+        profile_versions=list(proposal.task.profile_versions) if proposal.task else [],
     )
 
 
@@ -56,11 +57,13 @@ def add_revision(
     scope: dict | None = None,
     base_value: dict | None = None,
     cost_usd: Decimal | None = None,
+    profile_versions: list[int] | None = None,
 ) -> ProposalRevision:
     """Append the next revision and make it the proposal's value — one transaction, row-locked.
 
     Status (and `base_value`, the value an AI answer was computed on) is re-checked under the lock, so a
-    concurrent accept / edit is never overwritten. `cost_usd` = the completion behind an AI revision. Raises `ValueError` or `RevisionNotApplicableError`.
+    concurrent accept / edit is never overwritten. `cost_usd` = the completion behind an AI revision,
+    `profile_versions` = the profile versions in its prompt. Raises `ValueError` or `RevisionNotApplicableError`.
     The caller's `proposal` is refreshed from the database afterwards."""
     with transaction.atomic():
         locked = ContentProposal.objects.select_for_update().get(pk=proposal.pk)
@@ -76,6 +79,7 @@ def add_revision(
             author_kind=author_kind,
             author=author,
             cost_usd=cost_usd,
+            profile_versions=profile_versions or [],
         )
         locked.proposed_value = value
         locked.save(update_fields=["proposed_value", "modified_at"])

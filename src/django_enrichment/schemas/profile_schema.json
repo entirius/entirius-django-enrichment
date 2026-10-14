@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "django_enrichment/profile_schema.json",
+  "title": "Company profile",
+  "description": "Profile.data (contract A4 § 2). Every key is optional; an empty value means the section is missing.",
+  "x-schema-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "text": {"type": "string", "maxLength": 20000},
+    "line": {"type": "string", "maxLength": 500},
+    "lines": {"type": "array", "items": {"$ref": "#/$defs/line"}, "maxItems": 200},
+    "textSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text": {"$ref": "#/$defs/text"}}
+    }
+  },
+  "properties": {
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {"$ref": "#/$defs/text"},
+        "differentiators": {"$ref": "#/$defs/lines"},
+        "never_say": {"$ref": "#/$defs/lines"}
+      }
+    },
+    "persona": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {"$ref": "#/$defs/text"},
+        "personas": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {"name": {"$ref": "#/$defs/line"}, "text": {"$ref": "#/$defs/text"}}
+          }
+        }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "value"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "label": {"$ref": "#/$defs/line"},
+          "value": {"$ref": "#/$defs/line"},
+          "source": {"$ref": "#/$defs/line"},
+          "verified_at": {"type": "string", "maxLength": 32},
+          "note": {"$ref": "#/$defs/line"}
+        }
+      }
+    },
+    "tone": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text": {"$ref": "#/$defs/text"}, "ai_patterns": {"$ref": "#/$defs/lines"}}
+    },
+    "language": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {"$ref": "#/$defs/text"},
+        "spellings": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["wrong", "right"],
+            "properties": {"wrong": {"$ref": "#/$defs/line"}, "right": {"$ref": "#/$defs/line"}}
+          }
+        },
+        "glossary": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["term"],
+            "properties": {
+              "term": {"$ref": "#/$defs/line"},
+              "translations": {"type": "object", "additionalProperties": {"$ref": "#/$defs/line"}}
+            }
+          }
+        }
+      }
+    },
+    "headlines": {"$ref": "#/$defs/textSection"},
+    "proof": {"$ref": "#/$defs/textSection"},
+    "seo": {"$ref": "#/$defs/textSection"},
+    "checklists": {"$ref": "#/$defs/textSection"},
+    "always_rules": {"$ref": "#/$defs/lines"},
+    "rules": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "pattern", "message"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "pattern": {"type": "string", "minLength": 1, "maxLength": 500},
+          "flags": {"type": "string", "pattern": "^[imsx]*$"},
+          "message": {"$ref": "#/$defs/line"},
+          "do": {"$ref": "#/$defs/line"},
+          "dont": {"$ref": "#/$defs/line"},
+          "active": {"type": "boolean"}
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "enum": ["brand", "persona", "facts", "tone", "language", "headlines", "proof", "seo", "checklists"]
+        }
+      }
+    }
+  }
+}

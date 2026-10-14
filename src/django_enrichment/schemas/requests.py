@@ -254,10 +254,11 @@ class RulesUpdateRequest(BaseModel):
 
 
 class RulePromoteRequest(BaseModel):
-    """`POST proposals/{id}/rules/promote/` — copy one rule to the task's template or to the worker."""
+    """`POST proposals/{id}/rules/promote/` — copy one rule to the task's template or to the worker, or leave it
+    as a rule suggestion for the company profile (`profile`, memory)."""
 
     rule: str = Field(min_length=1, examples=["Never mention the price."])
-    target: Literal["template", "worker"] = Field(examples=["worker"])
+    target: Literal["template", "worker", "profile"] = Field(examples=["worker"])
 
 
 class TemplateCreateRequest(BaseModel):
@@ -303,3 +304,22 @@ class StepRegenerateRequest(BaseModel):
     """`POST runs/{uid}/steps/{key}/regenerate/` — optional operator instruction for the new version."""
 
     instruction: str = Field("", max_length=2000, examples=["Shorter, and lead with the main benefit."])
+
+
+class ProfileUpdateRequest(BaseModel):
+    """`PUT profile/?channel=` — the scope's whole `data` (validated against the profile schema) as a new version."""
+
+    data: dict = Field(examples=[{"brand": {"differentiators": ["Made to order"]}, "always_rules": ["No prices."]}])
+    note: str = Field("", max_length=255, examples=["Added the warranty fact"])
+
+
+class MemoryUpdateRequest(BaseModel):
+    """`PATCH memory/{id}/` — dismiss or re-activate an entry."""
+
+    status: Literal["active", "dismissed"] = Field(examples=["dismissed"])
+
+
+class MemoryPromoteRequest(BaseModel):
+    """`POST memory/{id}/promote/` — rule → `always_rules` (default) or `rules`; fact → `facts` (default)."""
+
+    target: Literal["always_rules", "rules", "facts"] | None = Field(None, examples=["always_rules"])

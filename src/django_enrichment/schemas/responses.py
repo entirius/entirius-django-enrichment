@@ -34,6 +34,7 @@ class TaskResponse(BaseModel):
         description="Known cost per source: completion | translate | seo | media", examples=[{"completion": "0.0042"}]
     )
     cost_complete: bool = Field(description="False once a toolbox call reported no cost", examples=[True])
+    profile_versions: list[int] = Field(description="Profile version ids its prompts used", examples=[[4, 9]])
     # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
     proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
@@ -194,6 +195,7 @@ class RevisionResponse(BaseModel):
     cost_usd: Decimal | None = Field(
         description="Cost of the completion behind it; null = unknown or none", examples=["0.0007"]
     )
+    profile_versions: list[int] = Field(description="Profile version ids in its prompt", examples=[[4, 9]])
     created_at: datetime
 
 
@@ -299,3 +301,84 @@ class RunListResponse(BaseModel):
     next: str | None
     previous: str | None
     results: list[RunResponse]
+
+
+class ProfileResponse(BaseModel):
+    """`GET/PUT profile/?channel=` — one scope's own data (blank channel = the instance)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel: str = Field(description="Blank = the whole instance, else a channel overlay", examples=[""])
+    data: dict = Field(examples=[{"brand": {"text": "We build modular sofas.", "differentiators": ["Made to order"]}}])
+    version: int = Field(description="0 = never saved", examples=[3])
+    schema_version: int = Field(examples=[1])
+    updated_by_id: int | None
+    modified_at: datetime | None
+
+
+class ProfileVersionResponse(BaseModel):
+    """`GET profile/versions/` item — a snapshot of the data after one save."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version: int = Field(examples=[2])
+    note: str = Field(examples=["restored version 1"])
+    data: dict
+    created_by_id: int | None
+    created_at: datetime
+
+
+class ProfileSectionStatus(BaseModel):
+    key: str = Field(examples=["facts"])
+    complete: bool = Field(examples=[False])
+    minimum: str = Field(examples=["at least 3 verified facts"])
+
+
+class ProfileStatusResponse(BaseModel):
+    """`GET profile/status/?channel=` — completeness of the effective (merged) profile."""
+
+    channel: str = Field(examples=["default"])
+    complete: bool = Field(examples=[False])
+    sections: list[ProfileSectionStatus]
+
+
+class ProfileSchemaResponse(BaseModel):
+    """`GET profile/schema/` — the JSON Schema `PUT profile/` validates against."""
+
+    schema_version: int = Field(examples=[1])
+    json_schema: dict = Field(description="JSON Schema (draft 2020-12) of `data`")
+
+
+class MemoryEntryResponse(BaseModel):
+    """`GET memory/` item, `PATCH memory/{id}/` result."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    channel: str = Field(examples=[""])
+    subject_module: str = Field(examples=["pim"])
+    subject_ref: str = Field(examples=["SKU-1"])
+    kind: str = Field(description="seo_brief | answer | rule_suggestion | fact_suggestion", examples=["answer"])
+    title: str = Field(examples=["Since when do you make sofas?"])
+    text: str = Field(examples=["Since 1999."])
+    data: dict
+    source: str = Field(examples=["run:3f2a/ask"])
+    status: str = Field(description="active | dismissed | promoted", examples=["active"])
+    expires_at: datetime | None
+    created_by_id: int | None
+    created_at: datetime
+
+
+class MemoryListResponse(BaseModel):
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[MemoryEntryResponse]
+
+
+class MemoryPromoteResponse(BaseModel):
+    """`POST memory/{id}/promote/` — the promoted entry and the profile version it created."""
+
+    entry: MemoryEntryResponse
+    profile: ProfileResponse

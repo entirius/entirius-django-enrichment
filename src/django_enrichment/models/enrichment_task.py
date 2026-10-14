@@ -34,6 +34,8 @@ class EnrichmentTask(BaseModel):
     cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
     cost_breakdown = models.JSONField(default=dict, blank=True)
     cost_complete = models.BooleanField(default=True)
+    # `ProfileVersion` ids whose profile reached this task's prompts (instance + channel overlay, contract A4 § 2).
+    profile_versions = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "type"], name="enr_task_status_type_idx")]

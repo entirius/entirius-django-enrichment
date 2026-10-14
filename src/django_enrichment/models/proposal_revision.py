@@ -26,6 +26,8 @@ class ProposalRevision(BaseModel):
     author = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     # Cost of the completion behind this revision (revision 1 = the proposal's cost); null = unknown or no call.
     cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+    # `ProfileVersion` ids in the prompt behind this revision (revision 1 = the task's); empty = no profile used.
+    profile_versions = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["number"]

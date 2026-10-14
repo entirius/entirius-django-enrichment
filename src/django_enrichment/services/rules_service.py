@@ -6,11 +6,12 @@
 
 A rule is a short operator sentence ("Never mention the price"). Proposal rules live on
 `ContentProposal.rules`; promotion copies one rule up to the worker (`options.rules`, version bump)
-or to the task's template (`params.template`, contract A3 § 4).
+or to the task's template (`params.template`, contract A3 § 4). Target `profile` does not edit the company
+profile: it leaves a `rule_suggestion` in memory for the operator to promote (contract A4 § 3).
 """
 
 from django_enrichment.models import ContentProposal, Worker
-from django_enrichment.services import template_service, worker_service
+from django_enrichment.services import memory_service, template_service, worker_service
 from django_enrichment.services.rule_limits import validate_rules
 
 
@@ -28,7 +29,8 @@ def rules_for(proposal: ContentProposal, worker: Worker | None) -> list[str]:
 
 
 def promote(proposal: ContentProposal, rule: str, *, target: str) -> list[str]:
-    """Append `rule` to the template or the worker; returns that target's rules. Raises `ValueError`."""
+    """Append `rule` to the template or the worker, or suggest it for the profile; returns that target's
+    rules (for `profile`: the channel's active rule suggestions). Raises `ValueError`."""
     if not (cleaned := validate_rules([rule])):
         raise ValueError("rule must not be blank")
     rule = cleaned[0]
@@ -36,6 +38,9 @@ def promote(proposal: ContentProposal, rule: str, *, target: str) -> list[str]:
         return _promote_to_worker(proposal, rule)
     if target == "template":
         return _promote_to_template(proposal, rule)
+    if target == "profile":
+        entry = memory_service.suggest_rule(proposal, rule)
+        return memory_service.rule_suggestions(entry.channel)
     raise ValueError(f"unknown promotion target {target!r}")
 
 

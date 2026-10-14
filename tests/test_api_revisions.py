@@ -76,6 +76,7 @@ class TestRevisions:
             "author_kind",
             "author",
             "cost_usd",
+            "profile_versions",
             "created_at",
         }
 

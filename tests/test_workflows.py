@@ -12,8 +12,9 @@ import pytest
 from django_utils.toolbox.testing import error_response, mock_toolbox
 
 from django_enrichment.kinds.questions import AnswersMissingError
-from django_enrichment.models import ContentProposal, EnrichmentTask
+from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntry
 from django_enrichment.services import (
+    profile_service,
     proposal_service,
     task_service,
     undo_service,
@@ -251,6 +252,20 @@ class TestArticleFlow:
         with pytest.raises(AnswersMissingError) as exc:
             proposal_service.accept(questions, user=admin_user)
         assert exc.value.missing == ["tone"]
+
+    def test_approved_answers_land_in_memory_and_steps_use_the_profile(self, article, toolbox, run_steps, admin_user):
+        profile_service.save_profile(channel="", data={"always_rules": ["Never promise delivery dates."]})
+        run = _start(run_steps, admin_user, "article")
+        questions = self._answer(run, {"years": "Since 1999", "tone": "warm"}, admin_user)
+        run = _accept(run_steps, questions, admin_user)
+        answers = MemoryEntry.objects.filter(kind="answer").order_by("pk")
+        assert [(a.title, a.text, a.source) for a in answers] == [
+            ("Since when?", "Since 1999", f"run:{run.uid}/ask"),
+            ("Tone?", "warm", f"run:{run.uid}/ask"),
+        ]
+        draft_task = EnrichmentTask.objects.get(pk=_proposal(run, "draft").task_id)
+        assert draft_task.profile_versions == profile_service.version_ids("default")
+        assert "Never promise delivery dates." in wf.sent(toolbox)[-1]["messages"][0]["content"]
 
     def test_end_to_end_creates_the_document(self, article, toolbox, run_steps, admin_user, answers_memory, setup):
         run = _start(run_steps, admin_user, "article")
