@@ -35,12 +35,14 @@ def revise(
     quick_action: str | None = None,
     scope: dict | None = None,
     user: AbstractBaseUser | None = None,
+    describe_fields: revise_prompt.DescribeFields | None = None,
 ) -> ProposalRevision | list[dict]:
     """A new `ai` revision, or (quick action `variants`) a list of candidate values. Raises `ValueError`
-    (not revisable / invalid input) or `RevisionNotApplicableError` (answer does not fit the value)."""
+    (not revisable / invalid input) or `RevisionNotApplicableError` (answer does not fit the value).
+    `describe_fields` overrides the field-catalog lookup (a batch passes a cached one)."""
     revision_service.ensure_text_revisable(proposal)
     correction = Correction(revise_prompt.expand_instruction(instruction, quick_action), _scope(scope, proposal))
-    meta = revise_prompt.field_meta(proposal)
+    meta = revise_prompt.field_meta(proposal, describe_fields)
     shape = revise_values.value_shape(proposal.proposed_value, meta)
     variants = quick_action == VARIANTS
     answer = _complete(proposal, correction, meta, shape, variants=variants)
