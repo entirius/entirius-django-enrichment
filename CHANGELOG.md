@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- AI workers: `Worker` model (Django admin only, migration `0004_worker`), kind registry (`register_kind`) with the
+  base kinds `translate` and `field`, toolbox calls on `django_utils.toolbox.ToolboxClient`, and an internal Celery
+  runner (`enrichment.run_task`) dispatched on commit when an active internal Worker owns the task type.
+- API: `GET workers/`, params validation on `POST tasks/` when a Worker owns the type, `PATCH proposals/{id}/`
+  (pending only).
+- Product video (Amendment A1): `intake_media(target_kind="video")` accepts mp4 (magic bytes,
+  `ENRICHMENT_MAX_VIDEO_BYTES`); kind `video` (adapter `main_picture` → toolbox media job → one staged video
+  proposal per subject), polling up to `ENRICHMENT_VIDEO_TIMEOUT_S`; `ENRICHMENT_VIDEO_TOOLBOX_URL/_API_KEY/_CHANNEL`
+  (default `AI_TOOLBOX_*`, POC). `ProposalDraft.media_file` routes a draft to `intake_media`.
+- API: per-product reads for the CMS product page — `GET proposals/?subject_ref=`, `GET tasks/?subject_ref=`
+  (list-mode refs) `&target_module=`, `tasks/?status=` takes a comma list. `task_service.list_tasks` takes a
+  `TaskFilters` dataclass.
+- Failure reasons: `EnrichmentTask.errors` (migration `0005_task_errors`) — the runner records
+  `{subject_ref, code, error_id}` per failed subject (toolbox error code via `toolbox_calls.failure_code`,
+  never exception text, capped at 20). Task responses add `errors` and `proposal_counts`.
+- Dependencies: `httpx` (video job calls), `entirius-django-utils>=2.1.0` (toolbox client), `nh3` (HTML sanitising); `respx` in the `test` extra.
+
 ## 2.2.0 — 2026-10-12
 
 - Access: the module declares its own access areas on its AppConfig and its admin views (copied from the

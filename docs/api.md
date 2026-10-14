@@ -14,9 +14,10 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 
 | Method | Endpoint | Service | Notes |
 |--------|----------|---------|-------|
-| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. Throttled (`enrichment_spawn`, 120/min). → 201 |
+| `GET` | `workers/?target_module=` | `worker_service.list_active` | Active workers, plain list `[{key, label, kind, target_module, mode, params_schema}]` |
+| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). Throttled (`enrichment_spawn`, 120/min). → 201 |
 | `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
-| `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status`/`batch_key`, paginated |
+| `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status` (one or a comma list)/`batch_key`/`target_module`/`subject_ref`, paginated |
 | `GET` | `tasks/{id}/` | `task_service.get_task` | Retrieve |
 | `GET` | `tasks/{id}/targets/?page=` | `task_service.resolve_targets` | Lazy worker pull (adapter-resolved) |
 | `PATCH` | `tasks/{id}/` | `task_service.transition_status` | Drive the state machine (e.g. `in_progress`, `done`) |
@@ -26,8 +27,9 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `POST` | `proposals/` | `proposal_service.intake` | Worker intake — idempotent on `external_ref`. Throttled (`enrichment_intake`, 100/min). → 201 |
 | `POST` | `proposals/upload-media/` | `proposal_service.intake_media` | Multipart media intake — stages the binary, `target_kind=picture`. Size + MIME caps. Throttled. → 201 |
 | `GET` | `proposals/{id}/staged-file/` | `staging_store` | Stream a proposal's staged binary (admin-only) — the CMS "after" preview |
-| `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search; `ordering` allowlisted |
+| `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref; `ordering` allowlisted |
 | `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
+| `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending only, else 400 |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter |
 | `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
 | `POST` | `proposals/bulk-accept/` | `proposal_service.bulk_accept` | Pending-only. Sync in-request `≤ ENRICHMENT_ASYNC_APPLY_THRESHOLD`, else Celery canvas. → 200 `{mode, enqueued, applied, drifted, failed}` |
@@ -88,9 +90,27 @@ worker-facing path. The other endpoints (operator review) are not throttled.
 ## Review filters
 
 `GET /proposals/` filters server-side: `status` (default `pending`), `target_module`, `target_kind`,
-`batch_id`, `source`, `confidence_min`, `search` (matches `subject_label`). `ordering` is validated
+`batch_id`, `source`, `confidence_min`, `search` (matches `subject_label`), `subject_ref` (exact). `ordering` is validated
 against an allowlist (`created_at`, `confidence`, `status`, `subject_ref`, each `±`) before reaching
 `order_by` — an unknown field is a 400, never an ORM error that leaks column names.
+
+## Per-product view
+
+The CMS product page shows the AI work of one product with two reads:
+
+```
+GET /proposals/?subject_ref=SKU-1&target_module=pim&status=pending
+GET /tasks/?subject_ref=SKU-1&target_module=pim&page_size=5        # recent tasks, any status
+```
+
+`tasks/?subject_ref=` matches **list-mode tasks only** (`scope_spec.refs`); `filter`/`gap`/`csv` tasks carry
+no refs and never match. It is a text match of the quoted ref inside the `refs` array (whole element,
+case-insensitive), not JSON containment — no index; fine while the task table grows with commands, not the
+catalogue. `target_module` matches `scope_spec.module`.
+
+Every task response carries `errors` (why subjects failed — stable codes, see `docs/data-model.md`) and
+`proposal_counts` (`{status: n}` of the task's proposals, one grouped query per page), so the CMS can say
+"1 proposal to review", "applied" or "failed: translator not configured" without more calls.
 
 ## Accept / drift (D2)
 

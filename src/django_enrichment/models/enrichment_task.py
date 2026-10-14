@@ -24,6 +24,9 @@ class EnrichmentTask(BaseModel):
     status = models.CharField(max_length=20, choices=TaskStatus.choices, default=TaskStatus.OPEN, db_index=True)
     requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     counts = models.JSONField(default=dict, blank=True)
+    # Why subjects failed: [{subject_ref, code, error_id}], capped (task_service.ERRORS_CAP). `code` is a stable
+    # error code (a toolbox error code), never exception text; `error_id` finds the full trace in the log.
+    errors = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "type"], name="enr_task_status_type_idx")]

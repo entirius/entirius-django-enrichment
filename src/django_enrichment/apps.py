@@ -18,3 +18,13 @@ class EnrichmentConfig(AppConfig):
     ]
     # Every admin view carries its access_area; no route needs a path rule.
     access_route_rules = []
+
+    def ready(self) -> None:
+        from django_enrichment.kinds import register_kind
+        from django_enrichment.kinds.field import FieldKind
+        from django_enrichment.kinds.translate import TranslateKind
+        from django_enrichment.kinds.video import VideoKind
+
+        register_kind("translate", TranslateKind)
+        register_kind("field", FieldKind)
+        register_kind("video", VideoKind)

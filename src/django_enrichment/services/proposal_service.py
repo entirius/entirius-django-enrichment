@@ -115,8 +115,11 @@ def intake(
     return proposal
 
 
-def _sniff_image_mime(head: bytes) -> str | None:
-    """Detect image type from leading magic bytes — authoritative, never the client's declared type.
+_MP4_BRANDS = frozenset({b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"avc1", b"dash", b"M4V "})
+
+
+def _sniff_media_mime(head: bytes) -> str | None:
+    """Detect image / mp4 type from leading magic bytes — authoritative, never the client's declared type.
 
     Trusting the multipart `content_type` would let a worker (or a leaked key) stage an executable
     behind an `image/png` label. Sniffing the actual bytes is the security-correct gate.
@@ -131,28 +134,42 @@ def _sniff_image_mime(head: bytes) -> str | None:
         return "image/webp"
     if head[4:8] == b"ftyp" and b"avif" in head[8:20]:
         return "image/avif"
+    if head[4:8] == b"ftyp" and head[8:12] in _MP4_BRANDS:  # not HEIC, QuickTime, M4A, 3GP
+        return "video/mp4"
     return None
 
 
-def _validate_media(file) -> None:
-    """Boundary validation for a staged image — size cap + magic-byte MIME allowlist. Raises ValueError.
+def _media_rules(target_kind: str) -> tuple[str, int, frozenset[str]]:
+    """(label, size cap, MIME allowlist) per media kind. Raises ValueError for any other kind.
 
-    The service owns this (not just the view): a management command or bridge that calls
-    `intake_media` directly gets the same guarantee.
+    django.conf.settings is checked first so a host override / test fixture wins; the module-settings
+    value is the single source of the literal defaults (no duplicated constants here).
     """
-    # django.conf.settings checked first so a host override / test fixture wins; the module-settings
-    # value is the single source of the literal defaults (no duplicated constants here).
-    max_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
-    allowed = getattr(settings, "ENRICHMENT_ALLOWED_IMAGE_MIME", enrichment_settings.ENRICHMENT_ALLOWED_IMAGE_MIME)
+    if target_kind == "picture":
+        max_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
+        allowed = getattr(settings, "ENRICHMENT_ALLOWED_IMAGE_MIME", enrichment_settings.ENRICHMENT_ALLOWED_IMAGE_MIME)
+        return "image", max_bytes, frozenset(allowed)
+    if target_kind == "video":
+        max_bytes = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", enrichment_settings.ENRICHMENT_MAX_VIDEO_BYTES)
+        return "video", max_bytes, frozenset({"video/mp4"})
+    raise ValueError(f"unsupported media target_kind {target_kind!r} (allowed: picture, video)")
+
+
+def _validate_media(file, target_kind: str = "picture") -> None:
+    """Boundary validation for a staged binary — size cap + magic-byte MIME allowlist. Raises ValueError.
+
+    The service owns this (not just the view): a management command, bridge or the internal runner
+    that calls `intake_media` directly gets the same guarantee.
+    """
+    label, max_bytes, allowed = _media_rules(target_kind)
     size = getattr(file, "size", None)
     if size is not None and size > max_bytes:
         raise ValueError(f"file exceeds the {max_bytes}-byte cap")
     file.seek(0)
     head = file.read(32)
     file.seek(0)
-    mime = _sniff_image_mime(head)
-    if mime is None or mime not in allowed:
-        raise ValueError(f"unsupported image type (allowed: {sorted(allowed)})")
+    if _sniff_media_mime(head) not in allowed:
+        raise ValueError(f"unsupported {label} type (allowed: {sorted(allowed)})")
 
 
 def intake_media(
@@ -170,20 +187,21 @@ def intake_media(
     confidence: Decimal | None = None,
     batch_id: str = "",
     external_ref: str = "",
+    target_kind: str = "picture",
 ) -> ContentProposal:
     """Intake a media proposal: validate + stage the binary, then create the proposal (etap-08).
 
-    The binary lands in the bus's staging-store (NOT the target module). `target_kind` is forced to
-    `"picture"`. Cleans up the staged file if proposal creation fails, or if `external_ref`
+    The binary lands in the bus's staging-store (NOT the target module). `target_kind` is `"picture"`
+    (default) or `"video"` (mp4, Amendment A1); each has its own size cap and MIME allowlist. Cleans up the staged file if proposal creation fails, or if `external_ref`
     idempotency returns a pre-existing proposal (our freshly staged copy would otherwise orphan).
     """
-    _validate_media(file)
+    _validate_media(file, target_kind)
     ref = staging_store.save(file)
     try:
         proposal = intake(
             target_module=target_module,
             subject_ref=subject_ref,
-            target_kind="picture",
+            target_kind=target_kind,
             target_locator=target_locator,
             proposed_value=proposed_value,
             task=task,
@@ -231,6 +249,7 @@ def list_for_review(
     source: str | None = None,
     confidence_min: Decimal | None = None,
     search: str | None = None,
+    subject_ref: str | None = None,
     ordering: str = "-created_at",
 ) -> QuerySet[ContentProposal]:
     """Server-side filtered/ordered review queue."""
@@ -249,6 +268,8 @@ def list_for_review(
         qs = qs.filter(confidence__gte=confidence_min)
     if search:
         qs = qs.filter(subject_label__icontains=search)
+    if subject_ref:
+        qs = qs.filter(subject_ref=subject_ref)
     return qs.order_by(ordering)
 
 
@@ -259,6 +280,15 @@ def get_proposal(proposal_id: int) -> ContentProposal:
         return ContentProposal.objects.get(pk=proposal_id)
     except ContentProposal.DoesNotExist as exc:
         raise ValueError(f"Proposal {proposal_id} not found") from exc
+
+
+def update_value(proposal: ContentProposal, proposed_value: dict) -> ContentProposal:
+    """Operator edit of a pending proposal's value before accept. Only `proposed_value` changes."""
+    if proposal.status != ProposalStatus.PENDING.value:
+        raise ValueError(f"only pending proposals can be edited (status: {proposal.status})")
+    proposal.proposed_value = proposed_value
+    proposal.save(update_fields=["proposed_value", "modified_at"])
+    return proposal
 
 
 def accept(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) -> ContentProposal:

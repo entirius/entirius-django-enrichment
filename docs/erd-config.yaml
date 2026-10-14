@@ -8,3 +8,4 @@ groups:
       - EnrichmentTask
       - ContentProposal
       - SpawnRule
+      - Worker

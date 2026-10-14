@@ -9,6 +9,7 @@ from django.urls import path
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
+from django_enrichment.api.admin.views.worker_views import WorkerViewSet
 
 urlpatterns = [
     # Spawn rules (etap-13)
@@ -19,6 +20,8 @@ urlpatterns = [
         name="admin-spawn-rules-detail",
     ),
     path("spawn-rules/<slug:key>/run/", SpawnRuleViewSet.as_view({"post": "run"}), name="admin-spawn-rules-run"),
+    # Workers
+    path("workers/", WorkerViewSet.as_view({"get": "list"}), name="admin-workers-list"),
     # Tasks
     path("tasks/", TaskViewSet.as_view({"get": "list", "post": "create"}), name="admin-tasks-list"),
     path("tasks/import-csv/", TaskViewSet.as_view({"post": "import_csv"}), name="admin-tasks-import-csv"),
@@ -35,7 +38,11 @@ urlpatterns = [
         ProposalViewSet.as_view({"post": "upload_media"}),
         name="admin-proposals-upload-media",
     ),
-    path("proposals/<int:pk>/", ProposalViewSet.as_view({"get": "retrieve"}), name="admin-proposals-detail"),
+    path(
+        "proposals/<int:pk>/",
+        ProposalViewSet.as_view({"get": "retrieve", "patch": "partial_update"}),
+        name="admin-proposals-detail",
+    ),
     path(
         "proposals/<int:pk>/staged-file/",
         ProposalViewSet.as_view({"get": "staged_file"}),

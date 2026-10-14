@@ -62,6 +62,12 @@ class TaskUpdateRequest(BaseModel):
 _MAX_PROPOSED_VALUE_BYTES = 65536  # 64 KiB
 
 
+def _check_proposed_value_size(v: dict) -> dict:
+    if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > _MAX_PROPOSED_VALUE_BYTES:
+        raise ValueError(f"proposed_value exceeds the {_MAX_PROPOSED_VALUE_BYTES}-byte limit")
+    return v
+
+
 class ProposalIntakeRequest(BaseModel):
     """`POST /proposals/` — a worker submits one proposal. Idempotent on `external_ref`."""
 
@@ -85,9 +91,18 @@ class ProposalIntakeRequest(BaseModel):
     @field_validator("proposed_value")
     @classmethod
     def _cap_proposed_value_size(cls, v: dict) -> dict:
-        if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > _MAX_PROPOSED_VALUE_BYTES:
-            raise ValueError(f"proposed_value exceeds the {_MAX_PROPOSED_VALUE_BYTES}-byte limit")
-        return v
+        return _check_proposed_value_size(v)
+
+
+class ProposalUpdateRequest(BaseModel):
+    """`PATCH /proposals/{id}/` — the operator edits a pending proposal's value before accepting it."""
+
+    proposed_value: dict = Field(description="Replacement value (opaque to the bus)", examples=[{"text": "Edited."}])
+
+    @field_validator("proposed_value")
+    @classmethod
+    def _cap_proposed_value_size(cls, v: dict) -> dict:
+        return _check_proposed_value_size(v)
 
 
 class ProposalMediaIntakeRequest(BaseModel):

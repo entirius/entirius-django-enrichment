@@ -34,6 +34,12 @@ def _serialize(task) -> dict:
     return TaskResponse.model_validate(task).model_dump(mode="json")
 
 
+def _serialize_with_proposals(tasks: list) -> list[dict]:
+    """Tasks plus the status counts of their proposals (what the operator still has to review)."""
+    counts = task_service.proposal_counts([t.pk for t in tasks])
+    return [{**_serialize(t), "proposal_counts": counts[t.pk]} for t in tasks]
+
+
 def _get_task_or_404(task_id: int):
     try:
         return task_service.get_task(task_id)
@@ -61,26 +67,38 @@ class TaskViewSet(viewsets.ViewSet):
         summary="List enrichment tasks",
         parameters=[
             OpenApiParameter("type", str, OpenApiParameter.QUERY, required=False),
-            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "status", str, OpenApiParameter.QUERY, required=False, description="one status or a comma list"
+            ),
             OpenApiParameter("batch_key", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "subject_ref", str, OpenApiParameter.QUERY, required=False, description="list-mode tasks naming it"
+            ),
+            OpenApiParameter("target_module", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page", int, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page_size", int, OpenApiParameter.QUERY, required=False),
         ],
         responses={200: TaskListResponse},
     )
     def list(self, request: Request) -> Response:
+        qp = request.query_params
+        status_param = qp.get("status")
         qs = task_service.list_tasks(
-            type=request.query_params.get("type"),
-            status=request.query_params.get("status"),
-            batch_key=request.query_params.get("batch_key"),
+            task_service.TaskFilters(
+                type=qp.get("type"),
+                statuses=status_param.split(",") if status_param else None,
+                batch_key=qp.get("batch_key"),
+                subject_ref=qp.get("subject_ref"),
+                target_module=qp.get("target_module"),
+            )
         )
         paginator = AdminPageNumberPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response([_serialize(t) for t in page])
+        return paginator.get_paginated_response(_serialize_with_proposals(list(page)))
 
     @extend_schema(tags=_TAGS, summary="Retrieve task", responses={200: TaskResponse, 404: None})
     def retrieve(self, request: Request, pk: int) -> Response:
-        return Response(_serialize(_get_task_or_404(pk)))
+        return Response(_serialize_with_proposals([_get_task_or_404(pk)])[0])
 
     @extend_schema(tags=_TAGS, summary="Spawn task", request=TaskSpawnRequest, responses={201: TaskResponse, 400: None})
     def create(self, request: Request) -> Response:

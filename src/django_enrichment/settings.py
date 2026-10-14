@@ -56,3 +56,12 @@ ENRICHMENT_MAX_CSV_BYTES = getattr(settings, "ENRICHMENT_MAX_CSV_BYTES", 10 * 10
 #                                   new gap candidates (breaks the reject→respawn→reject loop).
 ENRICHMENT_SPAWN_DEFAULT_LIMIT = getattr(settings, "ENRICHMENT_SPAWN_DEFAULT_LIMIT", 200)
 ENRICHMENT_SPAWN_COOLDOWN_DAYS = getattr(settings, "ENRICHMENT_SPAWN_COOLDOWN_DAYS", 7)
+
+# Product video (Amendment A1). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_MAX_VIDEO_BYTES     — media intake cap for `target_kind="video"` (mp4 only, magic-byte sniffed).
+# ENRICHMENT_VIDEO_TIMEOUT_S     — how long the `video` kind polls a toolbox media job inside the Celery task.
+# ENRICHMENT_VIDEO_TOOLBOX_URL / _API_KEY / _CHANNEL — media job endpoint; each blank → the matching
+#                                  AI_TOOLBOX_* setting. POC escape hatch (Redmine #34464).
+ENRICHMENT_MAX_VIDEO_BYTES = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", 100 * 1024 * 1024)
+ENRICHMENT_VIDEO_TIMEOUT_S = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", 900)

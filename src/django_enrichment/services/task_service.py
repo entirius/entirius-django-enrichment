@@ -19,20 +19,23 @@ in etap-02), so the bus reads it from `scope_spec`. `filter` is a simplified `ga
 check); `gap` routes to `adapter.find_gaps`, the rest to `adapter.resolve_targets`.
 """
 
+import json
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
-from django.db.models import QuerySet
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import csv_import
+from django_enrichment.services import csv_import, worker_service
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
+ERRORS_CAP = 20
 
 
 def _validate_scope_spec(scope_spec: dict) -> None:
@@ -61,8 +64,13 @@ def spawn(
     requested_by: AbstractBaseUser | None = None,
     batch_key: str = "",
 ) -> EnrichmentTask:
-    """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task)."""
+    """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
+
+    When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
+    to the internal runner after commit (`worker_service.dispatch_if_internal`).
+    """
     _validate_scope_spec(scope_spec)
+    params = worker_service.validate_params(type, params or {})
 
     if batch_key:
         open_task = EnrichmentTask.objects.filter(batch_key=batch_key, status=TaskStatus.OPEN.value).first()
@@ -71,9 +79,11 @@ def spawn(
                 return _append_refs(open_task, list(scope_spec.get("refs", [])))
             return open_task
 
-    return EnrichmentTask.objects.create(
-        type=type, scope_spec=scope_spec, params=params or {}, requested_by=requested_by, batch_key=batch_key
+    task = EnrichmentTask.objects.create(
+        type=type, scope_spec=scope_spec, params=params, requested_by=requested_by, batch_key=batch_key
     )
+    worker_service.dispatch_if_internal(task)
+    return task
 
 
 def import_csv(
@@ -120,18 +130,41 @@ def list_open(type: str | None = None) -> QuerySet[EnrichmentTask]:
     return qs.order_by("created_at")
 
 
-def list_tasks(
-    *, type: str | None = None, status: str | None = None, batch_key: str | None = None
-) -> QuerySet[EnrichmentTask]:
+@dataclass(frozen=True)
+class TaskFilters:
+    """Admin task-list filters; `None` = no filter. `statuses` match any; `subject_ref` needs `refs` (list mode)."""
+
+    type: str | None = None
+    statuses: list[str] | None = None
+    batch_key: str | None = None
+    subject_ref: str | None = None
+    target_module: str | None = None
+
+
+def list_tasks(filters: TaskFilters | None = None) -> QuerySet[EnrichmentTask]:
     """Filtered task list for the admin API (any status, newest first)."""
+    f = filters or TaskFilters()
     qs = EnrichmentTask.objects.all()
-    if type is not None:
-        qs = qs.filter(type=type)
-    if status is not None:
-        qs = qs.filter(status=status)
-    if batch_key is not None:
-        qs = qs.filter(batch_key=batch_key)
+    if f.type is not None:
+        qs = qs.filter(type=f.type)
+    if f.statuses:
+        qs = qs.filter(status__in=f.statuses)
+    if f.batch_key is not None:
+        qs = qs.filter(batch_key=f.batch_key)
+    if f.target_module is not None:
+        qs = qs.filter(scope_spec__module=f.target_module)
+    if f.subject_ref:
+        qs = qs.filter(scope_spec__refs__icontains=_json_token(f.subject_ref))
     return qs.order_by("-created_at")
+
+
+def _json_token(ref: str) -> str:
+    """`"<ref>"` as it is serialised inside the `refs` JSON array — the quotes make the match whole-element.
+
+    A text match on the array, not JSON containment: `contains` on a JSON key is Postgres-only and the suite
+    runs on SQLite. Case-insensitive (`icontains`); SKUs differing only in case are not a real catalogue.
+    """
+    return json.dumps(ref, ensure_ascii=False)
 
 
 def get_task(task_id: int) -> EnrichmentTask:
@@ -249,8 +282,12 @@ def transition_status(
     allowed = TASK_STATUS_TRANSITIONS.get(task.status)
     if allowed is None or new_status not in allowed:
         raise ValueError(f"invalid task transition: {task.status} -> {new_status}")
-    task.status = new_status
-    task.save(update_fields=["status", "modified_at"])
+    now = timezone.now()
+    # Conditional on the status we read: a stale object must not overwrite a concurrent change.
+    updated = EnrichmentTask.objects.filter(pk=task.pk, status=task.status).update(status=new_status, modified_at=now)
+    if not updated:
+        raise ValueError(f"task {task.pk} is no longer {task.status} (changed concurrently)")
+    task.status, task.modified_at = new_status, now
     return task
 
 
@@ -279,3 +316,26 @@ def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTa
         locked.save(update_fields=["counts", "modified_at"])
     task.counts = locked.counts
     return task
+
+
+def record_error(task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str) -> EnrichmentTask:
+    """Remember why a subject failed (the first `ERRORS_CAP` failures; the counter keeps the total)."""
+    task.refresh_from_db(fields=["errors"])
+    if len(task.errors) < ERRORS_CAP:
+        task.errors.append({"subject_ref": subject_ref, "code": code, "error_id": error_id})
+        task.save(update_fields=["errors", "modified_at"])
+    return task
+
+
+def proposal_counts(task_ids: list[int]) -> dict[int, dict[str, int]]:
+    """{task_id: {proposal status: n}} for the given tasks — one grouped query."""
+    rows = (
+        ContentProposal.objects.filter(task_id__in=task_ids)
+        .values("task_id", "status")
+        .annotate(n=Count("id"))
+        .order_by()
+    )
+    counts: dict[int, dict[str, int]] = {task_id: {} for task_id in task_ids}
+    for row in rows:
+        counts[row["task_id"]][row["status"]] = row["n"]
+    return counts

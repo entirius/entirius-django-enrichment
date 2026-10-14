@@ -72,3 +72,27 @@ def regular_client(api_client, regular_user):
     """Authenticated non-admin — must be rejected (403) by IsAdminUser."""
     api_client.force_authenticate(user=regular_user)
     return api_client
+
+
+@pytest.fixture
+def toolbox_settings(settings):
+    """Point the toolbox client at a fake host; requests are answered by `mock_toolbox` (respx)."""
+    settings.AI_TOOLBOX_BASE_URL = "http://toolbox.test"
+    settings.AI_TOOLBOX_API_KEY = "test-key"
+    settings.AI_TOOLBOX_CHANNEL = "shop"
+    return settings
+
+
+@pytest.fixture
+def make_worker(db):
+    """Create a Worker through the service (validation + versioning), defaults overridable."""
+    from django_enrichment.models import Worker
+    from django_enrichment.services import worker_service
+
+    def _make(**over):
+        fields = {"key": "pim.translate", "label": "Translate", "kind": "translate", "target_module": "pim"}
+        fields["options"] = {"fields": ["description"]}
+        fields.update(over)
+        return worker_service.save_worker(Worker(**fields))
+
+    return _make

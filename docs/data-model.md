@@ -23,6 +23,7 @@ the size of the catalogue.
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
 | `requested_by` | FK User (SET_NULL) | Who spawned it. |
 | `counts` | JSON | Progress `{targets, proposed, applied, rejected}`. |
+| `errors` | JSON | Why subjects failed: `[{subject_ref, code, error_id}]`, first 20 (`task_service.ERRORS_CAP`). `code` = toolbox error code or `TIMEOUT` / `INTERNAL_ERROR`, never exception text; `error_id` finds the trace in the `process` log. |
 
 `in_progress` is a soft anti-dup marker (worker claimed it) — **not** a lease. No retry, dead-letter,
 DAG or priorities. The moment it needs those it's `django_workflows`, a separate module.

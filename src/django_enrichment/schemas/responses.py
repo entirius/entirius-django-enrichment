@@ -26,6 +26,9 @@ class TaskResponse(BaseModel):
     params: dict
     batch_key: str
     counts: dict
+    errors: list[dict]
+    # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
+    proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
     created_at: datetime
     modified_at: datetime
@@ -151,3 +154,15 @@ class SpawnRuleRunResponse(BaseModel):
 
     status: str = Field(examples=["spawned", "already_running", "no_candidates"])
     task: TaskResponse | None = None
+
+
+class WorkerResponse(BaseModel):
+    """`GET /workers/` item — an active worker the CMS can spawn tasks for (`type` = `key`). The
+    endpoint returns a plain list (a handful of workers per module, no pagination)."""
+
+    key: str = Field(description="Worker key = task type", examples=["pim.translate"])
+    label: str = Field(description="Human label", examples=["Translate descriptions"])
+    kind: str = Field(description="Kind of work", examples=["translate"])
+    target_module: str = Field(description="Adapter key", examples=["pim"])
+    mode: str = Field(description="internal | external", examples=["internal"])
+    params_schema: dict = Field(description="JSON schema of the task params", examples=[{"type": "object"}])

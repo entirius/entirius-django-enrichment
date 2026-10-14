@@ -55,3 +55,8 @@ PROPOSAL_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     ProposalStatus.SUPERSEDED.value: frozenset(),
     ProposalStatus.REVERTED.value: frozenset(),
 }
+
+
+class WorkerMode(models.TextChoices):
+    INTERNAL = "internal", "Internal (our runner)"
+    EXTERNAL = "external", "External (n8n etc. via the API)"

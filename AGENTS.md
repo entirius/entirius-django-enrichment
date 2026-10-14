@@ -3,8 +3,8 @@
 `entirius-django-enrichment` (Django app `django_enrichment`).
 
 Horizontal content-quality bus of Entirius — an accept-before-write enrichment loop for product
-content (descriptions, attributes, SEO, media). The CMS spawns typed tasks, an external worker
-(n8n) generates proposals, an operator reviews them, and accepted proposals are written back to the
+content (descriptions, attributes, SEO, media). The CMS spawns typed tasks, a worker — external (n8n) or
+the internal AI runner — generates proposals, an operator reviews them, and accepted proposals are written back to the
 source module (PIM first) through a per-module adapter.
 
 ## Commands
@@ -33,17 +33,19 @@ source module (PIM first) through a per-module adapter.
 
 ```
 src/django_enrichment/
-├── models/             # EnrichmentTask, ContentProposal, SpawnRule
-├── enums.py            # TaskStatus, ProposalStatus + *_STATUS_TRANSITIONS tables
+├── models/             # EnrichmentTask, ContentProposal, SpawnRule, Worker
+├── enums.py            # TaskStatus, ProposalStatus, WorkerMode + *_STATUS_TRANSITIONS tables
+├── kinds/              # Kind contract + registry (register_kind), base kinds translate / field / video
 ├── schemas/
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
-│                       # cleanup_service, spawn_rule_service, csv_import
+│                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
+│                       # toolbox_calls (the only AI toolbox door)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
-├── tasks/              # apply_tasks (Celery canvas) + cleanup (retention beat) + gap_autospawn (beat)
-├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, spawn_rule), urls, throttling, pagination
-├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin
+├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task)
+├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, spawn_rule, worker), urls, throttling, pagination
+├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin
 ├── management/commands/# prune_enrichment (retention), seed_demo_proposals
 ├── migrations/
 ├── apps.py             # EnrichmentConfig (name="django_enrichment", is_volkanos=True)
@@ -90,6 +92,20 @@ reject and apply both drop the staged file; the displaced source object (the old
 the undo anchor. The adapter reads the bytes via `proposal.open_staged_file()` so a source module
 never imports `staging_store` (decision D1). Full flow: `docs/media.md`.
 
+**AI workers (internal runner):** a `Worker` row (Django admin only) configures the executor of one
+task type — `key == task.type`, a `kind`, `mode` (`internal` | `external`), `system_prompt`, `model`
+(blank = the toolbox channel's first catalogue model), `options` (validated by the kind's `Options` in
+`clean()`; the admin's `save_model` goes through `worker_service.save_worker` → `full_clean`). `version`
+bumps when `system_prompt`/`model`/`options` change and is stamped into every proposal's `source`
+(`worker:<key>@v<version>`). A kind (`kinds/`) is code: `Options`, `Params` (validates `task.params`),
+`run(worker, task, subject_ref) -> list[ProposalDraft]`; it never writes proposals — the runner hands
+drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_file`). Base kinds
+`translate` / `field` / `video` register in `EnrichmentConfig.ready()`;
+other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
+the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit.
+Adapter extras `build_context` (field kind) and `main_picture` (video kind; absent → subject fails) are
+optional (`getattr`). Worker keys allow dots (`pim.translate`).
+
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the
 module-as-adapter that lets the whole bus flow run without a source module.
 
@@ -117,6 +133,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_ADAPTERS` | `{}` | adapter key → dotted module path (`{"pim": "django_pim.services.enrichment_adapter"}`) |
 | `ENRICHMENT_MAX_IMAGE_BYTES` | 25 MB | media intake size cap |
 | `ENRICHMENT_ALLOWED_IMAGE_MIME` | jpeg, png, webp, gif, avif | media intake MIME allowlist |
+| `ENRICHMENT_MAX_VIDEO_BYTES` | 100 MB | video intake size cap (mp4 only) |
+| `ENRICHMENT_VIDEO_TIMEOUT_S` | `900` | how long the `video` kind polls a toolbox media job |
+| `ENRICHMENT_VIDEO_TOOLBOX_URL` / `_API_KEY` / `_CHANNEL` | the `AI_TOOLBOX_*` value | toolbox media job endpoint (POC) |
 | `ENRICHMENT_ASYNC_APPLY_THRESHOLD` | `50` | bulk accept/undo above this size goes to Celery |
 | `ENRICHMENT_APPLY_BATCH_SIZE` | `500` | batch size of the async apply |
 | `ENRICHMENT_CELERY_QUEUE` | `"enrichment"` | queue of the bulk apply / undo canvas |
@@ -175,5 +194,20 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   GapDefinition hit. The scope_spec key stays `"check"` (cross-module contract, a dict key).
 - **The PIM adapter ignores `SpawnRule.params`** — PIM's rule parameters live on the
   `GapDefinition` row keyed by `check_key`; `params` is forwarded per the contract but reserved.
+- **The internal runner uses the default Celery queue** (`run_task.delay`), not `enrichment`; AI calls block it.
+- **Runner paging:** gap tasks re-pull page 1 (work queue), others page++; a seen-set stops the loop
+  when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
+  string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;
+  every subject failed (or resolve itself failed) → task `failed`. No retry, no budget logic. The reason lands in
+  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`.
+- **`translate` posts via `ToolboxClient._post`/`_url`** (`retry=False`) — the client has no translator
+  method. Tests: `mock_toolbox` plus a respx route for `ai-translator/.../translate/`.
+- **Video toolbox endpoint is a POC escape hatch** — `ENRICHMENT_VIDEO_TOOLBOX_*` let media jobs hit a
+  local toolbox while text uses the shared test toolbox; remove once ai-toolbox-test has django-ai-media
+  (Redmine #34464). Video calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`).
+- **The `video` kind blocks a Celery worker** — it polls the media job (10 s interval) up to
+  `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
+- **`tasks/?subject_ref=` sees list-mode tasks only** — a text match of `"<ref>"` in `scope_spec.refs`
+  (SQLite-safe, no JSON containment); filter/gap/csv tasks carry no refs. Full note: `docs/api.md` § Per-product view.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

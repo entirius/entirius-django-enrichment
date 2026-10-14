@@ -96,6 +96,22 @@ class TestTasks:
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
 
+    def test_list_filters_by_subject_ref_and_status_list(self, admin_client):
+        admin_client.post(TASKS, _spawn_payload(), format="json")
+        other = _spawn_payload(scope_spec={"mode": "list", "module": "pim", "channel": "default", "refs": ["SKU-2"]})
+        admin_client.post(TASKS, other, format="json")
+        resp = admin_client.get(TASKS, {"subject_ref": "SKU-1", "status": "open,in_progress", "target_module": "pim"})
+        assert resp.status_code == 200
+        assert [t["scope_spec"]["refs"] for t in resp.json()["results"]] == [["SKU-1"]]
+
+    def test_list_carries_errors_and_proposal_counts(self, admin_client, fake_adapter):
+        task_id = admin_client.post(TASKS, _spawn_payload(), format="json").json()["id"]
+        admin_client.post(PROPOSALS, _intake_payload(task_id=task_id), format="json")
+        [row] = admin_client.get(TASKS, {"subject_ref": "SKU-1"}).json()["results"]
+        assert row["errors"] == []
+        assert row["proposal_counts"] == {"pending": 1}
+        assert admin_client.get(f"{TASKS}{task_id}/").json()["proposal_counts"] == {"pending": 1}
+
     def test_targets_resolves_via_adapter(self, admin_client, fake_adapter):
         task_id = admin_client.post(TASKS, _spawn_payload(), format="json").json()["id"]
         resp = admin_client.get(f"{TASKS}{task_id}/targets/")
@@ -145,6 +161,12 @@ class TestProposals:
         resp = admin_client.get(PROPOSALS, {"target_module": "pim"})
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
+
+    def test_list_proposals_filters_by_subject_ref(self, admin_client, fake_adapter):
+        admin_client.post(PROPOSALS, _intake_payload(), format="json")
+        admin_client.post(PROPOSALS, _intake_payload(subject_ref="SKU-2"), format="json")
+        resp = admin_client.get(PROPOSALS, {"subject_ref": "SKU-1", "target_module": "pim"})
+        assert [p["subject_ref"] for p in resp.json()["results"]] == ["SKU-1"]
 
     def test_list_rejects_unknown_ordering(self, admin_client):
         resp = admin_client.get(PROPOSALS, {"ordering": "value_txt_t9n"})

@@ -13,6 +13,7 @@ from django_enrichment.tasks.apply_tasks import (
 )
 from django_enrichment.tasks.cleanup import prune_task
 from django_enrichment.tasks.gap_autospawn import gap_autospawn_task
+from django_enrichment.tasks.worker_runner import run_task
 
 __all__ = [
     "apply_chunk_task",
@@ -21,4 +22,5 @@ __all__ = [
     "finalize_batch_task",
     "gap_autospawn_task",
     "prune_task",
+    "run_task",
 ]

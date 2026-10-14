@@ -36,13 +36,21 @@ flat `<uuid>.<ext>` filenames; `open_file`/`delete`/`exists` reject any ref with
   `proposed_value` (JSON string, `{"op":"replace_main","alt_t9n":{...}}`), plus the usual
   `source` / `external_ref` / `confidence` / `batch_id` / `task_id` metadata.
 
-`target_kind` is forced to `"picture"`. The service (`proposal_service.intake_media`) validates the
+The upload endpoint always intakes `target_kind="picture"`. The service (`proposal_service.intake_media`) validates the
 file at the boundary — **size cap** (`ENRICHMENT_MAX_IMAGE_BYTES`, 25 MB) and a **magic-byte MIME
 allowlist** (`ENRICHMENT_ALLOWED_IMAGE_MIME`: jpeg/png/webp/gif/avif). The MIME check sniffs the
 actual leading bytes, never the client-declared `content_type` (which is spoofable). Throttled by the
 same `enrichment_intake` scope as text intake.
 
 `current_snapshot` is read authoritatively from the adapter at intake (the displaced main, or `{}`).
+
+### Video (`target_kind="video"`, Amendment A1)
+
+`intake_media(..., target_kind="video")` accepts **mp4 only** (`ftyp` at offset 4, AVIF excluded) up to
+`ENRICHMENT_MAX_VIDEO_BYTES` (100 MB); any other `target_kind` is a `ValueError`. Only the internal
+runner calls it today: the `video` kind returns a draft carrying `media_file` and the runner stages it
+through `intake_media` (locator `{channel}`, `proposed_value` `{preset, duration_s, aspect}`). The staged
+ref keeps the `.mp4` suffix, so `staged-file/` streams it as `video/mp4`.
 
 ## Review (CMS)
 

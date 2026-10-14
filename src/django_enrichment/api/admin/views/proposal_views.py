@@ -31,6 +31,7 @@ from django_enrichment.schemas.requests import (
     BulkUndoRequest,
     ProposalIntakeRequest,
     ProposalMediaIntakeRequest,
+    ProposalUpdateRequest,
     RejectRequest,
 )
 from django_enrichment.schemas.responses import (
@@ -188,6 +189,7 @@ class ProposalViewSet(viewsets.ViewSet):
             OpenApiParameter("source", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("confidence_min", float, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("subject_ref", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("ordering", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page", int, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page_size", int, OpenApiParameter.QUERY, required=False),
@@ -207,6 +209,7 @@ class ProposalViewSet(viewsets.ViewSet):
             source=qp.get("source"),
             confidence_min=_parse_confidence_min(qp.get("confidence_min")),
             search=qp.get("search"),
+            subject_ref=qp.get("subject_ref"),
             ordering=ordering,
         )
         paginator = AdminPageNumberPagination()
@@ -216,6 +219,24 @@ class ProposalViewSet(viewsets.ViewSet):
     @extend_schema(tags=_TAGS, summary="Retrieve proposal", responses={200: ProposalResponse, 404: None})
     def retrieve(self, request: Request, pk: int) -> Response:
         return Response(_serialize(_get_proposal_or_404(pk)))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Edit a pending proposal's value",
+        request=ProposalUpdateRequest,
+        responses={200: ProposalResponse, 400: None, 404: None},
+    )
+    def partial_update(self, request: Request, pk: int) -> Response:
+        try:
+            data = ProposalUpdateRequest(**request.data)
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
+        proposal = _get_proposal_or_404(pk)
+        try:
+            proposal = proposal_service.update_value(proposal, data.proposed_value)
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return Response(_serialize(proposal))
 
     @extend_schema(tags=_TAGS, summary="Accept proposal (drift-aware apply)", responses={200: ProposalResponse})
     def accept(self, request: Request, pk: int) -> Response:
