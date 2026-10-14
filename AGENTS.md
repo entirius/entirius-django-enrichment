@@ -51,6 +51,7 @@ src/django_enrichment/
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings
+├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
@@ -148,6 +149,7 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Per-service contract, `scope_spec` shape, the `filter ⇄ gap` decision | `docs/services.md` |
 | Writing an adapter | `docs/adapter-guide.md` |
 | Workflows, artifacts, kinds generate / questions / compose, seams | `docs/workflows.md` |
+| Augmentations (`params.augment`), `seo_brief` | `docs/api.md` § Augmentations |
 | Company profile (schema, versions, prompt context, status) and memory (recall, writers, promotion) | `docs/profile.md` |
 | Media staging flow | `docs/media.md` |
 | Async apply, undo, retention | `docs/scale-and-undo.md` |
@@ -249,6 +251,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
   pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
   Details: `docs/api.md` § Costs.
+- **`params.augment` / `seo_scope` survive kind validation only because `task_service` re-adds them**
+  (`augmentations.carried_params`, validated against the registry). `seo_brief` SEO calls go through
+  `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.
 - **Step params ride on `StepParams`** — kind `Params` drop unknown keys, so `run` / `step` / `inputs` survive
   only on the three step kinds; a definition step must use one of them (`clean()` enforces it).
 - **Never move a run by hand** — `steps_state` and `status` change only in `workflow_service`, under the run's

@@ -87,7 +87,7 @@ then for a regeneration the fenced `previous_version` and the operator instructi
 ## Seams for profile, memory and augmentations (`kinds/seams.py`)
 
 Looked up when used; absent → the section is simply missing. The profile and memory services exist
-(`docs/profile.md`); the augmentations registry is still to come:
+(`docs/profile.md`), augmentations in `django_enrichment.augmentations` (`docs/api.md` § Augmentations):
 
 | Seam | Callable |
 |---|---|

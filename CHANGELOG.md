@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Augmentations (contract A4 § 5): registry `register_augmentation(key, fn)` → `AugmentResult{block, cost,
+  memory_writes}`; enabled per task with `params.augment` (validated against the registry, unknown key → 400;
+  templates may preset it, a template with an unknown key is refused); kinds `write` (once per subject), `pick` and
+  the workflow step kinds append the blocks as fenced data sections. First augmentation `seo_brief`: reuses a fresh
+  memory brief (subject, then category; cost 0), else seed phrases (completion) → toolbox SEO `search-volume/`,
+  `keyword-ideas/` and `serp/` for the top 3 seeds (`toolbox_calls.seo`, charged as `seo` in the cost ledger) →
+  intent-first evaluation (completion) → `{primary, secondary, intent, serp_notes, gaps, search_volume}`, remembered
+  for 90 days under the category (`params.seo_scope`, default `category` for kind `write`) or the subject. Failures
+  fail the subject with `SEO_BRIEF_<code>`. `memory_service.fresh` looks up one entry (subject, then category).
+
 - QA checks (contract A4 § 4): every revision of a text value is checked deterministically (`qa_service`) and carries
   `warnings` `[{code, message, span}]`, copied onto the proposal — `rule` (active profile `rules` with flags,
   `language.spellings`; a pattern that does not compile disables only its rule and logs) and `NUMBER_NOT_IN_FACTS`
