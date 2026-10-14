@@ -80,7 +80,7 @@ oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET
 
 | Prompt | Recalls |
 |---|---|
-| `write` / `pick` / corrections | `seo_brief` about the subject (then its category) — fenced `memory` block |
+| `write` / `pick` / corrections | `seo_brief` about the subject (then its category) — fenced `memory` block; skipped when the task runs the `seo_brief` augmentation (its own block carries it) |
 | `generate` / `questions` steps | `seo_brief` about `run:<uid>` (module `enrichment`) |
 | `questions` | also the general `answer`s (the only prompt that recalls them) (fenced `remembered_answers`) so it does not ask again |
 
@@ -90,7 +90,7 @@ oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET
 |---|---|
 | `answer` | approving a workflow `questions` step — one general entry per answered question (`record_answers`) |
 | `rule_suggestion` | `POST proposals/{id}/rules/promote/` with `target: "profile"` — the profile itself is not edited |
-| `seo_brief` | the `seo_brief` augmentation (contract A4 § 5) via `remember`, 90 days, subject or category (`docs/api.md` § Augmentations) |
+| `seo_brief` | the `seo_brief` augmentation (contract A4 § 5) via `remember`, 90 days, subject or category, per language (`data.language`; `docs/api.md` § Augmentations) |
 | `fact_suggestion` | QA "add to facts" (contract A4 § 4): `POST proposals/{id}/facts/suggest/` `{value, label?}` (`suggest_fact`) |
 
 **Promotion** — `memory_promotion.promote(entry, target=None, user=None)`: `rule_suggestion` → `always_rules`

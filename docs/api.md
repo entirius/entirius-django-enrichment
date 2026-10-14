@@ -137,30 +137,35 @@ memory_writes)`; `run_all` fences each block under its key and saves the memory 
 - **Enabling:** `params.augment: [keys]` on `POST tasks/` or in a template's `params` (templates may preset it).
   Keys are validated against the registry — an unknown key → 400 (a template with one is refused too).
   `augment` and `seo_scope` (`subject | category`) survive the kind's params validation, like `template`.
-- **Where blocks go:** `write` (once per subject, before the first language; every language's prompt gets the
-  block), `pick`, and the workflow step kinds (`generate` / `questions`, `kinds/step.py`). In `write` / `pick` the
-  augmentation's context is the adapter's `build_context` for the subject; in a step it is `{brief, inputs}`.
+- **Where blocks go:** `write` (per subject × language — each language's prompt gets the block researched in that
+  language), `pick` (the channel's main language), and the workflow step kinds (`generate` / `questions`,
+  `kinds/step.py`). In `write` / `pick` the augmentation's context is the adapter's `build_context` for the subject
+  plus `language`; in a step it is `{brief, inputs}` (no language → the toolbox market defaults).
+- **Memory:** the prompt's `memory` block leaves out the memory kinds the task's augmentations supply (an
+  augmentation key names the memory kind it writes), so a brief appears once.
 - **Costs:** every toolbox call of an augmentation charges the task (cost ledger, `seo` and `completion` in
   `cost_breakdown`); proposals carry only the cost of the call that produced them.
 
 **`seo_brief`** (`augmentations/seo_brief.py`, prompts in `seo_prompts.py`):
 
-1. Reuse — the newest active, unexpired memory `seo_brief` about the subject, then its category (adapter extra
-   `category_of`) → that brief, cost 0, no call.
+1. Reuse — the newest active, unexpired memory `seo_brief` in the same language (`data.language`) about the
+   subject, then its category (adapter extra `category_of`) → that brief, cost 0, no call.
 2. Research — one completion proposes 3-5 seed phrases from the context (selector `enrichment.seo_brief.seeds`);
    toolbox SEO `search-volume/` and `keyword-ideas/` (one call each, all seeds) and `serp/` (depth 10) for the 3
    seeds with the highest volume, all through `toolbox_calls.seo` (`ToolboxClient._post`, `retry=False`; the
-   toolbox cache answers repeats at cost 0). Market = the toolbox defaults.
+   toolbox cache answers repeats at cost 0). Every SEO call carries `language_code` = the context's `language`
+   (blank → omitted); the location is the toolbox default.
 3. Evaluation — one completion (selector `enrichment.seo_brief.evaluate`), intent before volume: SERP intent must
    match the page, winnability, gaps, volume only breaks ties → `{primary, secondary (≤ 2), intent, serp_notes,
-   gaps}` plus `search_volume` of the chosen phrases (from the data, not the model).
+   gaps}` plus `search_volume` of the chosen phrases (from the data, not the model) and `language`.
 4. Memory — `seo_brief`, expires after 90 days, under the subject's category when the scope is `category`
    (`params.seo_scope`; the default for kind `write`, i.e. product descriptions — every product of the category
    reuses one brief), else under the subject; a subject without a category keeps it on the subject.
 
-Any toolbox or response failure fails the subject with `SEO_BRIEF_<toolbox code>` (e.g. `SEO_BRIEF_PROVIDER_ERROR`)
-or `SEO_BRIEF_BAD_RESPONSE`; no seed phrases → `SEO_BRIEF_NO_SEEDS`. The remembered brief also appears in later
-prompts' `memory` block (recall of `seo_brief`), next to the augmentation's own block.
+A toolbox failure fails the subject with `SEO_BRIEF_<toolbox code>` (e.g. `SEO_BRIEF_PROVIDER_ERROR`); an answer or
+SEO `data` that does not fit the boundary models (`augmentations/seo_answers.py`) with `SEO_BRIEF_BAD_RESPONSE`;
+no seed phrases → `SEO_BRIEF_NO_SEEDS`. Any other error (a misconfigured channel, a bug) reaches the runner as
+`INTERNAL_ERROR` with an error id. Tasks without the augmentation see remembered briefs in their `memory` block.
 
 ## Templates (contract A3 § 4)
 
