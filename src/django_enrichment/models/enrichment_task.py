@@ -27,6 +27,13 @@ class EnrichmentTask(BaseModel):
     # Why subjects failed: [{subject_ref, code, error_id}], capped (task_service.ERRORS_CAP). `code` is a stable
     # error code (a toolbox error code), never exception text; `error_id` finds the full trace in the log.
     errors = models.JSONField(default=list, blank=True)
+    # Cost ledger (contract A4 § 1), post factum from the toolbox's own cost fields — `cost_service` is the only
+    # writer. `cost_usd` sums the known costs (null = nothing known yet), `cost_breakdown` is the same per source
+    # `{completion, translate, seo, media}` as decimal strings, `cost_complete` turns false once a call came
+    # back without a cost (an unknown cost is never counted as 0).
+    cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+    cost_breakdown = models.JSONField(default=dict, blank=True)
+    cost_complete = models.BooleanField(default=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "type"], name="enr_task_status_type_idx")]

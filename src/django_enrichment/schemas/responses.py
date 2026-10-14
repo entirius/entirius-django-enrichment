@@ -27,6 +27,13 @@ class TaskResponse(BaseModel):
     batch_key: str
     counts: dict
     errors: list[dict]
+    cost_usd: Decimal | None = Field(
+        description="Sum of the known toolbox costs; null = none known", examples=["0.0042"]
+    )
+    cost_breakdown: dict[str, Decimal] = Field(
+        description="Known cost per source: completion | translate | seo | media", examples=[{"completion": "0.0042"}]
+    )
+    cost_complete: bool = Field(description="False once a toolbox call reported no cost", examples=[True])
     # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
     proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
@@ -87,6 +94,9 @@ class ProposalResponse(BaseModel):
     applied_at: datetime | None
     reject_reason: str
     rules: list[str]
+    cost_usd: Decimal | None = Field(
+        description="Share of the producing call's cost; null = unknown", examples=["0.0014"]
+    )
     created_at: datetime
     modified_at: datetime
 
@@ -180,6 +190,9 @@ class RevisionResponse(BaseModel):
     scope: dict = Field(examples=[{"type": "all"}])
     author_kind: str = Field(description="ai | user | restore", examples=["ai"])
     author: int | None = Field(validation_alias="author_id", description="User id", examples=[1])
+    cost_usd: Decimal | None = Field(
+        description="Cost of the completion behind it; null = unknown or none", examples=["0.0007"]
+    )
     created_at: datetime
 
 

@@ -12,10 +12,13 @@ supersede, staging and progress counts stay in one place.
 
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from django.core.files import File
 from pydantic import BaseModel
+
+_COST_QUANTUM = Decimal("0.00000001")  # decimal_places of the cost columns
 
 
 @dataclass
@@ -25,6 +28,7 @@ class ProposalDraft:
     proposed_value: dict
     subject_label: str = field(default="")
     media_file: File | None = field(default=None)  # binary of a media draft (video) → staged at intake
+    cost_usd: Decimal | None = field(default=None)  # this draft's share of its toolbox call's cost (None = unknown)
 
 
 class SubjectError(Exception):
@@ -43,6 +47,14 @@ class Kind:
 
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         raise NotImplementedError
+
+
+def with_cost(drafts: list[ProposalDraft], cost: Decimal | None) -> list[ProposalDraft]:
+    """Split one toolbox call's cost evenly over the drafts it produced (contract A4 § 1)."""
+    share = None if cost is None or not drafts else (cost / len(drafts)).quantize(_COST_QUANTUM)
+    for draft in drafts:
+        draft.cost_usd = share
+    return drafts
 
 
 def join_prompts(*parts: str) -> str:

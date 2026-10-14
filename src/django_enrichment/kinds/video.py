@@ -16,7 +16,7 @@ from django.core.files.base import ContentFile
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts
+from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "video"
@@ -44,10 +44,10 @@ class VideoKind(Kind):
         if main_picture is None:
             raise ValueError(f"adapter {worker.target_module!r} has no main_picture")
         image, mime = main_picture(subject_ref=subject_ref, channel=params.channel)
-        video = toolbox_calls.generate_video(image=image, mime=mime, form=_form(options, worker, params))
+        video = toolbox_calls.generate_video(image=image, mime=mime, form=_form(options, worker, params), task=task)
         value = {"preset": options.preset, "duration_s": options.duration_s, "aspect": options.aspect}
-        media = ContentFile(video, name="video.mp4")
-        return [ProposalDraft(TARGET_KIND, {"channel": params.channel}, value, media_file=media)]
+        media = ContentFile(video.value, name="video.mp4")
+        return with_cost([ProposalDraft(TARGET_KIND, {"channel": params.channel}, value, media_file=media)], video.cost)
 
 
 def _form(options: VideoOptions, worker: Any, params: VideoParams) -> dict[str, str]:

@@ -16,7 +16,7 @@ import nh3
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts
+from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "attribute_value"
@@ -55,9 +55,12 @@ class FieldKind(Kind):
                 user=_user_message(params.prompt, context, options, language),
                 json_schema=_answer_schema(options),
                 model=worker.model,
+                kind="field",
+                task=task,
             )
             locator = {"channel": params.channel, "language": language, "feature_idx": options.field}
-            drafts.append(ProposalDraft(TARGET_KIND, locator, {"text": _clean(answer["value"], options)}))
+            draft = ProposalDraft(TARGET_KIND, locator, {"text": _clean(answer.value["value"], options)})
+            drafts += with_cost([draft], answer.cost)
         return drafts
 
 

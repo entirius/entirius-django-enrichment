@@ -94,6 +94,7 @@ def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: Propo
         "task": task,
         "subject_label": draft.subject_label,
         "source": f"worker:{worker.key}@v{worker.version}",
+        "cost_usd": draft.cost_usd,
     }
     if draft.media_file is None:
         proposal_service.intake(**fields)

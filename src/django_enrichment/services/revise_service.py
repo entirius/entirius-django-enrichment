@@ -47,9 +47,9 @@ def revise(
     variants = quick_action == VARIANTS
     answer = _complete(proposal, correction, meta, shape, variants=variants)
     if variants:
-        return revise_values.candidates(shape, answer, meta, original=proposal.proposed_value)
+        return revise_values.candidates(shape, answer.value, meta, original=proposal.proposed_value)
     selection = correction.scope.get("text")
-    value = revise_values.apply_answer(shape, proposal.proposed_value, answer, meta, selection=selection)
+    value = revise_values.apply_answer(shape, proposal.proposed_value, answer.value, meta, selection=selection)
     return revision_service.add_revision(
         proposal,
         value,
@@ -58,6 +58,7 @@ def revise(
         instruction=correction.instruction,
         scope=correction.scope,
         base_value=proposal.proposed_value,
+        cost_usd=answer.cost,
     )
 
 
@@ -76,7 +77,7 @@ def _scope(scope: dict | None, proposal: ContentProposal) -> dict:
 
 def _complete(
     proposal: ContentProposal, correction: Correction, meta: dict | None, shape: str, *, variants: bool
-) -> dict:
+) -> toolbox_calls.Costed:
     worker = worker_service.from_source(proposal.source)
     rules = rules_service.rules_for(proposal, worker)
     prompt = revise_prompt.user_message(proposal, rules=rules, meta=meta, correction=correction)
@@ -86,4 +87,6 @@ def _complete(
         user=f"{prompt}\n\n{revise_values.answer_hint(shape, variants=variants)}",
         json_schema=schema,
         model=worker.model if worker else "",
+        kind="revise",
+        task=proposal.task,
     )

@@ -80,6 +80,7 @@ def intake(
     batch_id: str = "",
     external_ref: str = "",
     staged_file: str = "",
+    cost_usd: Decimal | None = None,
 ) -> ContentProposal:
     """Ingest one worker proposal: idempotent on `external_ref`, snapshot live, supersede older."""
     if external_ref:
@@ -110,6 +111,7 @@ def intake(
             batch_id=batch_id,
             external_ref=external_ref,
             staged_file=staged_file,
+            cost_usd=cost_usd,
         )
     if task is not None:
         task_service.increment_count(task, "proposed")
@@ -196,6 +198,7 @@ def intake_media(
     batch_id: str = "",
     external_ref: str = "",
     target_kind: str = "picture",
+    cost_usd: Decimal | None = None,
 ) -> ContentProposal:
     """Intake a media proposal: validate + stage the binary, then create the proposal (etap-08).
 
@@ -221,6 +224,7 @@ def intake_media(
             batch_id=batch_id,
             external_ref=external_ref,
             staged_file=ref,
+            cost_usd=cost_usd,
         )
     except Exception:
         staging_store.delete(ref)

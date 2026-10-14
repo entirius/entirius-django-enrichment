@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import extras
-from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts
+from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "attribute_value"
@@ -49,9 +49,16 @@ class PickKind(Kind):
             _fields_block(fields),
         )
         answer = toolbox_calls.complete(
-            system=worker.system_prompt, user=user, json_schema=_answer_schema(fields), model=worker.model
+            system=worker.system_prompt,
+            user=user,
+            json_schema=_answer_schema(fields),
+            model=worker.model,
+            kind="pick",
+            task=task,
         )
-        return [_draft(adapter, params.channel, meta, answer[meta["key"]]) for meta in fields]
+        return with_cost(
+            [_draft(adapter, params.channel, meta, answer.value[meta["key"]]) for meta in fields], answer.cost
+        )
 
 
 def _select_fields(keys: list[str], catalog: dict[str, dict]) -> list[dict]:

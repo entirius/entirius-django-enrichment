@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts
+from django_enrichment.kinds.base import Kind, ProposalDraft, join_prompts, with_cost
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "attribute_value"
@@ -49,9 +49,16 @@ class TranslateKind(Kind):
         drafts: list[ProposalDraft] = []
         for language in params.target_languages:
             translated = toolbox_calls.translate(
-                texts, source=params.source_language, target=language, context=context, options=options.model_dump()
+                texts,
+                source=params.source_language,
+                target=language,
+                context=context,
+                options=options.model_dump(),
+                task=task,
             )
-            drafts += [_draft(params.channel, language, idx, text) for idx, text in translated.items()]
+            drafts += with_cost(
+                [_draft(params.channel, language, idx, text) for idx, text in translated.value.items()], translated.cost
+            )
         return drafts
 
 

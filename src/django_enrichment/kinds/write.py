@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import extras
-from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts
+from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
 from django_enrichment.kinds.field import sanitize_html
 from django_enrichment.services import toolbox_calls
 
@@ -45,7 +45,7 @@ class WriteKind(Kind):
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         params = WriteParams.model_validate(task.params)
         adapter = get_adapter(worker.target_module)
-        run = _WriteRun(worker, WriteOptions.model_validate(worker.options), params, adapter)
+        run = _WriteRun(worker, task, WriteOptions.model_validate(worker.options), params, adapter)
         languages = extras.languages(adapter, channel=params.channel, requested=params.languages)
         return [draft for language in languages for draft in run.drafts(subject_ref, language)]
 
@@ -53,6 +53,7 @@ class WriteKind(Kind):
 @dataclass
 class _WriteRun:
     worker: Any
+    task: Any
     options: WriteOptions
     params: WriteParams
     adapter: Any
@@ -66,8 +67,11 @@ class _WriteRun:
             user=self._user_message(subject_ref, language, catalog),
             json_schema=_answer_schema(self.params.fields, catalog),
             model=self.worker.model,
+            kind="write",
+            task=self.task,
         )
-        return [self._draft(language, key, _clean(answer[key], catalog.get(key))) for key in self.params.fields]
+        drafts = [self._draft(language, key, _clean(answer.value[key], catalog.get(key))) for key in self.params.fields]
+        return with_cost(drafts, answer.cost)
 
     def _user_message(self, subject_ref: str, language: str, catalog: dict[str, dict]) -> str:
         channel = self.params.channel

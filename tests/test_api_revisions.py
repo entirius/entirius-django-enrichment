@@ -68,7 +68,16 @@ class TestRevisions:
             (1, "ai", None),
             (2, "user", admin_user.pk),
         ]
-        assert set(rows[0]) == {"number", "value", "instruction", "scope", "author_kind", "author", "created_at"}
+        assert set(rows[0]) == {
+            "number",
+            "value",
+            "instruction",
+            "scope",
+            "author_kind",
+            "author",
+            "cost_usd",
+            "created_at",
+        }
 
     def test_unknown_proposal_404(self, admin_client):
         assert admin_client.get(f"{BASE}/proposals/999/revisions/").status_code == 404

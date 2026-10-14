@@ -67,7 +67,7 @@ def _mock_job(router, *statuses, error=None):
 
 def _generate():
     form = {"preset": "orbit", "prompt": "p", "aspect_ratio": "9:16", "duration_s": "4"}
-    return toolbox_calls.generate_video(image=_PNG, mime="image/png", form=form)
+    return toolbox_calls.generate_video(image=_PNG, mime="image/png", form=form).value
 
 
 # ── intake_media: video target kind ───────────────────────────────────────────────────────────

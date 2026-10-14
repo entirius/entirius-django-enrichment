@@ -9,6 +9,8 @@ every later revision (AI correction, manual edit, restore) goes through `add_rev
 the revision and the proposal in one transaction. Only `pending` / `drifted` proposals are revisable.
 """
 
+from decimal import Decimal
+
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import transaction
 from django.db.models import Max, QuerySet
@@ -23,7 +25,11 @@ MEDIA_KINDS = frozenset({"picture", "video"})
 def record_initial(proposal: ContentProposal) -> ProposalRevision:
     """Revision 1 of a freshly ingested proposal (`ai`, no instruction) — called by intake."""
     return ProposalRevision.objects.create(
-        proposal=proposal, number=1, value=proposal.proposed_value, author_kind=RevisionAuthor.AI.value
+        proposal=proposal,
+        number=1,
+        value=proposal.proposed_value,
+        author_kind=RevisionAuthor.AI.value,
+        cost_usd=proposal.cost_usd,
     )
 
 
@@ -49,11 +55,12 @@ def add_revision(
     instruction: str = "",
     scope: dict | None = None,
     base_value: dict | None = None,
+    cost_usd: Decimal | None = None,
 ) -> ProposalRevision:
     """Append the next revision and make it the proposal's value — one transaction, row-locked.
 
     Status (and `base_value`, the value an AI answer was computed on) is re-checked under the lock, so a
-    concurrent accept / edit is never overwritten. Raises `ValueError` or `RevisionNotApplicableError`.
+    concurrent accept / edit is never overwritten. `cost_usd` = the completion behind an AI revision. Raises `ValueError` or `RevisionNotApplicableError`.
     The caller's `proposal` is refreshed from the database afterwards."""
     with transaction.atomic():
         locked = ContentProposal.objects.select_for_update().get(pk=proposal.pk)
@@ -68,6 +75,7 @@ def add_revision(
             scope=scope or {},
             author_kind=author_kind,
             author=author,
+            cost_usd=cost_usd,
         )
         locked.proposed_value = value
         locked.save(update_fields=["proposed_value", "modified_at"])

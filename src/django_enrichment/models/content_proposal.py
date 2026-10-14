@@ -72,6 +72,8 @@ class ContentProposal(BaseModel):
     reject_reason = models.CharField(max_length=512, blank=True, default="")
     # Operator rules for corrections of this proposal (≤ 20 strings, ≤ 200 chars — `rules_service`).
     rules = models.JSONField(default=list, blank=True)
+    # Cost of the toolbox call that produced this proposal, split evenly across that call's drafts; null = unknown.
+    cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
 
     class Meta:
         indexes = [

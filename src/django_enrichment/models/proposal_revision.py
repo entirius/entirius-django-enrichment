@@ -24,6 +24,8 @@ class ProposalRevision(BaseModel):
     scope = models.JSONField(default=dict, blank=True)
     author_kind = models.CharField(max_length=16, choices=RevisionAuthor.choices)
     author = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # Cost of the completion behind this revision (revision 1 = the proposal's cost); null = unknown or no call.
+    cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
 
     class Meta:
         ordering = ["number"]
