@@ -34,11 +34,11 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref/`task` (id); `ordering` allowlisted |
 | `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
 | `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending/drifted only, else 400. Creates a `user` revision |
-| `GET` | `proposals/{id}/revisions/` | `revision_service.list_revisions` | Plain list `[{number, value, instruction, scope, author_kind, author, created_at}]` |
+| `GET` | `proposals/{id}/revisions/` | `revision_service.list_revisions` | Plain list `[{number, value, instruction, scope, author_kind, author, cost_usd, profile_versions, created_at}]` |
 | `POST` | `proposals/{id}/revise/` | `revise_service.revise` | `{instruction?, quick_action?, scope?}` → 201 revision, 200 `{candidates}` for `variants`; 400 / 422 `REVISION_NOT_APPLICABLE`; toolbox errors mapped. Throttled (`enrichment_bulk`) |
 | `POST` | `proposals/{id}/revisions/{n}/restore/` | `revision_service.restore` | → 201 `restore` revision copying `n` (404 unknown `n`) |
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
-| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400) |
+| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker\|profile}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400); `profile` leaves a memory `rule_suggestion` (rules = the channel's active suggestions) |
 | `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Response `result_ref` = what the apply created |
 | `GET` | `workflows/` | `workflow_queries.list_definitions` | Active workflows — see `docs/workflows.md` |
@@ -46,6 +46,10 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `GET` | `runs/{uid}/` | `workflow_queries.get_run` | Run with steps state and cost |
 | `POST` | `runs/{uid}/steps/{key}/regenerate/` | `workflow_service.regenerate` | `{instruction?}` → 200. Throttled |
 | `POST` | `runs/{uid}/cancel/` | `workflow_service.cancel` | → 200 |
+| `GET/PUT` | `profile/?channel=` | `profile_service` | Company profile scope; PUT `{data, note?}` → new version, schema errors 400 per `data.<path>` — see `docs/profile.md` |
+| `GET` | `profile/versions/`, `profile/status/`, `profile/schema/` | `profile_service` | Versions, completeness, JSON Schema; `POST profile/versions/{n}/restore/` → new version |
+| `GET/PATCH/DELETE` | `memory/`, `memory/{id}/` | `memory_service` | Memory list (filters `channel`/`kind`/`subject_ref`/`status`), dismiss / re-activate, delete |
+| `POST` | `memory/{id}/promote/` | `memory_promotion.promote` | `{target?}` → 200 `{entry, profile}` (new profile version) |
 | `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
 | `POST` | `proposals/bulk-accept/` | `proposal_service.bulk_accept` | Pending-only. Sync in-request `≤ ENRICHMENT_ASYNC_APPLY_THRESHOLD`, else Celery canvas. → 200 `{mode, enqueued, applied, drifted, failed}` |
 | `POST` | `proposals/bulk-reject/` | `proposal_service.bulk_reject` | Sync `.update()`. → `{rejected}` |

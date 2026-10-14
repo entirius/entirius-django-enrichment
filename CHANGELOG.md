@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Company profile (contract A4 § 2): `Profile` (instance row + channel overlays, `data` validated by
+  `schemas/profile_schema.json`, `version`) and `ProfileVersion` snapshots on every save; restore = new version.
+  `profile_service.context_for` renders the merged profile for prompts — sections by `routing` (task type, kind,
+  defaults), order facts → brand → rest, `always_rules` always, operator text as instructions (system message),
+  facts as a data table, 12 000-character cap with a truncation note; `status` reports section minimums.
+  Kinds `write` / `pick` / `generate` / `questions` and corrections use it; `EnrichmentTask.profile_versions` and
+  `ProposalRevision.profile_versions` record the versions behind a prompt. Migration `0011_profile_memory`.
+- Memory (contract A4 § 3): `MemoryEntry` (`seo_brief | answer | rule_suggestion | fact_suggestion`, subject or
+  general, expiry). `memory_service.recall` (subject, then its category via the optional adapter extra
+  `category_of`; newest first; budgeted) feeds the same prompts. Approved workflow questions write `answer`
+  entries; rule promotion gains target `profile` (writes a `rule_suggestion`); `memory_promotion.promote` moves a
+  suggestion into the profile (`always_rules`, `rules` or `facts`) as a new profile version.
+- API: `GET/PUT profile/?channel=` (schema errors → 400 per `data.<path>`), `GET profile/versions/`,
+  `POST profile/versions/{n}/restore/`, `GET profile/status/`, `GET profile/schema/`; `GET memory/`,
+  `PATCH/DELETE memory/{id}/`, `POST memory/{id}/promote/`; task and revision responses add `profile_versions`.
+
 - Workflows (contract A4 § 6): `WorkflowDefinition` (steps `{key, label, template, needs, gate review|auto,
   output artifact|questions|document}`, `inputs_schema`; `clean()` validates the graph, templates, kinds and
   schema) and `WorkflowRun` (`uid`, frozen `steps_state`, status `running|waiting|done|failed|cancelled`,

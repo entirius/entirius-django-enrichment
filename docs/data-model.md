@@ -94,6 +94,14 @@ with `status`, `task_id`, `proposal_id`), keeps the brief (`inputs`), the create
 `cost_usd` / `cost_complete`. Step outputs are ordinary proposals on the subject `run:<uid>`. Flow, validation
 and API: `docs/workflows.md`.
 
+## Profile / ProfileVersion / MemoryEntry
+
+`Profile` is one row per scope (`channel` blank = instance, else an overlay) with schema-validated `data` and a
+`version`; every save adds a `ProfileVersion` snapshot. `EnrichmentTask.profile_versions` and
+`ProposalRevision.profile_versions` hold the `ProfileVersion` ids behind their prompts. `MemoryEntry` is what the
+studio remembers (`seo_brief | answer | rule_suggestion | fact_suggestion`), indexed by
+`(channel, subject_module, subject_ref, kind)`. Details: `docs/profile.md`.
+
 ## Indexes
 
 Sized for a million-row proposal table: task `(status, type)` + `batch_key`; proposal `(status, subject_ref)`,

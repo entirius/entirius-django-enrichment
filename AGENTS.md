@@ -34,12 +34,13 @@ source module (PIM first) through a per-module adapter.
 ```
 src/django_enrichment/
 ├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker,
-│                       # WorkflowDefinition, WorkflowRun
+│                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
 │                       # generate / questions / compose, extras.py, step.py (step params), seams.py
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
+│   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
@@ -47,11 +48,12 @@ src/django_enrichment/
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
-│                       # workflow_service (+ workflow_steps, workflow_queries)
+│                       # workflow_service (+ workflow_steps, workflow_queries),
+│                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
-│                       # workflow), urls, throttling, pagination
+│                       # workflow, profile, memory), urls, throttling, pagination
 ├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
 │                       # WorkflowDefinitionAdmin, WorkflowRunAdmin (read-only)
 ├── testing/            # adapter_conformance — shared adapter test kit other modules subclass
@@ -145,6 +147,7 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Per-service contract, `scope_spec` shape, the `filter ⇄ gap` decision | `docs/services.md` |
 | Writing an adapter | `docs/adapter-guide.md` |
 | Workflows, artifacts, kinds generate / questions / compose, seams | `docs/workflows.md` |
+| Company profile (schema, versions, prompt context, status) and memory (recall, writers, promotion) | `docs/profile.md` |
 | Media staging flow | `docs/media.md` |
 | Async apply, undo, retention | `docs/scale-and-undo.md` |
 | Spawn rules, spawn surfaces (CSV, gap, list) | `docs/spawn-rules.md`, `docs/spawn-surfaces.md` |
@@ -249,5 +252,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   only on the three step kinds; a definition step must use one of them (`clean()` enforces it).
 - **Never move a run by hand** — `steps_state` and `status` change only in `workflow_service`, under the run's
   row lock; an approved step cannot be regenerated or undone (artifact `revert` refuses).
+- **The profile is written only by `profile_service`** (validate → version bump → `ProfileVersion` snapshot);
+  operator text goes to the system message, facts and memory to fenced data blocks. Rule promotion target
+  `profile` writes a memory `rule_suggestion`, never the profile — `POST memory/{id}/promote/` does that.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

@@ -80,17 +80,19 @@ and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING
 question ids), a `choice` answer outside its choices → 400.
 
 **Prompt.** System = worker system prompt + profile instructions. User = rules, the template prompt, a
-data note, fenced data blocks (`brief`, `inputs`, `company_profile`, augmentation blocks), the kind's task,
+data note, fenced data blocks (`brief`, `inputs`, `company_profile`, `memory` about `run:<uid>`, augmentation
+blocks), the kind's task,
 then for a regeneration the fenced `previous_version` and the operator instruction.
 
 ## Seams for profile, memory and augmentations (`kinds/seams.py`)
 
-Looked up when used; absent → the section is simply missing. Plans for the profile, memory and
-augmentations fill them:
+Looked up when used; absent → the section is simply missing. The profile and memory services exist
+(`docs/profile.md`); the augmentations registry is still to come:
 
 | Seam | Callable |
 |---|---|
 | profile | `services.profile_service.context_for(*, channel, task_type, kind) -> (instructions, data)` |
+| profile versions | `services.profile_service.version_ids(channel)`, `record_use(*, task, channel)` (stamps `task.profile_versions`) |
 | memory recall | `services.memory_service.recall(*, channel, subject_module, subject_ref, kinds, budget_chars) -> str` |
 | answers written | `services.memory_service.record_answers(*, run, step, value) -> None` (on questions approval) |
 | augmentations | `augmentations.run_all(*, task, subject_ref, context) -> list[str]` (data blocks) |

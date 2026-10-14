@@ -16,3 +16,9 @@ groups:
     models:
       - WorkflowDefinition
       - WorkflowRun
+  - name: profile
+    title: "Company profile and memory"
+    models:
+      - Profile
+      - ProfileVersion
+      - MemoryEntry
