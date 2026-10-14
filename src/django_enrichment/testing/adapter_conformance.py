@@ -116,7 +116,8 @@ class AdapterConformance:
 
 @pytest.mark.django_db
 class FieldCatalogConformance:
-    """`describe_fields` shape, `channel_languages`, `make_locator`. Fixtures: `adapter`, `catalog_channel`."""
+    """`describe_fields` shape, `channel_languages`, `make_locator` (+ `field_key` round-trip when the
+    adapter has it). Fixtures: `adapter`, `catalog_channel`."""
 
     def test_describe_fields_shape(self, adapter, catalog_channel):
         fields = adapter.describe_fields(channel=catalog_channel, language="")
@@ -138,6 +139,14 @@ class FieldCatalogConformance:
             locator = adapter.make_locator(field_key=item["key"], channel=catalog_channel, language=lang)
             assert isinstance(locator, dict) and locator, item["key"]
             assert locator == adapter.make_locator(field_key=item["key"], channel=catalog_channel, language=lang)
+
+    def test_field_key_inverts_make_locator(self, adapter, catalog_channel):
+        if not hasattr(adapter, "field_key"):
+            pytest.skip("the adapter has no field_key (the bus falls back to locator['field'])")
+        language = adapter.channel_languages(channel=catalog_channel)[0]
+        for item in adapter.describe_fields(channel=catalog_channel, language=language):
+            locator = adapter.make_locator(field_key=item["key"], channel=catalog_channel, language=language)
+            assert adapter.field_key(locator=locator) == item["key"]
 
 
 def assert_field_shape(item: dict) -> None:

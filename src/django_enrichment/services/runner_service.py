@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from django_enrichment.enums import TaskStatus, WorkerMode
-from django_enrichment.kinds import Kind, ProposalDraft, get_kind
+from django_enrichment.kinds import Kind, ProposalDraft, extras, get_kind
 from django_enrichment.models import EnrichmentTask, Worker
 from django_enrichment.services import proposal_service, task_service, toolbox_calls, worker_service
 
@@ -31,11 +31,14 @@ def run_task(task_id: int) -> None:
         _logger.info("runner skipped task %s (no active internal worker or not open)", task_id)
         return
     task_service.mark_in_progress(task)
+    extras.clear_cache()
     try:
         succeeded, failed = _run_subjects(worker, task)
     except Exception as exc:  # noqa: BLE001 — resolve/kind setup failure must not leave the task in_progress
         _record_failure(task, "", exc)
         succeeded, failed = 0, 1
+    finally:
+        extras.clear_cache()
     status = TaskStatus.FAILED if failed and not succeeded else TaskStatus.DONE
     _finish(task, status.value)
 

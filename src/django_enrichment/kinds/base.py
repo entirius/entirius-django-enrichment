@@ -10,6 +10,7 @@ to `proposal_service.intake` (or `intake_media` when the draft carries a `media_
 supersede, staging and progress counts stay in one place.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,3 +48,9 @@ class Kind:
 def join_prompts(*parts: str) -> str:
     """Prompt layers (worker calibration, then this run's prompt), blanks dropped."""
     return "\n\n".join(part for part in parts if part)
+
+
+def fenced(tag: str, text: str) -> str:
+    """`text` inside `<tag>` with its own closing tag neutralised, so data cannot break out of the block."""
+    safe = re.sub(rf"<\s*/\s*{tag}", rf"<\\/{tag}", text, flags=re.IGNORECASE)
+    return f"<{tag}>\n{safe}\n</{tag}>"

@@ -22,6 +22,9 @@ _STORE: dict[tuple[str, str, str], dict] = {}
 # the bus invokes the GC hook for the right (picture) proposals.
 _RELEASED: list[int] = []
 
+# Context served by `build_context`; extra keys from `set_context` are merged in (injection tests).
+_CONTEXT: dict = {}
+
 # Field catalog served by the optional extras (`describe_fields`, `make_locator`); empty by default so
 # tests that expect "no catalog" keep that behaviour — seed it with `set_catalog`.
 _CATALOG: list[dict] = []
@@ -105,8 +108,12 @@ def make_locator(*, field_key: str, channel: str, language: str | None) -> dict:
     return {"channel": channel, "language": language, "feature_idx": field_key}
 
 
+def field_key(*, locator: dict) -> str | None:
+    return locator.get("feature_idx")
+
+
 def build_context(*, subject_ref: str, channel: str, language: str) -> dict:
-    return {"sku": subject_ref, "channel": channel, "language": language}
+    return {"sku": subject_ref, "channel": channel, "language": language, **_CONTEXT}
 
 
 # ── test helpers ──────────────────────────────────────────────────────────────────────────
@@ -118,6 +125,11 @@ def set_current(subject_ref: str, target_kind: str, target_locator: dict, value:
 
 def set_catalog(fields: list[dict]) -> None:
     _CATALOG[:] = [dict(field) for field in fields]
+
+
+def set_context(extra: dict) -> None:
+    _CONTEXT.clear()
+    _CONTEXT.update(extra)
 
 
 def documents() -> dict[str, dict]:
@@ -137,6 +149,7 @@ def rejected() -> list[int]:
 def reset() -> None:
     _STORE.clear()
     _CATALOG.clear()
+    _CONTEXT.clear()
     _DOCUMENTS.clear()
     _RELEASED.clear()
     _REJECTED.clear()

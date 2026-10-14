@@ -9,6 +9,7 @@ import pytest
 from django.test import override_settings
 
 from django_enrichment.adapters import clear_cache
+from django_enrichment.kinds import extras
 
 
 @pytest.fixture(autouse=True)
@@ -33,10 +34,12 @@ def fake_adapter():
 
     module.reset()
     clear_cache()
+    extras.clear_cache()
     with override_settings(ENRICHMENT_ADAPTERS={"pim": "tests.fake_adapter"}):
         yield module
     module.reset()
     clear_cache()
+    extras.clear_cache()
 
 
 @pytest.fixture
