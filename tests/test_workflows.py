@@ -13,7 +13,13 @@ from django_utils.toolbox.testing import error_response, mock_toolbox
 
 from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import proposal_service, undo_service, workflow_queries, workflow_service
+from django_enrichment.services import (
+    proposal_service,
+    task_service,
+    undo_service,
+    workflow_queries,
+    workflow_service,
+)
 from tests import workflow_setup as wf
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("toolbox_settings")]
@@ -161,6 +167,47 @@ class TestFailureAndCancel:
         assert workflow_queries.get_run(run.uid).status == "cancelled"
 
 
+class TestStaleAccept:
+    """An accept racing cancel / regenerate fails closed: nothing is written, the step does not move."""
+
+    def test_accept_after_cancel_is_refused(self, two_steps, toolbox, run_steps, admin_user):
+        run = _start(run_steps, admin_user)
+        stale = _proposal(run, "draft")
+        workflow_service.cancel(run.uid, user=admin_user)
+        with pytest.raises(ValueError, match="cancelled"):
+            proposal_service.accept(stale, user=admin_user)
+        run = workflow_queries.get_run(run.uid)
+        assert (_proposal(run, "draft").status, _states(run)["draft"], run.status) == (
+            "rejected",
+            "review",
+            "cancelled",
+        )
+
+    def test_accept_after_regenerate_is_refused(self, two_steps, toolbox, run_steps, admin_user):
+        run = _start(run_steps, admin_user)
+        stale = _proposal(run, "draft")
+        with run_steps():
+            workflow_service.regenerate(run.uid, "draft")
+        with pytest.raises(ValueError, match="no longer the step's current output"):
+            proposal_service.accept(stale, user=admin_user)
+        stale.refresh_from_db()
+        run = workflow_queries.get_run(run.uid)
+        assert (stale.status, _states(run)["draft"], run.status) == ("superseded", "review", "waiting")
+
+
+class TestStuckStep:
+    def test_a_step_left_running_on_a_closed_task_can_be_regenerated(self, two_steps, toolbox, run_steps, admin_user):
+        run = workflow_service.start(definition="two", inputs={"topic": "Sofa"}, user=admin_user)  # runner skipped
+        with pytest.raises(ValueError, match="running"):
+            workflow_service.regenerate(run.uid, "outline")  # its task is still open
+        task_service.transition_status(EnrichmentTask.objects.get(pk=run.steps_state[0]["task_id"]), "cancelled")
+        assert _states(workflow_queries.get_run(run.uid))["outline"] == "running"
+        with run_steps():
+            workflow_service.regenerate(run.uid, "outline")
+        run = workflow_queries.get_run(run.uid)
+        assert (_states(run), run.status) == ({"outline": "approved", "draft": "review"}, "waiting")
+
+
 class TestStart:
     def test_inputs_are_validated_against_the_schema(self, two_steps):
         with pytest.raises(ValueError, match="topic"):
@@ -222,3 +269,13 @@ class TestArticleFlow:
         assert (document.result_ref, run.subject_ref, run.status) == ("doc-1", "doc-1", "done")
         assert setup.documents()["doc-1"]["slug"] == "linen-sofa-care"
         assert run.cost_usd == Decimal("0.03")
+
+    def test_document_accept_after_cancel_writes_nothing(self, article, toolbox, run_steps, admin_user, setup):
+        run = _start(run_steps, admin_user, "article")
+        run = _accept(run_steps, self._answer(run, {"years": "1999", "tone": "warm"}, admin_user), admin_user)
+        run = _accept(run_steps, _proposal(run, "draft"), admin_user)
+        document = _proposal(run, "compose")
+        workflow_service.cancel(run.uid, user=admin_user)
+        with pytest.raises(ValueError, match="cancelled"):
+            proposal_service.accept(document, user=admin_user)
+        assert setup.documents() == {}

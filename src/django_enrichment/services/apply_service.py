@@ -85,6 +85,8 @@ def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) ->
     # (In-process adapters share this transaction; an adapter doing external non-DB writes
     # cannot be rolled back — its own concern.)
     with transaction.atomic():
+        # A workflow step's output: lock the run first and refuse a cancelled run / superseded output.
+        workflow_service.guard_apply(proposal)
         try:
             outcome = adapter.apply(proposal)
         except ObjectDoesNotExist as exc:

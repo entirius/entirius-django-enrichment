@@ -23,7 +23,8 @@ from django_enrichment.models import ContentProposal, EnrichmentTask, WorkflowDe
 from django_enrichment.services import workflow_steps
 
 _logger = logging.getLogger("process")
-_REGENERABLE = frozenset({StepStatus.REVIEW.value, StepStatus.FAILED.value})
+_REVIEWABLE = frozenset({StepStatus.REVIEW.value, StepStatus.FAILED.value})
+_TASK_CLOSED = frozenset({TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value})
 _CLOSED = frozenset({RunStatus.DONE.value, RunStatus.CANCELLED.value})
 CANCEL_REASON = "workflow run cancelled"
 
@@ -55,12 +56,17 @@ def _validate_inputs(schema: dict, inputs: dict) -> None:
 
 
 def regenerate(uid: str, key: str, *, instruction: str = "") -> WorkflowRun:
-    """A new version of a step that needs review or failed: its pending proposal is superseded."""
+    """A new version of a step that needs review, failed or is stuck running on a closed task.
+
+    Its pending proposal is superseded."""
     with transaction.atomic():
         run = _locked(uid)
         step = workflow_steps.find(run, key)
-        if step["status"] not in _REGENERABLE:
-            raise ValueError(f"step {key!r} is {step['status']}; only a step in review or failed can be regenerated")
+        if not _regenerable(step):
+            raise ValueError(
+                f"step {key!r} is {step['status']}; only a step in review, failed or stuck on a closed task"
+                " can be regenerated"
+            )
         previous = _supersede(step["proposal_id"])
         workflow_steps.spawn(run, step, instruction=instruction, previous=previous)
         _save(run)
@@ -99,15 +105,21 @@ def on_task_finished(task: EnrichmentTask) -> None:
         _auto_approve(proposal, uid, step["key"])
 
 
+def guard_apply(proposal: ContentProposal) -> None:
+    """Before a `run:` proposal is written: lock its run (run → proposal, the cancel/regenerate lock order)
+    and refuse output that is no longer its step's current one. Raises `ValueError`."""
+    if uid := workflow_steps.run_uid(proposal.subject_ref):
+        _approvable_step(uid, proposal)
+
+
 def on_proposal_applied(proposal: ContentProposal) -> None:
-    """Apply hook (any `run:` proposal): approve its step, remember answers, spawn the steps now ready."""
+    """Apply hook (any `run:` proposal): approve its step, remember answers, spawn the steps now ready.
+
+    Fails closed (`ValueError`) for a closed run or a stale proposal — the caller's apply rolls back."""
     if not (uid := workflow_steps.run_uid(proposal.subject_ref)):
         return
     with transaction.atomic():
-        run = _open_run(uid)
-        step = next((item for item in run.steps_state if item["proposal_id"] == proposal.pk), None) if run else None
-        if step is None:
-            return
+        run, step = _approvable_step(uid, proposal)
         step["status"] = StepStatus.APPROVED.value
         if proposal.result_ref:
             run.subject_ref = proposal.result_ref
@@ -125,6 +137,23 @@ def _locked(uid: str) -> WorkflowRun:
     if run.status in _CLOSED:
         raise ValueError(f"workflow run {uid!r} is {run.status}")
     return run
+
+
+def _approvable_step(uid: str, proposal: ContentProposal) -> tuple[WorkflowRun, dict]:
+    """The locked open run and the step whose current, still reviewable output is `proposal`."""
+    run = _locked(uid)
+    step = next((item for item in run.steps_state if item["proposal_id"] == proposal.pk), None)
+    if step is None or step["status"] not in _REVIEWABLE:
+        raise ValueError("this proposal is no longer the step's current output")
+    return run, step
+
+
+def _regenerable(step: dict) -> bool:
+    """In review or failed — or running on a task that closed without moving the step on (runner skipped it,
+    it was cancelled elsewhere, or the completion hook failed)."""
+    if step["status"] == StepStatus.RUNNING.value:
+        return EnrichmentTask.objects.filter(pk=step["task_id"], status__in=_TASK_CLOSED).exists()
+    return step["status"] in _REVIEWABLE
 
 
 def _open_run(uid: str) -> WorkflowRun | None:
