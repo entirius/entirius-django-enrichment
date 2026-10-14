@@ -6,11 +6,11 @@
 
 A rule is a short operator sentence ("Never mention the price"). Proposal rules live on
 `ContentProposal.rules`; promotion copies one rule up to the worker (`options.rules`, version bump)
-or to the task's template (seam — templates arrive with contract A3 § 4).
+or to the task's template (`params.template`, contract A3 § 4).
 """
 
 from django_enrichment.models import ContentProposal, Worker
-from django_enrichment.services import worker_service
+from django_enrichment.services import template_service, worker_service
 
 MAX_RULES = 20
 MAX_RULE_LENGTH = 200
@@ -65,11 +65,14 @@ def _template_key(proposal: ContentProposal) -> str:
     return ((proposal.task.params if proposal.task else None) or {}).get("template", "")
 
 
-def _template_rules(proposal: ContentProposal) -> list[str]:  # noqa: ARG001 — seam until templates exist
-    return []
+def _template_rules(proposal: ContentProposal) -> list[str]:
+    template = template_service.find(_template_key(proposal))
+    return list(template.rules) if template else []
 
 
-def _promote_to_template(proposal: ContentProposal, rule: str) -> list[str]:  # noqa: ARG001 — seam
-    if not _template_key(proposal):
+def _promote_to_template(proposal: ContentProposal, rule: str) -> list[str]:
+    if not (key := _template_key(proposal)):
         raise ValueError("the proposal's task has no template")
-    raise ValueError("templates are not available yet")
+    if (template := template_service.find(key)) is None:
+        raise ValueError(f"template {key!r} no longer exists")
+    return template_service.add_rule(template, rule)

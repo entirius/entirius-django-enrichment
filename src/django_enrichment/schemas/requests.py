@@ -20,10 +20,15 @@ class TaskSpawnRequest(BaseModel):
     """`POST /tasks/` — spawn a typed work order. `scope_spec` is opaque to the bus but the
     service validates `mode` + `module` (the adapter key)."""
 
-    type: str = Field(min_length=1, max_length=64, examples=["fix-attribute"])
+    type: str = Field(
+        "", max_length=64, description="Task type; blank when `template` is given", examples=["pim.writer"]
+    )
     scope_spec: dict = Field(examples=[{"mode": "list", "module": "pim", "channel": "default", "refs": ["SKU-1"]}])
-    params: dict = Field(default_factory=dict, examples=[{"feature": "description"}])
+    params: dict = Field(default_factory=dict, examples=[{"channel": "default", "languages": ["*"]}])
     batch_key: str = Field("", max_length=128, description="Analyzer coalescing key (find-or-append)")
+    template: str = Field(
+        "", max_length=64, description="Template key: sets `type`, presets params and rules", examples=["meta"]
+    )
 
 
 class TaskCSVImportRequest(BaseModel):
@@ -253,3 +258,34 @@ class RulePromoteRequest(BaseModel):
 
     rule: str = Field(min_length=1, examples=["Never mention the price."])
     target: Literal["template", "worker"] = Field(examples=["worker"])
+
+
+class TemplateCreateRequest(BaseModel):
+    """`POST templates/` — a saved worker run; `params` are validated against the worker kind (channel optional)."""
+
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_.-]*$", examples=["meta"])
+    label: str = Field(min_length=1, max_length=128, examples=["Meta descriptions"])
+    worker_key: str = Field(min_length=1, max_length=64, examples=["pim.writer"])
+    params: dict = Field(default_factory=dict, examples=[{"fields": ["meta_title"], "languages": ["*"]}])
+    rules: list[str] = Field(default_factory=list, examples=[["Brand name first."]])
+    position: int = Field(0, examples=[10])
+    active: bool = True
+
+
+class TemplateUpdateRequest(BaseModel):
+    """`PATCH templates/{key}/` — all fields optional; `key` is immutable."""
+
+    label: str | None = Field(None, min_length=1, max_length=128)
+    worker_key: str | None = Field(None, min_length=1, max_length=64)
+    params: dict | None = None
+    rules: list[str] | None = None
+    position: int | None = None
+    active: bool | None = None
+
+
+class CatalogQuery(BaseModel):
+    """`GET fields/` and `GET languages/` query parameters."""
+
+    target_module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    language: str = Field("", max_length=8, description="Label language (fields only)", examples=["pl"])

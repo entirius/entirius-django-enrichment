@@ -32,7 +32,7 @@ from django.utils import timezone
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import csv_import, worker_service
+from django_enrichment.services import csv_import, template_service, worker_service
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
 ERRORS_CAP = 20
@@ -56,6 +56,16 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
     return task
 
 
+def _resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
+    """Validated `(type, params)`; a template's key survives validation in `params.template`."""
+    if template:
+        task_type, params = template_service.merge_into_task(template, task_type=task_type, params=params)
+    if not task_type:
+        raise ValueError("give a task type or a template")
+    params = worker_service.validate_params(task_type, params)
+    return task_type, {**params, "template": template} if template else params
+
+
 def spawn(
     *,
     type: str,
@@ -63,14 +73,16 @@ def spawn(
     params: dict | None = None,
     requested_by: AbstractBaseUser | None = None,
     batch_key: str = "",
+    template: str = "",
 ) -> EnrichmentTask:
     """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
 
     When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
-    to the internal runner after commit (`worker_service.dispatch_if_internal`).
+    to the internal runner after commit (`worker_service.dispatch_if_internal`). With `template`, the
+    template decides `type` and presets params/rules (`template_service.merge_into_task`).
     """
     _validate_scope_spec(scope_spec)
-    params = worker_service.validate_params(type, params or {})
+    type, params = _resolve_type_and_params(type, params or {}, template)
 
     if batch_key:
         open_task = EnrichmentTask.objects.filter(batch_key=batch_key, status=TaskStatus.OPEN.value).first()

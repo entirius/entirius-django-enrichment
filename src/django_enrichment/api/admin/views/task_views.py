@@ -113,6 +113,7 @@ class TaskViewSet(viewsets.ViewSet):
                 params=data.params,
                 requested_by=request.user,
                 batch_key=data.batch_key,
+                template=data.template,
             )
         except ValueError as exc:
             raise_as_drf(exc)

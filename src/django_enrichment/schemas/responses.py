@@ -198,3 +198,35 @@ class RulePromoteResponse(BaseModel):
 
 class TaskReviseResponse(BaseModel):
     queued: int = Field(description="Pending proposals queued for correction", examples=[12])
+
+
+class TemplateResponse(BaseModel):
+    """`GET templates/` item — a saved worker run the CMS offers before "Custom…"."""
+
+    key: str = Field(examples=["meta"])
+    label: str = Field(examples=["Meta descriptions"])
+    worker_key: str = Field(examples=["pim.writer"])
+    worker_label: str = Field(examples=["Writer"])
+    kind: str = Field(examples=["write"])
+    target_module: str = Field(examples=["pim"])
+    params: dict = Field(examples=[{"fields": ["meta_title", "meta_description"], "languages": ["*"]}])
+    rules: list[str] = Field(examples=[["Brand name first."]])
+    position: int = Field(examples=[10])
+    active: bool
+
+
+class FieldOptionResponse(BaseModel):
+    value: str = Field(examples=["red"])
+    label: str = Field(examples=["Red"])
+
+
+class FieldResponse(BaseModel):
+    """`GET fields/` item — one writable field of the adapter's catalog (contract A3 § 2)."""
+
+    key: str = Field(examples=["meta_title"])
+    label: str = Field(examples=["Meta title"])
+    type: str = Field(description="text | html | select | multiselect", examples=["text"])
+    max_length: int | None = Field(None, examples=[60])
+    translatable: bool = True
+    options: list[FieldOptionResponse] | None = None
+    options_truncated: bool | None = None
