@@ -49,7 +49,8 @@ src/django_enrichment/
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
 │                       # workflow_service (+ workflow_steps, workflow_queries),
-│                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion)
+│                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
+│                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
@@ -255,5 +256,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **The profile is written only by `profile_service`** (validate → version bump → `ProfileVersion` snapshot);
   operator text goes to the system message, facts and memory to fenced data blocks. Rule promotion target
   `profile` writes a memory `rule_suggestion`, never the profile — `POST memory/{id}/promote/` does that.
+- **QA warnings ride on revisions** — `revision_service` runs `qa_service.check` for every new revision and copies
+  the result to `proposal.warnings`; never write `warnings` elsewhere (`qa_service.store` keeps both equal). Numbers
+  from a subject's source context reach the check only through `seams.record_context` (`params.context_numbers`).
+  Details: `docs/api.md` § QA checks.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

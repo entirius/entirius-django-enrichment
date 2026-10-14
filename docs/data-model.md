@@ -17,7 +17,7 @@ the size of the catalogue.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `type` | Char (indexed) | Category label for display/reporting (`fix-attribute`, `translate`, …). Does not constrain which fields proposals touch. |
-| `params` | JSON | Opaque instruction for the worker (n8n). The bus never interprets it. |
+| `params` | JSON | Opaque instruction for the worker (n8n). The bus never interprets it — except `context_numbers` `{subject_ref: [values]}`, which the internal kinds add for the QA number check. |
 | `scope_spec` | JSON | Three modes: `{mode:"filter",…}`, `{mode:"csv",file:…}`, `{mode:"list",refs:[…]}`. |
 | `batch_key` | Char (indexed) | Find-or-append: the analyzer coalesces per run instead of one task per product. |
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
@@ -43,6 +43,7 @@ shape; it never reads the content.
 | Cost | `cost_usd` (Decimal, null) | Cost of the toolbox call that produced the proposal, split evenly across that call's drafts; null = unknown. `ProposalRevision.cost_usd` is the cost of the completion behind a revision (revision 1 = the proposal's cost; user edits and restores have none). |
 
 | Result | `result_ref` | What applying it created when the adapter's `apply` returned `{"subject_ref"}` (a workflow document); blank otherwise. |
+| QA | `warnings` (JSON list) | QA warnings of the current value `[{code, message, span}]` (contract A4 § 4) — equal to the latest `ProposalRevision.warnings`; written by `revision_service` / `qa_service` only. |
 
 ### `locator_hash` — why a column
 

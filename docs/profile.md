@@ -32,6 +32,9 @@ as a `ProfileVersion` (`version`, `data`, `note`, `created_by`); restore = save 
 **Effective profile.** `merged(channel)` = instance data with the overlay's non-empty sections on top (a whole
 section replaces the instance's).
 
+**QA checks.** `rules`, `language.spellings`, the `facts` registry and `checklists.text` also drive the QA
+warnings on every proposal revision — `docs/api.md` § QA checks.
+
 ### Prompt context — `profile_service.context_for(*, channel, task_type, kind) -> (instructions, data)`
 
 | Step | Rule |
@@ -88,7 +91,7 @@ oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET
 | `answer` | approving a workflow `questions` step — one general entry per answered question (`record_answers`) |
 | `rule_suggestion` | `POST proposals/{id}/rules/promote/` with `target: "profile"` — the profile itself is not edited |
 | `seo_brief` | the `seo_brief` augmentation (contract A4 § 5) via `remember` |
-| `fact_suggestion` | QA "add to facts" (contract A4 § 4) via `remember` |
+| `fact_suggestion` | QA "add to facts" (contract A4 § 4): `POST proposals/{id}/facts/suggest/` `{value, label?}` (`suggest_fact`) |
 
 **Promotion** — `memory_promotion.promote(entry, target=None, user=None)`: `rule_suggestion` → `always_rules`
 (default) or `rules` (the entry's `data` must carry `pattern`; `flags`, `do`, `dont` optional); `fact_suggestion`

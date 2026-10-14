@@ -34,12 +34,14 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref/`task` (id); `ordering` allowlisted |
 | `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
 | `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending/drifted only, else 400. Creates a `user` revision |
-| `GET` | `proposals/{id}/revisions/` | `revision_service.list_revisions` | Plain list `[{number, value, instruction, scope, author_kind, author, cost_usd, profile_versions, created_at}]` |
-| `POST` | `proposals/{id}/revise/` | `revise_service.revise` | `{instruction?, quick_action?, scope?}` → 201 revision, 200 `{candidates}` for `variants`; 400 / 422 `REVISION_NOT_APPLICABLE`; toolbox errors mapped. Throttled (`enrichment_bulk`) |
+| `GET` | `proposals/{id}/revisions/` | `revision_service.list_revisions` | Plain list `[{number, value, instruction, scope, author_kind, author, cost_usd, profile_versions, warnings, created_at}]` |
+| `POST` | `proposals/{id}/revise/` | `revise_service.revise` | `{instruction?, quick_action?, scope?}` → 201 revision, 200 `{candidates}` for `variants`, 200 `{warnings}` for `check_standard` (`qa_checklist`, no revision); 400 / 422 `REVISION_NOT_APPLICABLE`; toolbox errors mapped. Throttled (`enrichment_bulk`) |
+| `POST` | `proposals/{id}/check/` | `qa_service.recheck` | Re-run the deterministic QA checks on the current value → 200 proposal |
+| `POST` | `proposals/{id}/facts/suggest/` | `memory_service.suggest_fact` | "Add to facts" `{value, label?}` → 201 memory `fact_suggestion` (promote it with `memory/{id}/promote/`) |
 | `POST` | `proposals/{id}/revisions/{n}/restore/` | `revision_service.restore` | → 201 `restore` revision copying `n` (404 unknown `n`) |
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
 | `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker\|profile}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400); `profile` leaves a memory `rule_suggestion` (rules = the channel's active suggestions) |
-| `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
+| `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`, `check_standard`, `fix_warnings`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Response `result_ref` = what the apply created |
 | `GET` | `workflows/` | `workflow_queries.list_definitions` | Active workflows — see `docs/workflows.md` |
 | `GET/POST` | `runs/` | `workflow_service.start` | Runs list / start `{definition, inputs, channel}` → 201. Throttled |
@@ -79,6 +81,32 @@ that changes text outside the selection is 422, nothing saved. The write re-chec
 lock: accepted/rejected meanwhile → 400; value edited meanwhile (PATCH, another correction) → 422.
 Batch: each pending text proposal of the task gets one call; failures land in `task.errors`
 (`REVISION_NOT_APPLICABLE` or the toolbox code), counts `revised` / `failed`.
+
+## QA checks (contract A4 § 4)
+
+Every revision of a `{"text"}` value (intake's revision 1, corrections, manual edits, restores) is checked by
+`qa_service.check`; the result is the revision's `warnings` and, for the latest revision, the proposal's
+`warnings`: `[{code, message, span: {start, end, text} | null}]` (≤ 50; offsets into the text).
+
+| Code | Raised when |
+|---|---|
+| `rule` | an active profile `rules` pattern matches (`flags` `i m s x`), or a `language.spellings` `wrong` occurs (whole word, any case). A pattern that does not compile disables only its rule and logs a warning |
+| `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task params (prompt, brief, inputs) or the subject's stored context numbers — once per distinct number |
+| `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
+
+Numbers (`qa_numbers`) are compared by value: integers, decimals with a comma or a dot, thousands grouped by
+space / no-break space / comma / dot, percentages and ranges (each end separately). `12,5 %` = `12.5%`,
+`1 299,99` = `1299.99`; an ambiguous `1,299` means 1299 or 1.299. Digits glued to a letter (`A4`, `B2B`) and
+HTML tags / entities are skipped. The source context is recorded when a kind builds it:
+`extras.context_block(..., task=)` (`write`, `pick`), `field` and `translate` (source texts) call
+`seams.record_context` → `params.context_numbers = {subject_ref: [values]}` on the task (row-locked).
+
+Quick actions on `POST proposals/{id}/revise/`: `check_standard` — one completion (kind tag `check`) with the
+merged profile's `checklists.text` as instructions and the text as data, answer `{problems: [{message, quote}]}`
+→ `checklist` warnings stored next to the deterministic ones, no revision (no checklists → 400);
+`fix_warnings` — a correction whose instruction lists the current warnings (none → 400); its new revision is
+re-checked. `POST proposals/{id}/check/` re-runs the deterministic checks (e.g. after a profile change) and
+drops checklist warnings.
 
 ## Generic kinds `write` / `pick` (contract A3 § 3)
 
