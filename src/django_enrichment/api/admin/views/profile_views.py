@@ -30,6 +30,7 @@ from django_enrichment.services import profile_service
 from django_enrichment.services.profile_service import ProfileValidationError
 
 _TAGS = ["Enrichment Profile"]
+PROFILE_AREA = "enrichment.profile"
 _CHANNEL = OpenApiParameter("channel", str, OpenApiParameter.QUERY, required=False, description="Blank = instance")
 MAX_CHANNEL = 64
 
@@ -56,7 +57,7 @@ def raise_schema_errors(exc: ProfileValidationError):
 class ProfileViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
-    access_area = "enrichment.proposals"
+    access_area = PROFILE_AREA
     serializer_class = None
 
     @extend_schema(

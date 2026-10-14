@@ -18,7 +18,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.pagination import AdminPageNumberPagination
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.views._helpers import raise_as_drf
-from django_enrichment.api.admin.views.profile_views import profile_body, raise_schema_errors
+from django_enrichment.api.admin.views.profile_views import PROFILE_AREA, profile_body, raise_schema_errors
 from django_enrichment.schemas.requests import MemoryPromoteRequest, MemoryUpdateRequest
 from django_enrichment.schemas.responses import MemoryEntryResponse, MemoryListResponse, MemoryPromoteResponse
 from django_enrichment.services import memory_promotion, memory_service
@@ -49,7 +49,7 @@ def _get_or_404(pk: int):
 class MemoryViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
-    access_area = "enrichment.proposals"
+    access_area = PROFILE_AREA
     serializer_class = None
 
     @extend_schema(
