@@ -77,9 +77,9 @@ oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET
 
 | Prompt | Recalls |
 |---|---|
-| `write` / `pick` / corrections | `seo_brief`, `answer` about the subject (then its category) — fenced `memory` block |
-| `generate` / `questions` steps | `seo_brief`, `answer` about `run:<uid>` (module `enrichment`) |
-| `questions` | also the general `answer`s (fenced `remembered_answers`) so it does not ask again |
+| `write` / `pick` / corrections | `seo_brief` about the subject (then its category) — fenced `memory` block |
+| `generate` / `questions` steps | `seo_brief` about `run:<uid>` (module `enrichment`) |
+| `questions` | also the general `answer`s (the only prompt that recalls them) (fenced `remembered_answers`) so it does not ask again |
 
 **Writers**
 
@@ -96,7 +96,10 @@ oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET
 channel's profile gets a new version (`note: promoted memory <id>`) and the entry becomes `promoted` in the same
 transaction. A promoted entry's status cannot change any more.
 
-## API (admin v2, JWT + IsAdminUser, area `enrichment.proposals`)
+## API (admin v2, JWT + IsAdminUser, area `enrichment.profile`)
+
+The profile is the operator's instruction channel, so editing it (and promoting memory into it) needs its own
+area, narrower than reviewing proposals (`enrichment.proposals`).
 
 | Method | Path | Notes |
 |---|---|---|

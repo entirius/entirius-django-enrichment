@@ -6,7 +6,8 @@
   `schemas/profile_schema.json`, `version`) and `ProfileVersion` snapshots on every save; restore = new version.
   `profile_service.context_for` renders the merged profile for prompts — sections by `routing` (task type, kind,
   defaults), order facts → brand → rest, `always_rules` always, operator text as instructions (system message),
-  facts as a data table, 12 000-character cap with a truncation note; `status` reports section minimums.
+  facts as a data table, 12 000-character cap with a truncation note (the conflict note and `always_rules` are
+  always kept, facts and other sections are cut at whole lines); `status` reports section minimums.
   Kinds `write` / `pick` / `generate` / `questions` and corrections use it; `EnrichmentTask.profile_versions` and
   `ProposalRevision.profile_versions` record the versions behind a prompt. Migration `0011_profile_memory`.
 - Memory (contract A4 § 3): `MemoryEntry` (`seo_brief | answer | rule_suggestion | fact_suggestion`, subject or
@@ -17,6 +18,7 @@
 - API: `GET/PUT profile/?channel=` (schema errors → 400 per `data.<path>`), `GET profile/versions/`,
   `POST profile/versions/{n}/restore/`, `GET profile/status/`, `GET profile/schema/`; `GET memory/`,
   `PATCH/DELETE memory/{id}/`, `POST memory/{id}/promote/`; task and revision responses add `profile_versions`.
+  Profile and memory routes use their own access area `enrichment.profile` (narrower than `enrichment.proposals`).
 
 - Workflows (contract A4 § 6): `WorkflowDefinition` (steps `{key, label, template, needs, gate review|auto,
   output artifact|questions|document}`, `inputs_schema`; `clean()` validates the graph, templates, kinds and
