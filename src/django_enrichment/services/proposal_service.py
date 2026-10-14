@@ -19,14 +19,15 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.adapters import get_adapter
-from django_enrichment.enums import PROPOSAL_STATUS_TRANSITIONS, ProposalStatus
+from django_enrichment.enums import PROPOSAL_STATUS_TRANSITIONS, ProposalStatus, RevisionAuthor
 from django_enrichment.models import ContentProposal, EnrichmentTask, compute_locator_hash
-from django_enrichment.services import apply_service, staging_store, task_service
+from django_enrichment.services import apply_service, revision_service, staging_store, task_service
 
 _logger = logging.getLogger("process")
 
@@ -91,27 +92,34 @@ def intake(
         subject_ref=subject_ref, target_kind=target_kind, target_locator=target_locator
     )
 
-    _supersede_pending(target_module, subject_ref, target_kind, target_locator)
-
-    proposal = ContentProposal.objects.create(
-        task=task,
-        target_module=target_module,
-        target_type=target_type,
-        subject_ref=subject_ref,
-        subject_label=subject_label,
-        subject_url=subject_url,
-        target_kind=target_kind,
-        target_locator=target_locator,
-        proposed_value=proposed_value,
-        current_snapshot=current_snapshot,
-        source=source,
-        confidence=confidence,
-        batch_id=batch_id,
-        external_ref=external_ref,
-        staged_file=staged_file,
-    )
+    with transaction.atomic():
+        _supersede_pending(target_module, subject_ref, target_kind, target_locator)
+        proposal = _create_with_revision(
+            task=task,
+            target_module=target_module,
+            target_type=target_type,
+            subject_ref=subject_ref,
+            subject_label=subject_label,
+            subject_url=subject_url,
+            target_kind=target_kind,
+            target_locator=target_locator,
+            proposed_value=proposed_value,
+            current_snapshot=current_snapshot,
+            source=source,
+            confidence=confidence,
+            batch_id=batch_id,
+            external_ref=external_ref,
+            staged_file=staged_file,
+        )
     if task is not None:
         task_service.increment_count(task, "proposed")
+    return proposal
+
+
+def _create_with_revision(**fields: Any) -> ContentProposal:
+    """Create the proposal and its revision 1 (`revision_service` keeps value == latest revision)."""
+    proposal = ContentProposal.objects.create(**fields)
+    revision_service.record_initial(proposal)
     return proposal
 
 
@@ -250,6 +258,7 @@ def list_for_review(
     confidence_min: Decimal | None = None,
     search: str | None = None,
     subject_ref: str | None = None,
+    task_id: int | None = None,
     ordering: str = "-created_at",
 ) -> QuerySet[ContentProposal]:
     """Server-side filtered/ordered review queue."""
@@ -270,6 +279,8 @@ def list_for_review(
         qs = qs.filter(subject_label__icontains=search)
     if subject_ref:
         qs = qs.filter(subject_ref=subject_ref)
+    if task_id is not None:
+        qs = qs.filter(task_id=task_id)
     return qs.order_by(ordering)
 
 
@@ -282,12 +293,11 @@ def get_proposal(proposal_id: int) -> ContentProposal:
         raise ValueError(f"Proposal {proposal_id} not found") from exc
 
 
-def update_value(proposal: ContentProposal, proposed_value: dict) -> ContentProposal:
-    """Operator edit of a pending proposal's value before accept. Only `proposed_value` changes."""
-    if proposal.status != ProposalStatus.PENDING.value:
-        raise ValueError(f"only pending proposals can be edited (status: {proposal.status})")
-    proposal.proposed_value = proposed_value
-    proposal.save(update_fields=["proposed_value", "modified_at"])
+def update_value(
+    proposal: ContentProposal, proposed_value: dict, *, user: AbstractBaseUser | None = None
+) -> ContentProposal:
+    """Operator edit before accept — recorded as a `user` revision (pending / drifted only)."""
+    revision_service.add_revision(proposal, proposed_value, author_kind=RevisionAuthor.USER.value, author=user)
     return proposal
 
 

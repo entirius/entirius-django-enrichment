@@ -70,6 +70,8 @@ class ContentProposal(BaseModel):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     applied_at = models.DateTimeField(null=True, blank=True)
     reject_reason = models.CharField(max_length=512, blank=True, default="")
+    # Operator rules for corrections of this proposal (≤ 20 strings, ≤ 200 chars — `rules_service`).
+    rules = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [

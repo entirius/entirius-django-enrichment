@@ -60,3 +60,13 @@ PROPOSAL_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
 class WorkerMode(models.TextChoices):
     INTERNAL = "internal", "Internal (our runner)"
     EXTERNAL = "external", "External (n8n etc. via the API)"
+
+
+class RevisionAuthor(models.TextChoices):
+    AI = "ai", "AI"
+    USER = "user", "User"
+    RESTORE = "restore", "Restore"
+
+
+# Proposals that still accept new revisions (correction, manual edit, restore).
+REVISABLE_STATUSES = frozenset({ProposalStatus.PENDING.value, ProposalStatus.DRIFTED.value})
