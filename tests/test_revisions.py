@@ -81,6 +81,7 @@ class TestRevisionInvariant:
     def test_drifted_is_revisable(self, fake_adapter):
         proposal = _proposal({"text": "Copy."})
         proposal.status = ProposalStatus.DRIFTED.value
+        proposal.save(update_fields=["status"])
         proposal_service.update_value(proposal, {"text": "Again."})
         assert proposal.revisions.count() == 2
 
@@ -88,6 +89,7 @@ class TestRevisionInvariant:
     def test_closed_proposals_are_not_revisable(self, fake_adapter, status):
         proposal = _proposal({"text": "Copy."})
         proposal.status = status
+        proposal.save(update_fields=["status"])
         with pytest.raises(ValueError, match="pending or drifted"):
             proposal_service.update_value(proposal, {"text": "x"})
         with pytest.raises(ValueError, match="pending or drifted"):
@@ -173,6 +175,33 @@ class TestShapesAndScope:
         assert revision.scope == scope
         assert "<selection>\nThe warranty lasts one year.\n</selection>" in _sent(route)["messages"][-1]["content"]
 
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            {"edits": [{"old": "Solid steel body. Solid", "new": "Plastic body. Solid"}], "rewrite": None},
+            {"edits": [], "rewrite": "Everything new."},
+        ],
+    )
+    def test_change_outside_selection_saves_nothing(self, fake_adapter, answer):
+        proposal = _proposal({"text": LONG})
+        scope = {"type": "selection", "text": "The warranty lasts one year."}
+        with pytest.raises(RevisionNotApplicableError):
+            _revise(proposal, answer, instruction="Longer.", scope=scope)
+        proposal.refresh_from_db()
+        assert proposal.proposed_value == {"text": LONG}
+        assert proposal.revisions.count() == 1
+
+    def test_short_text_change_outside_selection_is_not_applicable(self, fake_adapter):
+        proposal = _proposal({"text": "Red steel mug."})
+        with pytest.raises(RevisionNotApplicableError):
+            _revise(
+                proposal, {"text": "Blue glass mug."}, instruction="x", scope={"type": "selection", "text": "steel"}
+            )
+        revision, _ = _revise(
+            proposal, {"text": "Red iron mug."}, instruction="x", scope={"type": "selection", "text": "steel"}
+        )
+        assert revision.value == {"text": "Red iron mug."}
+
     @pytest.mark.parametrize("text", ["absent fragment", "Solid steel body.", ""])
     def test_selection_must_occur_once(self, fake_adapter, text):
         with pytest.raises(ValueError, match="exactly once"):
@@ -188,6 +217,43 @@ class TestShapesAndScope:
         assert result == [{"text": "A"}, {"text": "B"}, {"text": "C"}]
         assert proposal.revisions.count() == 1
         assert _sent(route)["json_schema"]["properties"]["candidates"]["maxItems"] == 3
+
+
+class TestConcurrentChange:
+    """The proposal changes while the toolbox call runs — the AI answer must not overwrite it."""
+
+    def _revise_racing(self, proposal, change):
+        def respond(_request):
+            change(proposal_service.get_proposal(proposal.pk))
+            return _answer({"text": "AI value."})
+
+        with mock_toolbox() as router:
+            router["complete"].mock(side_effect=respond)
+            return revise_service.revise(proposal, instruction="Fix.")
+
+    def test_accept_during_the_call_is_not_overwritten(self, fake_adapter):
+        proposal = _proposal({"text": "Copy."})
+
+        def accept(row):
+            row.status = ProposalStatus.APPLIED.value
+            row.save(update_fields=["status"])
+
+        with pytest.raises(ValueError, match="pending or drifted"):
+            self._revise_racing(proposal, accept)
+        proposal.refresh_from_db()
+        assert (proposal.proposed_value, proposal.revisions.count()) == ({"text": "Copy."}, 1)
+
+    def test_edit_during_the_call_is_not_overwritten(self, fake_adapter):
+        proposal = _proposal({"text": "Copy."})
+
+        def edit(row):
+            proposal_service.update_value(row, {"text": "Operator edit."})
+
+        with pytest.raises(RevisionNotApplicableError, match="changed"):
+            self._revise_racing(proposal, edit)
+        proposal.refresh_from_db()
+        assert proposal.proposed_value == proposal.revisions.last().value == {"text": "Operator edit."}
+        assert proposal.revisions.count() == 2
 
 
 class TestPrompt:

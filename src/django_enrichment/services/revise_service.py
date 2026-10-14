@@ -46,7 +46,8 @@ def revise(
     answer = _complete(proposal, correction, meta, shape, variants=variants)
     if variants:
         return revise_values.candidates(shape, answer, meta, original=proposal.proposed_value)
-    value = revise_values.apply_answer(shape, proposal.proposed_value, answer, meta)
+    selection = correction.scope.get("text")
+    value = revise_values.apply_answer(shape, proposal.proposed_value, answer, meta, selection=selection)
     return revision_service.add_revision(
         proposal,
         value,
@@ -54,6 +55,7 @@ def revise(
         author=user,
         instruction=correction.instruction,
         scope=correction.scope,
+        base_value=proposal.proposed_value,
     )
 
 

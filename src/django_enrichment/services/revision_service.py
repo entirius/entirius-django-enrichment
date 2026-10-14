@@ -15,6 +15,7 @@ from django.db.models import Max, QuerySet
 
 from django_enrichment.enums import REVISABLE_STATUSES, RevisionAuthor
 from django_enrichment.models import ContentProposal, ProposalRevision
+from django_enrichment.services.revise_values import RevisionNotApplicableError
 
 MEDIA_KINDS = frozenset({"picture", "video"})
 
@@ -47,22 +48,30 @@ def add_revision(
     author: AbstractBaseUser | None = None,
     instruction: str = "",
     scope: dict | None = None,
+    base_value: dict | None = None,
 ) -> ProposalRevision:
-    """Append the next revision and make it the proposal's value — one transaction, row-locked."""
-    ensure_revisable(proposal)
+    """Append the next revision and make it the proposal's value — one transaction, row-locked.
+
+    Status (and `base_value`, the value an AI answer was computed on) is re-checked under the lock, so a
+    concurrent accept / edit is never overwritten. Raises `ValueError` or `RevisionNotApplicableError`.
+    The caller's `proposal` is refreshed from the database afterwards."""
     with transaction.atomic():
-        ContentProposal.objects.select_for_update().filter(pk=proposal.pk).first()
+        locked = ContentProposal.objects.select_for_update().get(pk=proposal.pk)
+        ensure_revisable(locked)
+        if base_value is not None and locked.proposed_value != base_value:
+            raise RevisionNotApplicableError("the value changed while the correction was running")
         revision = ProposalRevision.objects.create(
-            proposal=proposal,
-            number=_next_number(proposal),
+            proposal=locked,
+            number=_next_number(locked),
             value=value,
             instruction=instruction,
             scope=scope or {},
             author_kind=author_kind,
             author=author,
         )
-        proposal.proposed_value = value
-        proposal.save(update_fields=["proposed_value", "modified_at"])
+        locked.proposed_value = value
+        locked.save(update_fields=["proposed_value", "modified_at"])
+    proposal.refresh_from_db()
     return revision
 
 
