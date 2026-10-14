@@ -8,7 +8,7 @@
 newest first, only active and unexpired ones, cut to a character budget. Writers: `record_answers` (approved
 workflow questions), `suggest_rule` (rule promotion target `"profile"`), `suggest_fact` (a number QA flagged,
 vouched for by the operator) and `remember` for the rest
-(augmentations). Promotion into the profile lives in `memory_promotion`.
+(augmentations, which look up their own earlier result with `fresh`). Promotion into the profile lives in `memory_promotion`.
 """
 
 import json
@@ -39,11 +39,24 @@ def remember(entry: MemoryEntry) -> MemoryEntry:
 
 def recall(*, channel: str, subject_module: str, subject_ref: str, kinds: list[str], budget_chars: int) -> str:
     """The remembered entries as one line each, subject first, then its category; blank when none."""
+    refs = _subject_then_category(subject_module, subject_ref)
+    lines = [_line(entry) for ref in refs for entry in _active(channel, subject_module, ref, kinds)]
+    return _budgeted(lines, budget_chars)
+
+
+def fresh(*, channel: str, subject_module: str, subject_ref: str, kind: str) -> MemoryEntry | None:
+    """The newest active, unexpired entry of `kind` about the subject, else about its category."""
+    for ref in _subject_then_category(subject_module, subject_ref):
+        if entry := _active(channel, subject_module, ref, [kind]).first():
+            return entry
+    return None
+
+
+def _subject_then_category(subject_module: str, subject_ref: str) -> list[str]:
     refs = [subject_ref]
     if (category := category_of(subject_module, subject_ref)) and category != subject_ref:
         refs.append(category)
-    lines = [_line(entry) for ref in refs for entry in _active(channel, subject_module, ref, kinds)]
-    return _budgeted(lines, budget_chars)
+    return refs
 
 
 def category_of(subject_module: str, subject_ref: str) -> str | None:

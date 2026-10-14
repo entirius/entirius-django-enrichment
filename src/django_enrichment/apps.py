@@ -22,6 +22,17 @@ class EnrichmentConfig(AppConfig):
     access_route_rules = []
 
     def ready(self) -> None:
+        self._register_kinds()
+        self._register_augmentations()
+
+    @staticmethod
+    def _register_augmentations() -> None:
+        from django_enrichment.augmentations import register_augmentation, seo_brief
+
+        register_augmentation("seo_brief", seo_brief.run)
+
+    @staticmethod
+    def _register_kinds() -> None:
         from django_enrichment.kinds import register_kind
         from django_enrichment.kinds.compose import ComposeKind
         from django_enrichment.kinds.field import FieldKind

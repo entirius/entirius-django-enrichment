@@ -15,7 +15,7 @@ class TaskTemplate(BaseModel):
     """A saved run of a worker ("Meta descriptions"): preset `params` and `rules` for `POST tasks/`.
 
     `params` is validated in `clean()` against the worker kind's `Params` with `channel` optional (the
-    run supplies it). Rule limits and the merge into a task live in `template_service`.
+    run supplies it), and its `augment` keys against the augmentation registry. Rule limits and the merge into a task live in `template_service`.
     """
 
     key = models.CharField(max_length=64, unique=True, validators=[KEY_VALIDATOR])
@@ -40,6 +40,15 @@ class TaskTemplate(BaseModel):
             optional_channel.model_validate(self.params)
         except PydanticValidationError as exc:
             raise ValidationError({"params": _messages(exc)}) from exc
+        self._clean_augmentations()
+
+    def _clean_augmentations(self) -> None:
+        from django_enrichment.augmentations import carried_params
+
+        try:
+            carried_params(self.params)
+        except ValueError as exc:
+            raise ValidationError({"params": [str(exc)]}) from exc
 
     def __str__(self) -> str:
         return f"TaskTemplate(key={self.key}, worker={self.worker_id})"

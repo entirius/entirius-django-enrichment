@@ -4,7 +4,8 @@
 
 """Kind `write` — write several text fields of an item, one completion per subject × language.
 
-The answer is one JSON object with a string property per field (`maxLength` from the field catalog);
+Augmentations (`params.augment`) run once per subject, before the first language; their blocks join every
+language's prompt. The answer is one JSON object with a string property per field (`maxLength` from the field catalog);
 `html` fields are sanitised with the field kind's allowlist. One draft per field × language, located
 with the adapter's `make_locator`. Select fields belong to `pick` → subject error `FIELD_TYPE`.
 """
@@ -47,6 +48,9 @@ class WriteKind(Kind):
         adapter = get_adapter(worker.target_module)
         run = _WriteRun(worker, task, WriteOptions.model_validate(worker.options), params, adapter)
         languages = extras.languages(adapter, channel=params.channel, requested=params.languages)
+        run.augmented = extras.augmentation_section(
+            adapter, task=task, subject_ref=subject_ref, channel=params.channel, language=next(iter(languages), "")
+        )
         return [draft for language in languages for draft in run.drafts(subject_ref, language)]
 
 
@@ -57,6 +61,7 @@ class _WriteRun:
     options: WriteOptions
     params: WriteParams
     adapter: Any
+    augmented: str = ""  # augmentation blocks, run once per subject for every language
 
     def drafts(self, subject_ref: str, language: str) -> list[ProposalDraft]:
         """One completion for the subject in `language` → one draft per field."""
@@ -83,6 +88,7 @@ class _WriteRun:
                 self.adapter, subject_ref=subject_ref, channel=channel, language=language, task=self.task
             ),
             seams.memory_block(channel=channel, subject_module=self.worker.target_module, subject_ref=subject_ref),
+            self.augmented,
             _fields_block(self.params.fields, catalog, self.options.field_rules),
             f'Write every field in language "{language}". Answer as one JSON object with one string per field key.',
         )

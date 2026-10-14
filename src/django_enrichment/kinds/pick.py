@@ -51,6 +51,9 @@ class PickKind(Kind):
             ),
             seams.memory_block(channel=params.channel, subject_module=worker.target_module, subject_ref=subject_ref),
             seams.profile_block(profile),
+            extras.augmentation_section(
+                adapter, task=task, subject_ref=subject_ref, channel=params.channel, language=language
+            ),
             _fields_block(fields),
         )
         answer = toolbox_calls.complete(

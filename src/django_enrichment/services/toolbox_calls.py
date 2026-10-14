@@ -1,6 +1,6 @@
-"""The bus's only door to the AI toolbox — completion, translation and video jobs.
+"""The bus's only door to the AI toolbox — completion, translation, SEO data and video jobs.
 
-Completion and translation go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
+Completion, translation and SEO data go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
 errors) on the instance channel. Video jobs talk to the toolbox media API with plain httpx: the endpoint
 may differ from the text toolbox (`ENRICHMENT_VIDEO_TOOLBOX_*`, POC escape hatch, Redmine #34464).
 Prompts live in the kinds. Toolbox errors propagate: the runner counts the subject as failed.
@@ -31,6 +31,7 @@ from django_enrichment.kinds.base import SubjectError
 from django_enrichment.services import cost_service
 
 _TRANSLATOR_TOOL = "ai-translator"
+_SEO_TOOL = "ai-seo"
 _VIDEO_POLL_INTERVAL_S = 10
 _VIDEO_HTTP_TIMEOUT_S = 60.0
 # Where each toolbox response carries its cost today (switch here for a unified cost endpoint).
@@ -142,6 +143,17 @@ def _translate_payload(texts: dict[str, str], source: str, target: str, context:
         "formality": options.get("formality") or None,
     }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def seo(endpoint: str, payload: dict, *, task: Any = None) -> Costed:
+    """One toolbox SEO call (`search-volume/`, `keyword-ideas/`, `serp/`); `value` = the envelope's `data`.
+
+    Posted like translate (paid, `retry=False`); a toolbox cache hit comes back with cost 0."""
+    with ToolboxClient() as client:
+        with _unknown_cost_on_error(task, "seo"):
+            body = client._post(client._url(_SEO_TOOL, endpoint), payload, retry=False)
+    cost = _charge(task, "seo", body)
+    return Costed(body["data"], cost)
 
 
 def _default_model(client: ToolboxClient) -> str:

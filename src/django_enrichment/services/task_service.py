@@ -29,6 +29,7 @@ from django.contrib.auth.models import AbstractBaseUser
 from django.db.models import Count, QuerySet
 from django.utils import timezone
 
+from django_enrichment import augmentations
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
@@ -57,12 +58,13 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
 
 
 def _resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
-    """Validated `(type, params)`; a template's key survives validation in `params.template`."""
+    """Validated `(type, params)`; `params.augment` / `seo_scope` and a template's key survive kind validation."""
     if template:
         task_type, params = template_service.merge_into_task(template, task_type=task_type, params=params)
     if not task_type:
         raise ValueError("give a task type or a template")
-    params = worker_service.validate_params(task_type, params)
+    carried = augmentations.carried_params(params)
+    params = {**worker_service.validate_params(task_type, params), **carried}
     return task_type, {**params, "template": template} if template else params
 
 
