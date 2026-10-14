@@ -61,7 +61,9 @@ optional), the current value, the selection, the instruction (quick actions `sho
 | `{"text"}` short | `{text}` (+ catalog `maxLength`) | full value |
 | `{"option"}` / `{"options"}` | catalog option enum | full value |
 
-Scope `{"type": "selection", "text"}` must occur exactly once in the current text (else 400).
+Scope `{"type": "selection", "text"}` must occur exactly once in the current text (else 400); an answer
+that changes text outside the selection is 422, nothing saved. The write re-checks the proposal under a row
+lock: accepted/rejected meanwhile → 400; value edited meanwhile (PATCH, another correction) → 422.
 Batch: each pending text proposal of the task gets one call; failures land in `task.errors`
 (`REVISION_NOT_APPLICABLE` or the toolbox code), counts `revised` / `failed`.
 

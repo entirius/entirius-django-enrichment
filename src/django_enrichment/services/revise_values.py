@@ -81,11 +81,27 @@ def answer_hint(shape: str, *, variants: bool) -> str:
     return f'Answer as JSON {{"{shape}": ...}} with the complete new value.'
 
 
-def apply_answer(shape: str, value: dict, answer: dict, meta: dict | None) -> dict:
-    """The new value built from the model's answer. Raises `RevisionNotApplicableError`."""
+def apply_answer(shape: str, value: dict, answer: dict, meta: dict | None, *, selection: str | None = None) -> dict:
+    """The new value built from the model's answer. With a `selection`, the text outside it must stay
+    unchanged. Raises `RevisionNotApplicableError`."""
     if shape == EDITS:
-        return {"text": _clean(_apply_edits(value["text"], answer), value["text"], meta)}
-    return _full_value(shape, answer.get(shape), meta, original=value)
+        new_text = _apply_edits(value["text"], answer)
+    elif shape == TEXT and isinstance(answer.get(TEXT), str):
+        new_text = answer[TEXT]
+    else:
+        return _full_value(shape, answer.get(shape), meta, original=value)
+    _ensure_within_selection(value["text"], new_text, selection)
+    return {"text": _clean(new_text, value["text"], meta)}
+
+
+def _ensure_within_selection(text: str, new_text: str, selection: str | None) -> None:
+    """Compared before sanitising: the sanitiser may rebalance tags of a fragment, the model may not."""
+    if not selection:
+        return
+    prefix, suffix = text.split(selection, 1)
+    kept = len(new_text) >= len(prefix) + len(suffix) and new_text.startswith(prefix) and new_text.endswith(suffix)
+    if not kept:
+        raise RevisionNotApplicableError("the answer changes text outside the selection")
 
 
 def candidates(shape: str, answer: dict, meta: dict | None, *, original: dict) -> list[dict]:

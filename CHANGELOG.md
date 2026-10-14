@@ -7,7 +7,8 @@
   (pending and drifted). Services `revision_service` (invariant owner), `revise_service` (one stateless
   toolbox completion per correction: edits / full value / option schemas, all-or-nothing edits, selection
   scope, quick actions, `variants`), `rules_service` (limits, promotion to the worker), `revise_batch_service`
-  (Celery `enrichment.revise_task`, default queue).
+  (Celery `enrichment.revise_task`, default queue). Writes re-check status and (AI corrections) the base
+  value under the row lock; a selection-scoped answer may not change text outside the selection (422).
 - API: `GET proposals/{id}/revisions/`, `POST proposals/{id}/revise/` (422 `REVISION_NOT_APPLICABLE`),
   `POST proposals/{id}/revisions/{n}/restore/`, `PUT proposals/{id}/rules/`, `POST proposals/{id}/rules/promote/`,
   `POST tasks/{id}/revise/`, `GET proposals/?task=`; proposal responses add `rules`.
