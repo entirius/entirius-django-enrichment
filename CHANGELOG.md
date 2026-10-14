@@ -10,6 +10,11 @@
   tasks on `run:<uid>` with frozen params, runner completion hook, gates (auto approves at once), approve =
   accept the step's proposal → next steps spawn, regenerate with an instruction, cancel. Completion calls of a
   step are tagged `run:<uid>`.
+- Workflow hardening: approving a step's proposal fails closed (400, adapter write rolled back) when the run
+  is closed or the proposal is no longer the step's current output — `apply_service` locks the run before
+  writing (`workflow_service.guard_apply`). Regenerate also recovers a step stuck `running` on a closed task.
+  `clean()` refuses a step template whose worker is inactive or external, and an `artifact`/`questions` step
+  whose worker does not write to the `enrichment` adapter.
 - Built-in adapter `"enrichment"` for workflow artifacts (`target_kind="artifact"`, locator `{"step"}`, values
   `{"text"}` / `{"data"}` / `{"questions", "answers"}`; revert refused). `ContentProposal.result_ref`: an
   adapter's `apply` may return `{"subject_ref"}` (documents); also set as the run's `subject_ref`.

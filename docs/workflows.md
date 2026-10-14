@@ -20,9 +20,10 @@ document goes to), `inputs_schema` (JSON Schema of the brief, `"type": "object"`
 
 `clean()` (`workflow_spec.definition_errors`) refuses: no steps, a malformed step, a duplicate key, `needs`
 naming a step that is not earlier (so a definition is acyclic), a `questions` step without the `review`
-gate, an unknown template, a template whose worker kind does not make the output (`artifact` → `generate`,
+gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate`,
 `questions` → `questions`, `document` → `compose`), a `document` step whose worker writes to another module
-than `target_module`, and an invalid inputs schema.
+than `target_module`, an `artifact`/`questions` step whose worker does not write to the built-in
+`enrichment` adapter, and an invalid inputs schema.
 
 ## Run
 
@@ -40,8 +41,8 @@ and `proposal_id` (the step output). The run status is derived from its steps: a
 | start | brief validated against `inputs_schema`; every step without `needs` is spawned |
 | spawn | a task of the step's template on the subject `run:<uid>` (scope `{"mode": "list", "module": "enrichment"}`) with frozen params: `run`, `step`, `channel`, `brief`, `inputs` (approved values of the needed steps), `instruction`, `previous` |
 | task finished | runner hook `workflow_service.on_task_finished`: the task's pending proposal → step `review`; no proposal or a failed task → step `failed`; `auto` gate → the proposal is applied at once (a refused apply → `failed`) |
-| approve | accept the step's proposal (`POST proposals/{id}/accept/`, bulk accept too). `apply_service` calls `on_proposal_applied` for every `run:` proposal in the same transaction: step `approved`, `result_ref` → `run.subject_ref`, answers → memory seam, ready steps spawn (a failing spawn rolls the approval back) |
-| regenerate | a step in `review` or `failed`: its pending proposal is superseded, a new task gets the same params plus `previous` (that value) and the operator's `instruction` |
+| approve | accept the step's proposal (`POST proposals/{id}/accept/`, bulk accept too). `apply_service` calls `on_proposal_applied` for every `run:` proposal in the same transaction: step `approved`, `result_ref` → `run.subject_ref`, answers → memory seam, ready steps spawn (a failing spawn rolls the approval back). `apply_service` first locks the run (`guard_apply`, same lock order as cancel/regenerate); a closed run or a proposal that is no longer the step's current output (superseded, or the step already approved) → 400 and the adapter write rolls back |
+| regenerate | a step in `review` or `failed`, or `running` on a task already closed (runner skipped it, cancelled via the tasks API, failed hook): its pending proposal is superseded, a new task gets the same params plus `previous` (that value) and the operator's `instruction` |
 | cancel | running step tasks → `cancelled`, the run's pending proposals rejected, run `cancelled` (final; a late runner hook changes nothing) |
 
 Every state change takes the run's row lock. `cost_usd` sums the known costs of every task the run spawned
@@ -102,7 +103,7 @@ augmentations fill them:
 | `GET` | `runs/?status=&definition=` | paginated, newest first |
 | `POST` | `runs/` | `{definition, inputs, channel}` → 201 run (first steps queued); 400 bad brief / unknown definition. Throttled (`enrichment_spawn`) |
 | `GET` | `runs/{uid}/` | `{uid, definition, definition_label, channel, inputs, subject_ref, status, current_step, steps: [{key, label, template, needs, gate, output, status, task_id, proposal_id}], cost_usd, cost_complete, created_by_id, created_at, modified_at}` |
-| `POST` | `runs/{uid}/steps/{key}/regenerate/` | `{instruction?}` → 200 run; 400 step not in review/failed or run closed; 404 unknown step. Throttled |
+| `POST` | `runs/{uid}/steps/{key}/regenerate/` | `{instruction?}` → 200 run; 400 step not in review/failed (nor stuck on a closed task) or run closed; 404 unknown step. Throttled |
 | `POST` | `runs/{uid}/cancel/` | → 200 run; 400 when already done/cancelled |
 
 A step's output is read and edited through the proposal endpoints (`proposal_id`).
