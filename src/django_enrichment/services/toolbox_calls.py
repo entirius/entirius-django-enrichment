@@ -18,6 +18,7 @@ from django_utils.toolbox import CompletionRequest, Message, ToolboxClient, Tool
 from django_utils.toolbox import settings as toolbox_settings
 
 from django_enrichment import settings as enrichment_settings
+from django_enrichment.kinds.base import SubjectError
 
 _TRANSLATOR_TOOL = "ai-translator"
 _VIDEO_POLL_INTERVAL_S = 10
@@ -118,6 +119,8 @@ def failure_code(exc: BaseException) -> str:
 
     Never the exception text — a toolbox message may quote model output, an internal one leaks internals.
     """
+    if isinstance(exc, SubjectError):
+        return exc.code
     if isinstance(exc, ToolboxError):
         return exc.code or f"TOOLBOX_HTTP_{exc.status_code}"
     if isinstance(exc, TimeoutError):

@@ -30,6 +30,9 @@ class TranslateParams(BaseModel):
     source_language: str = Field(min_length=1, description="Language to read", examples=["pl"])
     target_languages: list[str] = Field(min_length=1, description="Languages to write", examples=[["en", "de"]])
     prompt: str = Field("", description="Extra instructions for this run", examples=["Keep brand names."])
+    fields: list[str] | None = Field(
+        None, min_length=1, description="Feature idxs to translate; overrides the worker's", examples=[["name"]]
+    )
 
 
 class TranslateKind(Kind):
@@ -39,7 +42,7 @@ class TranslateKind(Kind):
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         options = TranslateOptions.model_validate(worker.options)
         params = TranslateParams.model_validate(task.params)
-        texts = _source_texts(worker.target_module, subject_ref, options.fields, params)
+        texts = _source_texts(worker.target_module, subject_ref, params.fields or options.fields, params)
         if not texts:
             return []
         context = join_prompts(worker.system_prompt, params.prompt)

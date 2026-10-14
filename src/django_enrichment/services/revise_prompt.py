@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds.base import join_prompts
+from django_enrichment.kinds.extras import rules_block
 from django_enrichment.models import ContentProposal
 
 VARIANTS = "variants"
@@ -57,17 +58,13 @@ def user_message(proposal: ContentProposal, *, rules: list[str], meta: dict | No
     """The correction prompt; the caller appends the answer-format hint of the value shape."""
     task_prompt = ((proposal.task.params if proposal.task else None) or {}).get("prompt", "")
     return join_prompts(
-        _rules_block(rules),
+        rules_block(rules),
         f"Original brief: {task_prompt}" if task_prompt else "",
         f"Field: {json.dumps(meta, ensure_ascii=False)}" if meta else "",
         _value_block(proposal.proposed_value),
         _scope_block(correction.scope),
         f"Correction: {correction.instruction}",
     )
-
-
-def _rules_block(rules: list[str]) -> str:
-    return "Rules (always follow):\n" + "\n".join(f"- {rule}" for rule in rules) if rules else ""
 
 
 def _value_block(value: dict) -> str:

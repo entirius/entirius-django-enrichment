@@ -26,6 +26,14 @@ class ProposalDraft:
     media_file: File | None = field(default=None)  # binary of a media draft (video) → staged at intake
 
 
+class SubjectError(Exception):
+    """A subject the kind cannot work on; `code` lands in `task.errors` (e.g. `FIELD_TYPE`)."""
+
+    def __init__(self, code: str, message: str = "") -> None:
+        super().__init__(message or code)
+        self.code = code
+
+
 class Kind:
     """Base kind. Subclasses set `Options` / `Params` and implement `run`."""
 
