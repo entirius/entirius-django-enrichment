@@ -8,10 +8,14 @@ Prompts live in the kinds. Toolbox errors propagate: the runner counts the subje
 Every call returns `Costed(value, cost)` and charges its task (`cost_service.charge`); `cost_of` is the one
 place that knows which response field carries the cost today. Completion tags: the selector
 `enrichment.<kind>[.<template>]` first (the toolbox fake provider picks fixtures by it), then `task:<id>`.
+A call that fails after its request left may already be billed: it charges an unknown cost (`None`), so the
+task is never reported complete with a too-low total.
 """
 
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -32,6 +36,8 @@ _VIDEO_HTTP_TIMEOUT_S = 60.0
 _COST_FIELDS = {"completion": "cost", "translate": "total_cost_usd", "media": "cost", "seo": "cost"}
 _TAG_INVALID = re.compile(r"[^a-z0-9_.:-]")
 _TAG_MAX = 64
+_COST_STEP = Decimal("0.00000001")  # the ledger columns: decimal_places=8
+_COST_LIMIT = Decimal(10) ** 6  # the ledger columns: max_digits=14 → below 10**6
 
 
 @dataclass(frozen=True)
@@ -43,14 +49,29 @@ class Costed:
 
 
 def cost_of(source: str, body: dict) -> Decimal | None:
-    """The cost of one toolbox response of `source` (`completion | translate | media | seo`); absent → `None`."""
+    """The cost of one toolbox response of `source` (`completion | translate | media | seo`), at ledger precision.
+
+    Absent, unparsable, non-finite, negative or out of the ledger's range → `None` (unknown, never 0)."""
     raw = body.get(_COST_FIELDS[source])
     if raw is None:
         return None
     try:
-        return Decimal(str(raw))
+        value = Decimal(str(raw))
     except InvalidOperation:
         return None
+    if not value.is_finite() or not 0 <= value < _COST_LIMIT:
+        return None
+    return value.quantize(_COST_STEP)
+
+
+@contextmanager
+def _unknown_cost_on_error(task: Any, source: str) -> Iterator[None]:
+    """A failure once the request left may still be billed → charge an unknown cost, then re-raise."""
+    try:
+        yield
+    except Exception:
+        cost_service.charge(task, source, None)
+        raise
 
 
 def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str, task: Any = None) -> Costed:
@@ -63,7 +84,8 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
         request = CompletionRequest(
             model=model or _default_model(client), messages=messages, json_schema=json_schema, tags=_tags(kind, task)
         )
-        response = client.complete(request)
+        with _unknown_cost_on_error(task, "completion"):
+            response = client.complete(request)
     cost = _charge(task, "completion", response.model_dump())
     if response.parsed is None:
         raise ValueError("toolbox completion returned no structured answer")
@@ -99,7 +121,8 @@ def translate(
     """
     payload = _translate_payload(texts, source, target, context, options)
     with ToolboxClient() as client:
-        body = client._post(client._url(_TRANSLATOR_TOOL, "translate/"), payload, retry=False)
+        with _unknown_cost_on_error(task, "translate"):
+            body = client._post(client._url(_TRANSLATOR_TOOL, "translate/"), payload, retry=False)
     cost = _charge(task, "translate", body)
     return Costed({item["key"]: item["translated_text"] for item in body["items"]}, cost)
 
@@ -128,26 +151,30 @@ def generate_video(*, image: bytes, mime: str, form: dict[str, str], task: Any =
     """Image-to-video on the toolbox media API: submit → poll until done → download the mp4 (`value`).
 
     `form` carries `preset`, `prompt`, `aspect_ratio`, `duration_s`. Polls inside the caller (a Celery
-    task) up to `ENRICHMENT_VIDEO_TIMEOUT_S`; a failed job or the timeout raises. The cost is the done job's.
+    task) up to `ENRICHMENT_VIDEO_TIMEOUT_S`; a failed job or the timeout raises. The finished job's cost is
+    charged before the download (a failed job's too); polling that breaks off charges an unknown cost.
     """
     with _video_client() as client:
         response = client.post("videos/", data=form, files={"image": ("image", image, mime)})
         job_id = response.raise_for_status().json()["job_id"]
-        job = _wait_for_video(client, job_id)
+        with _unknown_cost_on_error(task, "media"):
+            job = _wait_for_video(client, job_id)
+        cost = _charge(task, "media", job)
+        if job["status"] == "failed":
+            code = (job.get("error") or {}).get("error", "UNKNOWN")
+            raise ValueError(f"toolbox video job {job_id} failed: {code}")
         video = client.get(f"videos/{job_id}/download/").raise_for_status().content
-    return Costed(video, _charge(task, "media", job))
+    return Costed(video, cost)
 
 
 def _wait_for_video(client: httpx.Client, job_id: str) -> dict:
+    """Poll until the job is `done` or `failed` (returned either way); the timeout raises."""
     timeout_s = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", enrichment_settings.ENRICHMENT_VIDEO_TIMEOUT_S)
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         job = client.get(f"videos/{job_id}/").raise_for_status().json()
-        if job["status"] == "done":
+        if job["status"] in ("done", "failed"):
             return job
-        if job["status"] == "failed":
-            code = (job.get("error") or {}).get("error", "UNKNOWN")
-            raise ValueError(f"toolbox video job {job_id} failed: {code}")
         time.sleep(_VIDEO_POLL_INTERVAL_S)
     raise TimeoutError(f"toolbox video job {job_id} not done after {timeout_s}s")
 

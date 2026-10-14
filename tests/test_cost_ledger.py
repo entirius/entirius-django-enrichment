@@ -4,6 +4,7 @@
 
 """Cost ledger (contract A4 § 1): toolbox costs post factum on tasks, proposals and revisions — mocked toolbox."""
 
+import importlib
 import json
 from decimal import Decimal
 from types import SimpleNamespace
@@ -11,6 +12,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import respx
+from django.apps import apps as django_apps
+from django_utils.toolbox import ToolboxError
 from django_utils.toolbox.testing import CANNED_COMPLETION, mock_toolbox
 
 from django_enrichment.kinds.base import ProposalDraft, with_cost
@@ -63,6 +66,11 @@ class TestCostOf:
             ("completion", {}, None),
             ("translate", {"cost": "1"}, None),
             ("completion", {"cost": "n/a"}, None),
+            ("completion", {"cost": "NaN"}, None),
+            ("completion", {"cost": "Infinity"}, None),
+            ("completion", {"cost": "-1"}, None),
+            ("completion", {"cost": "1e20"}, None),
+            ("completion", {"cost": "0.123456789"}, Decimal("0.12345679")),
         ],
     )
     def test_one_mapping_per_source(self, source, body, expected):
@@ -76,7 +84,7 @@ class TestRunnerCosts:
         task, sent = _run_writer(make_worker, django_capture_on_commit_callbacks, "0.000022")
         assert (task.cost_usd, task.cost_breakdown, task.cost_complete) == (
             Decimal("0.000022"),
-            {"completion": "0.000022"},
+            {"completion": "0.00002200"},
             True,
         )
         proposals = ContentProposal.objects.filter(task=task)
@@ -151,11 +159,60 @@ class TestTranslateCost:
             drafts = TranslateKind().run(worker, task, "SKU-1")
         task.refresh_from_db()
         assert drafts[0].cost_usd == Decimal("0.004")
-        assert (task.cost_usd, task.cost_breakdown) == (Decimal("0.004"), {"translate": "0.004"})
+        assert (task.cost_usd, task.cost_breakdown) == (Decimal("0.004"), {"translate": "0.00400000"})
+
+
+class TestFailedCallCost:
+    def test_completion_error_marks_task_incomplete(self):
+        task = EnrichmentTask.objects.create(type="t")
+        with mock_toolbox() as router, pytest.raises(ToolboxError):
+            router["complete"].mock(return_value=httpx.Response(400, json={"error": "BAD", "detail": "no"}))
+            toolbox_calls.complete(system="", user="u", json_schema={}, model="m", kind="write", task=task)
+        task.refresh_from_db()
+        assert (task.cost_usd, task.cost_complete) == (None, False)
+
+
+class TestPreLedgerMigration:
+    def test_tasks_that_ran_before_the_ledger_get_unknown_cost(self):
+        ran = EnrichmentTask.objects.create(type="t", status="done")
+        by_worker = EnrichmentTask.objects.create(type="t")
+        ContentProposal.objects.create(task=by_worker, source="worker:pim.writer@v1", subject_ref="S")
+        untouched = EnrichmentTask.objects.create(type="t")
+        costed = EnrichmentTask.objects.create(type="t", status="done", cost_usd=Decimal("0.1"))
+        _migration_0009().mark_pre_ledger_costs_unknown(django_apps, None)
+        complete = dict(EnrichmentTask.objects.values_list("pk", "cost_complete"))
+        assert [complete[t.pk] for t in (ran, by_worker, untouched, costed)] == [False, False, True, True]
+
+
+def _migration_0009():
+    return importlib.import_module("django_enrichment.migrations.0009_pre_ledger_costs_unknown")
 
 
 class TestMediaCost:
     URL = "http://toolbox.test/api/ai-media/v2/admin/shop/videos/"
+
+    def test_failed_job_charges_its_reported_cost(self, monkeypatch):
+        task = self._video_task(monkeypatch, {"status": "failed", "cost": "0.1", "error": {"error": "PROVIDER"}})
+        assert (task.cost_breakdown, task.cost_complete) == ({"media": "0.10000000"}, True)
+
+    def test_failed_job_without_cost_marks_task_incomplete(self, monkeypatch):
+        task = self._video_task(monkeypatch, {"status": "failed"})
+        assert (task.cost_usd, task.cost_complete) == (None, False)
+
+    def test_timeout_after_submit_marks_task_incomplete(self, monkeypatch, settings):
+        settings.ENRICHMENT_VIDEO_TIMEOUT_S = 0
+        task = self._video_task(monkeypatch, {"status": "running"}, raises=TimeoutError)
+        assert task.cost_complete is False
+
+    def _video_task(self, monkeypatch, job: dict, raises: type[Exception] = ValueError) -> EnrichmentTask:
+        monkeypatch.setattr(toolbox_calls.time, "sleep", lambda _s: None)
+        task = EnrichmentTask.objects.create(type="t")
+        with respx.mock(assert_all_called=False) as router, pytest.raises(raises):
+            router.post(self.URL).mock(return_value=httpx.Response(202, json={"job_id": "j1"}))
+            router.get(f"{self.URL}j1/").mock(return_value=httpx.Response(200, json=job))
+            toolbox_calls.generate_video(image=b"png", mime="image/png", form={}, task=task)
+        task.refresh_from_db()
+        return task
 
     def test_done_job_cost_is_charged_as_media(self, monkeypatch):
         monkeypatch.setattr(toolbox_calls.time, "sleep", lambda _s: None)
@@ -167,7 +224,7 @@ class TestMediaCost:
             video = toolbox_calls.generate_video(image=b"png", mime="image/png", form={}, task=task)
         task.refresh_from_db()
         assert (video.value, video.cost) == (b"mp4", Decimal("0.4"))
-        assert task.cost_breakdown == {"media": "0.4"}
+        assert task.cost_breakdown == {"media": "0.40000000"}
 
 
 class TestApi:
@@ -189,12 +246,12 @@ class TestApi:
             revised = admin_client.post(
                 f"{BASE}/proposals/{proposal.pk}/revise/", {"quick_action": "shorten"}, format="json"
             )
-        assert revised.json()["cost_usd"] == "0.000022"
+        assert revised.json()["cost_usd"] == "0.00002200"
         assert admin_client.get(f"{BASE}/proposals/{proposal.pk}/").json()["cost_usd"] == "0.00100000"
         body = admin_client.get(f"{BASE}/tasks/{task.pk}/").json()
         assert (body["cost_usd"], body["cost_breakdown"], body["cost_complete"]) == (
             "0.00002200",
-            {"completion": "0.000022"},
+            {"completion": "0.00002200"},
             True,
         )
         assert admin_client.get(f"{BASE}/proposals/{proposal.pk}/revisions/").json()[0]["cost_usd"] == "0.00100000"
