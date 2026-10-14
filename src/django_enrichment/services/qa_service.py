@@ -21,8 +21,10 @@ from collections.abc import Iterator
 
 from django.db import transaction
 
+from django_enrichment.enums import REVISABLE_STATUSES
 from django_enrichment.models import ContentProposal, EnrichmentTask
 from django_enrichment.services import profile_service, proposal_scope, qa_numbers
+from django_enrichment.services.revise_values import RevisionNotApplicableError
 
 _logger = logging.getLogger("process")
 
@@ -30,6 +32,7 @@ RULE = "rule"
 NUMBER_NOT_IN_FACTS = "NUMBER_NOT_IN_FACTS"
 CHECKLIST = "checklist"
 CONTEXT_NUMBERS = "context_numbers"
+SOURCE_PARAMS = ("prompt", "brief", "inputs")
 MAX_WARNINGS = 50
 _FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL, "x": re.VERBOSE}
 
@@ -49,15 +52,26 @@ def check(proposal: ContentProposal, value: dict) -> list[dict]:
 
 
 def recheck(proposal: ContentProposal) -> ContentProposal:
-    """Recompute the current value's warnings onto the proposal and its latest revision."""
-    return store(proposal, check(proposal, proposal.proposed_value))
+    """Recompute the current value's warnings onto the proposal and its latest revision.
+    Raises `ValueError` (not revisable) or `RevisionNotApplicableError` (value changed meanwhile)."""
+    value = proposal.proposed_value
+    return store(proposal, check(proposal, value), base_value=value)
 
 
-def store(proposal: ContentProposal, warnings: list[dict]) -> ContentProposal:
-    """Save `warnings` on the proposal and its latest revision (they always agree)."""
+def store(proposal: ContentProposal, warnings: list[dict], *, base_value: dict) -> ContentProposal:
+    """Save `warnings` (computed on `base_value`) on the proposal and its latest revision (they always agree).
+
+    Row-locked like `revision_service.add_revision`: raises `ValueError` unless the proposal is still
+    revisable, `RevisionNotApplicableError` when its value is no longer `base_value`."""
     with transaction.atomic():
-        ContentProposal.objects.filter(pk=proposal.pk).update(warnings=warnings)
-        if latest := proposal.revisions.order_by("-number").first():
+        locked = ContentProposal.objects.select_for_update().get(pk=proposal.pk)
+        if locked.status not in REVISABLE_STATUSES:
+            raise ValueError(f"only pending or drifted proposals can be checked (status: {locked.status})")
+        if locked.proposed_value != base_value:
+            raise RevisionNotApplicableError("the value changed while the check was running")
+        locked.warnings = warnings
+        locked.save(update_fields=["warnings", "modified_at"])
+        if latest := locked.revisions.order_by("-number").first():
             latest.warnings = warnings
             latest.save(update_fields=["warnings", "modified_at"])
     proposal.refresh_from_db()
@@ -107,11 +121,13 @@ def number_warnings(text: str, allowed: set[str]) -> Iterator[dict]:
 
 
 def allowed_numbers(proposal: ContentProposal, profile: dict) -> set[str]:
-    """Numbers of the facts registry, the task params and the subject's stored context numbers."""
+    """Numbers of the facts registry, the task's source params (`SOURCE_PARAMS`, never its configuration)
+    and the subject's stored context numbers."""
     facts = " ".join(f"{fact.get('label', '')} {fact.get('value', '')}" for fact in profile.get("facts", []))
-    params = dict((proposal.task.params if proposal.task else None) or {})
-    stored = params.pop(CONTEXT_NUMBERS, {}).get(proposal.subject_ref, [])
-    return qa_numbers.values_in(facts) | qa_numbers.values_in(json.dumps(params, ensure_ascii=False)) | set(stored)
+    params = (proposal.task.params if proposal.task else None) or {}
+    source = json.dumps([params.get(key) for key in SOURCE_PARAMS], ensure_ascii=False)
+    stored = params.get(CONTEXT_NUMBERS, {}).get(proposal.subject_ref, [])
+    return qa_numbers.values_in(facts) | qa_numbers.values_in(source) | set(stored)
 
 
 def _span(start: int, end: int, text: str) -> dict:

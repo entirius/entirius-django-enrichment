@@ -45,9 +45,11 @@ ANSWER_SCHEMA = {
 
 
 def check_standard(proposal: ContentProposal) -> list[dict]:
-    """The proposal's warnings after a checklist check (deterministic + `checklist`). Raises `ValueError`."""
+    """The proposal's warnings after a checklist check (deterministic + `checklist`). Raises `ValueError`, or
+    `RevisionNotApplicableError` when the value changed during the completion (nothing is saved)."""
     revision_service.ensure_text_revisable(proposal)
-    if not (text := qa_service.text_of(proposal.proposed_value)):
+    base_value = proposal.proposed_value
+    if not (text := qa_service.text_of(base_value)):
         raise ValueError("only text values can be checked against the standard")
     checklists = _checklists(proposal)
     worker = worker_service.from_source(proposal.source)
@@ -60,8 +62,8 @@ def check_standard(proposal: ContentProposal) -> list[dict]:
         task=proposal.task,
     )
     found = [_warning(problem, text) for problem in answer.value.get("problems", []) if problem.get("message")]
-    warnings = [*qa_service.check(proposal, proposal.proposed_value), *found][: qa_service.MAX_WARNINGS]
-    return qa_service.store(proposal, warnings).warnings
+    warnings = [*qa_service.check(proposal, base_value), *found][: qa_service.MAX_WARNINGS]
+    return qa_service.store(proposal, warnings, base_value=base_value).warnings
 
 
 def _checklists(proposal: ContentProposal) -> str:

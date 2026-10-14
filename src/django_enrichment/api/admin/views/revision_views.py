@@ -92,6 +92,8 @@ def _revise_response(result) -> Response:
 def _check_standard(proposal) -> Response:
     try:
         warnings = qa_checklist.check_standard(proposal)
+    except revise_service.RevisionNotApplicableError:
+        return _not_applicable()
     except ToolboxError as exc:
         return handle_toolbox_error(exc)
     except ValueError as exc:
@@ -142,10 +144,19 @@ class RevisionViewSet(viewsets.ViewSet):
         return _revise_response(result)
 
     @extend_schema(
-        tags=_TAGS, summary="Re-run the deterministic QA checks", request=None, responses={200: ProposalResponse}
+        tags=_TAGS,
+        summary="Re-run the deterministic QA checks",
+        request=None,
+        responses={200: ProposalResponse, 400: None, 422: None},
     )
     def qa_check(self, request: Request, pk: int) -> Response:
-        proposal = qa_service.recheck(_get_or_404(proposal_service.get_proposal, pk))
+        proposal = _get_or_404(proposal_service.get_proposal, pk)
+        try:
+            proposal = qa_service.recheck(proposal)
+        except revise_service.RevisionNotApplicableError:
+            return _not_applicable()
+        except ValueError as exc:
+            raise_as_drf(exc)
         return Response(ProposalResponse.model_validate(proposal).model_dump(mode="json"))
 
     @extend_schema(
