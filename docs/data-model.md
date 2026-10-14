@@ -23,7 +23,7 @@ the size of the catalogue.
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
 | `requested_by` | FK User (SET_NULL) | Who spawned it. |
 | `counts` | JSON | Progress `{targets, proposed, applied, rejected}`. |
-| `cost_usd` / `cost_breakdown` / `cost_complete` | Decimal (null) / JSON / Bool | Cost ledger (contract A4 § 1), written only by `cost_service.charge`: sum of the costs the toolbox reported, per source `{completion, translate, seo, media}` (decimal strings); `cost_complete` turns false once a call reported no cost. Null = nothing known — an unknown cost is never counted as 0. |
+| `cost_usd` / `cost_breakdown` / `cost_complete` | Decimal (null) / JSON / Bool | Cost ledger (contract A4 § 1), written only by `cost_service.charge`: sum of the costs the toolbox reported, per source `{completion, translate, seo, media}` (decimal strings); `cost_complete` turns false once a call reported no cost or failed after its request left; migration `0009` sets it false on tasks that ran before the ledger. Null = nothing known — an unknown cost is never counted as 0. |
 | `errors` | JSON | Why subjects failed: `[{subject_ref, code, error_id}]`, first 20 (`task_service.ERRORS_CAP`). `code` = toolbox error code or `TIMEOUT` / `INTERNAL_ERROR`, never exception text; `error_id` finds the trace in the `process` log. |
 
 `in_progress` is a soft anti-dup marker (worker claimed it) — **not** a lease. No retry, dead-letter,

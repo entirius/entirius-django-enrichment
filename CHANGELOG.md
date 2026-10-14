@@ -8,7 +8,10 @@
   `EnrichmentTask.cost_usd` + `cost_breakdown` + `cost_complete`; `ContentProposal.cost_usd` (even split per
   call) and `ProposalRevision.cost_usd` (migration `0008_cost_ledger`). An unknown cost stays null, never 0.
   Completion tags `["enrichment.<kind>[.<template>]", "task:<id>"]`. API: costs on task, proposal and revision
-  responses.
+  responses. `cost_of` normalises to the ledger's 8 decimal places and treats NaN, negative or out-of-range
+  values as unknown; a call that fails after its request left (completion, translation, a video job's
+  polling) charges an unknown cost, a failed video job its reported cost. Migration
+  `0009_pre_ledger_costs_unknown` marks tasks that ran before the ledger `cost_complete=false`.
 - Generic kinds (contract A3 § 3): `write` (several text fields, one completion per subject × language,
   `maxLength` from the catalog, html sanitised, `languages: ["*"]`) and `pick` (select/multiselect enums, one
   completion per subject); `translate` takes `params.fields`. Adapter extras with fallbacks in `kinds/extras.py`;

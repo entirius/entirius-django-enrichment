@@ -77,7 +77,7 @@ routing is proven at this stage.
 
 | Function | Contract |
 |---|---|
-| `charge(task, source, cost)` | Row-locked add of one toolbox call's cost (`source` ∈ completion/translate/seo/media) to `task.cost_usd` + `cost_breakdown`; `cost=None` only sets `cost_complete=False`. No task / unsaved stand-in → no-op. Called by `toolbox_calls` after every call; kinds split a call's cost over its drafts with `kinds.base.with_cost`. |
+| `charge(task, source, cost)` | Row-locked add of one toolbox call's cost (`source` ∈ completion/translate/seo/media) to `task.cost_usd` + `cost_breakdown`; `cost=None` only sets `cost_complete=False`. No task / unsaved stand-in → no-op. Called by `toolbox_calls` after every call (with `None` when a call fails after its request left); kinds split a call's cost over its drafts with `kinds.base.with_cost`. |
 
 ## `proposal_service`
 
