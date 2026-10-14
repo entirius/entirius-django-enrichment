@@ -27,14 +27,43 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `POST` | `proposals/` | `proposal_service.intake` | Worker intake — idempotent on `external_ref`. Throttled (`enrichment_intake`, 100/min). → 201 |
 | `POST` | `proposals/upload-media/` | `proposal_service.intake_media` | Multipart media intake — stages the binary, `target_kind=picture`. Size + MIME caps. Throttled. → 201 |
 | `GET` | `proposals/{id}/staged-file/` | `staging_store` | Stream a proposal's staged binary (admin-only) — the CMS "after" preview |
-| `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref; `ordering` allowlisted |
+| `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref/`task` (id); `ordering` allowlisted |
 | `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
-| `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending only, else 400 |
+| `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending/drifted only, else 400. Creates a `user` revision |
+| `GET` | `proposals/{id}/revisions/` | `revision_service.list_revisions` | Plain list `[{number, value, instruction, scope, author_kind, author, created_at}]` |
+| `POST` | `proposals/{id}/revise/` | `revise_service.revise` | `{instruction?, quick_action?, scope?}` → 201 revision, 200 `{candidates}` for `variants`; 400 / 422 `REVISION_NOT_APPLICABLE`; toolbox errors mapped. Throttled (`enrichment_bulk`) |
+| `POST` | `proposals/{id}/revisions/{n}/restore/` | `revision_service.restore` | → 201 `restore` revision copying `n` (404 unknown `n`) |
+| `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
+| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker}` → 200 `{target, rules}`; template → 400 until templates exist |
+| `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter |
 | `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
 | `POST` | `proposals/bulk-accept/` | `proposal_service.bulk_accept` | Pending-only. Sync in-request `≤ ENRICHMENT_ASYNC_APPLY_THRESHOLD`, else Celery canvas. → 200 `{mode, enqueued, applied, drifted, failed}` |
 | `POST` | `proposals/bulk-reject/` | `proposal_service.bulk_reject` | Sync `.update()`. → `{rejected}` |
 | `POST` | `proposals/bulk-undo/` | `proposal_service.bulk_undo` | Single-level undo of the filtered APPLIED set; same sync/canvas routing. Drift-blocked items stay applied. → 200 `{mode, enqueued, reverted, blocked, failed}` |
+
+## Revisions and corrections (contract A3 § 1)
+
+Every proposal carries a revision history (`ProposalRevision`, 1-based `number`); `proposed_value`
+always equals the latest revision — only `revision_service` writes both, in one transaction. Intake
+records revision 1 (`ai`); `PATCH` records `user`; restore records `restore`; corrections record `ai`.
+Only `pending`/`drifted` proposals take new revisions; media proposals cannot be corrected.
+
+A correction is **one stateless completion**. Prompt: worker system prompt (worker from
+`source = worker:<key>@v<n>`) as the system message; then rules (proposal → template → worker
+`options.rules`), the task's `params.prompt`, the field catalog entry (adapter `describe_fields`,
+optional), the current value, the selection, the instruction (quick actions `shorten` / `expand` /
+`formal` / `casual` / `fit_limit` / `variants` expand server-side). Model = the worker's (blank → default).
+
+| Value | Answer schema | Applied as |
+|---|---|---|
+| `{"text"}` with HTML or > 300 chars | `{edits: [{old, new}], rewrite}` | `rewrite` → full value; else each `old` must occur exactly once (else 422, nothing saved); HTML sanitised |
+| `{"text"}` short | `{text}` (+ catalog `maxLength`) | full value |
+| `{"option"}` / `{"options"}` | catalog option enum | full value |
+
+Scope `{"type": "selection", "text"}` must occur exactly once in the current text (else 400).
+Batch: each pending text proposal of the task gets one call; failures land in `task.errors`
+(`REVISION_NOT_APPLICABLE` or the toolbox code), counts `revised` / `failed`.
 
 ## The n8n worker pull-loop
 

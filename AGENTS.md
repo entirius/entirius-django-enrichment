@@ -33,7 +33,7 @@ source module (PIM first) through a per-module adapter.
 
 ```
 src/django_enrichment/
-├── models/             # EnrichmentTask, ContentProposal, SpawnRule, Worker
+├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, Worker
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode + *_STATUS_TRANSITIONS tables
 ├── kinds/              # Kind contract + registry (register_kind), base kinds translate / field / video
 ├── schemas/
@@ -41,10 +41,11 @@ src/django_enrichment/
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
 │                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
-│                       # toolbox_calls (the only AI toolbox door)
+│                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
+│                       # (+ revise_prompt, revise_values), rules_service, revise_batch_service
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
-├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task)
-├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, spawn_rule, worker), urls, throttling, pagination
+├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
+├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker), urls, throttling, pagination
 ├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin
 ├── management/commands/# prune_enrichment (retention), seed_demo_proposals
 ├── migrations/
@@ -105,6 +106,11 @@ other modules register theirs from their own `ready()`. `task_service.spawn` val
 the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit.
 Adapter extras `build_context` (field kind) and `main_picture` (video kind; absent → subject fails) are
 optional (`getattr`). Worker keys allow dots (`pim.translate`).
+
+**Revisions & corrections:** `proposed_value` always equals the latest `ProposalRevision`; only
+`revision_service.add_revision` writes both (intake writes revision 1). A correction is one stateless
+completion (`revise_service`); the answer schema depends on the value shape (`revise_values`). Full
+flow: `docs/api.md` § Revisions and corrections.
 
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the
 module-as-adapter that lets the whole bus flow run without a source module.
@@ -209,5 +215,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
 - **`tasks/?subject_ref=` sees list-mode tasks only** — a text match of `"<ref>"` in `scope_spec.refs`
   (SQLite-safe, no JSON containment); filter/gap/csv tasks carry no refs. Full note: `docs/api.md` § Per-product view.
+- **Never write `proposed_value` directly** — go through `revision_service.add_revision`, or the
+  revision history drifts from the value. Template rule promotion returns 400 until templates exist
+  (`rules_service._promote_to_template` is the seam).
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

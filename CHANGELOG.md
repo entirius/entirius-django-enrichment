@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Revisions (contract A3 § 1): `ProposalRevision` model and `ContentProposal.rules` (migration
+  `0006_proposal_revisions`); intake records revision 1, `PATCH proposals/{id}/` records a `user` revision
+  (pending and drifted). Services `revision_service` (invariant owner), `revise_service` (one stateless
+  toolbox completion per correction: edits / full value / option schemas, all-or-nothing edits, selection
+  scope, quick actions, `variants`), `rules_service` (limits, promotion to the worker), `revise_batch_service`
+  (Celery `enrichment.revise_task`, default queue).
+- API: `GET proposals/{id}/revisions/`, `POST proposals/{id}/revise/` (422 `REVISION_NOT_APPLICABLE`),
+  `POST proposals/{id}/revisions/{n}/restore/`, `PUT proposals/{id}/rules/`, `POST proposals/{id}/rules/promote/`,
+  `POST tasks/{id}/revise/`, `GET proposals/?task=`; proposal responses add `rules`.
 - AI workers: `Worker` model (Django admin only, migration `0004_worker`), kind registry (`register_kind`) with the
   base kinds `translate` and `field`, toolbox calls on `django_utils.toolbox.ToolboxClient`, and an internal Celery
   runner (`enrichment.run_task`) dispatched on commit when an active internal Worker owns the task type.

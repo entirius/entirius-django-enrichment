@@ -7,5 +7,6 @@ groups:
     models:
       - EnrichmentTask
       - ContentProposal
+      - ProposalRevision
       - SpawnRule
       - Worker
