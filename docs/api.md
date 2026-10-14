@@ -172,6 +172,16 @@ Every task response carries `errors` (why subjects failed — stable codes, see 
 `proposal_counts` (`{status: n}` of the task's proposals, one grouped query per page), so the CMS can say
 "1 proposal to review", "applied" or "failed: translator not configured" without more calls.
 
+## Costs (contract A4 § 1)
+
+Post factum only — no estimates, no markup. Task responses carry `cost_usd` (sum of the known toolbox
+costs, null = none known), `cost_breakdown` (`{completion, translate, seo, media}`) and `cost_complete`
+(false once a call reported no cost); proposal and revision responses carry `cost_usd` (null = unknown).
+Corrections and `variants` are charged to the proposal's task. `toolbox_calls.cost_of` is the single
+mapping from today's toolbox fields (completion `cost`, translator `total_cost_usd`, media job `cost`, SEO
+`cost`). Completion calls send `tags: ["enrichment.<kind>[.<template>]", "task:<id>"]` — the selector
+first (the toolbox fake provider picks fixtures by it), then the task for usage attribution.
+
 ## Accept / drift (D2)
 
 `POST /proposals/{id}/accept/` routes through the drift-aware apply: it re-reads the live value and,

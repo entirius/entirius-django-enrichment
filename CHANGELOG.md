@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Cost ledger (contract A4 § 1), post factum only: `toolbox_calls` returns `Costed(value, cost)` for completion,
+  translation and media jobs, the cost read by one mapping (`cost_of`: completion `cost`, translator
+  `total_cost_usd`, media job `cost`, SEO `cost`); `cost_service.charge` accumulates it row-locked on
+  `EnrichmentTask.cost_usd` + `cost_breakdown` + `cost_complete`; `ContentProposal.cost_usd` (even split per
+  call) and `ProposalRevision.cost_usd` (migration `0008_cost_ledger`). An unknown cost stays null, never 0.
+  Completion tags `["enrichment.<kind>[.<template>]", "task:<id>"]`. API: costs on task, proposal and revision
+  responses.
 - Generic kinds (contract A3 § 3): `write` (several text fields, one completion per subject × language,
   `maxLength` from the catalog, html sanitised, `languages: ["*"]`) and `pick` (select/multiselect enums, one
   completion per subject); `translate` takes `params.fields`. Adapter extras with fallbacks in `kinds/extras.py`;

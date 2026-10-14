@@ -43,7 +43,7 @@ src/django_enrichment/
 │                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
-│                       # template_service, catalog_service
+│                       # template_service, catalog_service, cost_service (cost ledger)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog), urls, throttling, pagination
@@ -227,5 +227,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   revision history drifts from the value.
 - **`params.template` survives kind validation only because `task_service.spawn` re-adds it** — kind
   `Params` drop unknown keys; corrections find the template's rules through that key.
+- **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
+  pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
+  Details: `docs/api.md` § Costs.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

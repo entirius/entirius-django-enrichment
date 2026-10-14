@@ -23,6 +23,7 @@ the size of the catalogue.
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
 | `requested_by` | FK User (SET_NULL) | Who spawned it. |
 | `counts` | JSON | Progress `{targets, proposed, applied, rejected}`. |
+| `cost_usd` / `cost_breakdown` / `cost_complete` | Decimal (null) / JSON / Bool | Cost ledger (contract A4 § 1), written only by `cost_service.charge`: sum of the costs the toolbox reported, per source `{completion, translate, seo, media}` (decimal strings); `cost_complete` turns false once a call reported no cost. Null = nothing known — an unknown cost is never counted as 0. |
 | `errors` | JSON | Why subjects failed: `[{subject_ref, code, error_id}]`, first 20 (`task_service.ERRORS_CAP`). `code` = toolbox error code or `TIMEOUT` / `INTERNAL_ERROR`, never exception text; `error_id` finds the trace in the `process` log. |
 
 `in_progress` is a soft anti-dup marker (worker claimed it) — **not** a lease. No retry, dead-letter,
@@ -39,6 +40,7 @@ shape; it never reads the content.
 | Target | `target_module` (indexed), `target_type`, `subject_ref` (indexed), `subject_label`, `subject_url`, `target_kind`, `target_locator`, `locator_hash` (indexed) | `target_module` keys the adapter in the registry. `subject_label`/`subject_url` are denormalised so the review queue needs no joins. `target_locator` holds the precise address (PIM `{channel,language,feature_idx}`; CDB `{block,lang}`). |
 | Value | `proposed_value`, `staged_file`, `current_snapshot` | Opaque to the bus — only the adapter writer reads them. `staged_file` references a staging store for media; `current_snapshot` powers diff / drift / undo. |
 | Metadata | `status` (indexed), `source`, `confidence` (Decimal 0.000–1.000), `batch_id` (indexed), `external_ref` (indexed), `reviewed_by/at`, `applied_at`, `reject_reason` | `external_ref` (worker execution id) gives idempotency. |
+| Cost | `cost_usd` (Decimal, null) | Cost of the toolbox call that produced the proposal, split evenly across that call's drafts; null = unknown. `ProposalRevision.cost_usd` is the cost of the completion behind a revision (revision 1 = the proposal's cost; user edits and restores have none). |
 
 ### `locator_hash` — why a column
 
