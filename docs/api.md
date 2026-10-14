@@ -40,7 +40,12 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
 | `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400) |
 | `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
-| `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter |
+| `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Response `result_ref` = what the apply created |
+| `GET` | `workflows/` | `workflow_queries.list_definitions` | Active workflows — see `docs/workflows.md` |
+| `GET/POST` | `runs/` | `workflow_service.start` | Runs list / start `{definition, inputs, channel}` → 201. Throttled |
+| `GET` | `runs/{uid}/` | `workflow_queries.get_run` | Run with steps state and cost |
+| `POST` | `runs/{uid}/steps/{key}/regenerate/` | `workflow_service.regenerate` | `{instruction?}` → 200. Throttled |
+| `POST` | `runs/{uid}/cancel/` | `workflow_service.cancel` | → 200 |
 | `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
 | `POST` | `proposals/bulk-accept/` | `proposal_service.bulk_accept` | Pending-only. Sync in-request `≤ ENRICHMENT_ASYNC_APPLY_THRESHOLD`, else Celery canvas. → 200 `{mode, enqueued, applied, drifted, failed}` |
 | `POST` | `proposals/bulk-reject/` | `proposal_service.bulk_reject` | Sync `.update()`. → `{rejected}` |

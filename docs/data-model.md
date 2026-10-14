@@ -42,6 +42,8 @@ shape; it never reads the content.
 | Metadata | `status` (indexed), `source`, `confidence` (Decimal 0.000–1.000), `batch_id` (indexed), `external_ref` (indexed), `reviewed_by/at`, `applied_at`, `reject_reason` | `external_ref` (worker execution id) gives idempotency. |
 | Cost | `cost_usd` (Decimal, null) | Cost of the toolbox call that produced the proposal, split evenly across that call's drafts; null = unknown. `ProposalRevision.cost_usd` is the cost of the completion behind a revision (revision 1 = the proposal's cost; user edits and restores have none). |
 
+| Result | `result_ref` | What applying it created when the adapter's `apply` returned `{"subject_ref"}` (a workflow document); blank otherwise. |
+
 ### `locator_hash` — why a column
 
 The superseded lookup keys on `(target_module, subject_ref, target_kind, hash(target_locator))`.
@@ -84,6 +86,13 @@ routes by `target_module` to the registered adapter — never `if target_module 
 
 `SpawnRule` is standalone operator config (no FK to either model above — it references tasks only through the
 deterministic `gaprule:` batch_key). Fields and semantics: `docs/spawn-rules.md`.
+
+## WorkflowDefinition / WorkflowRun
+
+A definition lists steps (templates) with `needs` and gates; a run freezes them in `steps_state` (ordered list
+with `status`, `task_id`, `proposal_id`), keeps the brief (`inputs`), the created `subject_ref` and the summed
+`cost_usd` / `cost_complete`. Step outputs are ordinary proposals on the subject `run:<uid>`. Flow, validation
+and API: `docs/workflows.md`.
 
 ## Indexes
 

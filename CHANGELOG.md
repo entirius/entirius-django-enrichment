@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Workflows (contract A4 § 6): `WorkflowDefinition` (steps `{key, label, template, needs, gate review|auto,
+  output artifact|questions|document}`, `inputs_schema`; `clean()` validates the graph, templates, kinds and
+  schema) and `WorkflowRun` (`uid`, frozen `steps_state`, status `running|waiting|done|failed|cancelled`,
+  `subject_ref`, `cost_usd` + `cost_complete` summed from the run's tasks) — migration `0010_workflows`,
+  Django admin. `workflow_service`: start (brief validated against `inputs_schema`), steps spawned as template
+  tasks on `run:<uid>` with frozen params, runner completion hook, gates (auto approves at once), approve =
+  accept the step's proposal → next steps spawn, regenerate with an instruction, cancel. Completion calls of a
+  step are tagged `run:<uid>`.
+- Built-in adapter `"enrichment"` for workflow artifacts (`target_kind="artifact"`, locator `{"step"}`, values
+  `{"text"}` / `{"data"}` / `{"questions", "answers"}`; revert refused). `ContentProposal.result_ref`: an
+  adapter's `apply` may return `{"subject_ref"}` (documents); also set as the run's `subject_ref`.
+- Kinds `generate` (markdown / text / json with an optional object schema), `questions` (approval needs the
+  required answers → 400 `ANSWERS_MISSING`) and `compose` (no AI: article markdown + meta → document value
+  `{language, title, slug, body_markdown, meta, faq}`). Optional seams (`kinds/seams.py`) for the company
+  profile, memory recall / answer writes and augmentations.
+- API: `GET workflows/`, `GET/POST runs/`, `GET runs/{uid}/`, `POST runs/{uid}/steps/{key}/regenerate/`,
+  `POST runs/{uid}/cancel/`; proposal responses add `result_ref`. Dependency `jsonschema`.
 - Cost ledger (contract A4 § 1), post factum only: `toolbox_calls` returns `Costed(value, cost)` for completion,
   translation and media jobs, the cost read by one mapping (`cost_of`: completion `cost`, translator
   `total_cost_usd`, media job `cost`, SEO `cost`); `cost_service.charge` accumulates it row-locked on

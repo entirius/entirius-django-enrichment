@@ -28,7 +28,7 @@ Five callables are the contract; a sixth is optional.
 | `resolve_targets(scope_spec, page=1) -> list` | READ | A worker pulls a task's targets, one page at a time. |
 | `find_gaps(check, params, scope) -> list` | READ | `scope_spec.mode == "gap"` — a named quality check finds candidates. |
 | `read_current(*, subject_ref, target_kind, target_locator) -> dict` | READ | At intake (snapshot the truth) and again before apply (drift check). |
-| `apply(proposal) -> None` | WRITE | After review, once the drift check passes. The only write path. |
+| `apply(proposal) -> dict \| None` | WRITE | After review, once the drift check passes. The only write path. A `target_kind="document"` apply that creates a subject returns `{"subject_ref": <ref>}` → `proposal.result_ref` (read it in `revert`); see `docs/workflows.md`. |
 | `revert(proposal) -> None` | WRITE | Single-level undo — restore `current_snapshot`. |
 | `release_undo_anchor(proposal) -> int` | WRITE | Optional. Cleanup-time GC of an external undo anchor. |
 | `describe_fields(*, channel, language="") -> list[dict]` | READ | Optional. Field catalog for `write`/`pick`, corrections and `GET fields/` (contract A3 § 2). |

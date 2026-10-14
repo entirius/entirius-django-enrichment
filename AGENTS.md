@@ -33,9 +33,12 @@ source module (PIM first) through a per-module adapter.
 
 ```
 src/django_enrichment/
-├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker
-├── enums.py            # TaskStatus, ProposalStatus, WorkerMode + *_STATUS_TRANSITIONS tables
-├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick, extras.py
+├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker,
+│                       # WorkflowDefinition, WorkflowRun
+├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
+├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
+│                       # generate / questions / compose, extras.py, step.py (step params), seams.py
+├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
@@ -43,11 +46,14 @@ src/django_enrichment/
 │                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
-│                       # template_service, catalog_service, cost_service (cost ledger)
-├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
+│                       # template_service, catalog_service, cost_service (cost ledger),
+│                       # workflow_service (+ workflow_steps, workflow_queries)
+├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
-├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog), urls, throttling, pagination
-├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin
+├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
+│                       # workflow), urls, throttling, pagination
+├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
+│                       # WorkflowDefinitionAdmin, WorkflowRunAdmin (read-only)
 ├── testing/            # adapter_conformance — shared adapter test kit other modules subclass
 ├── management/commands/# prune_enrichment (retention), seed_demo_proposals
 ├── migrations/
@@ -120,6 +126,14 @@ values, one call per subject) read the optional adapter extras through `kinds/ex
 `SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
 `template` merges them (`template_service.merge_into_task`). Details: `docs/api.md` § Generic kinds, § Templates.
 
+**Workflows:** a `WorkflowDefinition` lists steps (templates) with `needs` and gates (`review` | `auto`); a
+`WorkflowRun` freezes them in `steps_state`. Each step is a task on the subject `run:<uid>`; its output is a
+proposal — an artifact of the built-in `"enrichment"` adapter, or a document for the target module.
+Approving = accepting that proposal (`apply_service` → `workflow_service.on_proposal_applied` spawns the next
+steps); the runner hands finished step tasks to `on_task_finished`. Kinds `generate` / `questions` /
+`compose`; profile, memory and augmentations reach prompts through `kinds/seams.py`. `adapter.apply` may
+return `{"subject_ref"}` → `ContentProposal.result_ref`. Full flow: `docs/workflows.md`.
+
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the
 module-as-adapter that lets the whole bus flow run without a source module.
 
@@ -130,6 +144,7 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Endpoint table, worker pull-loop, idempotency, filters, drift, errors | `docs/api.md` |
 | Per-service contract, `scope_spec` shape, the `filter ⇄ gap` decision | `docs/services.md` |
 | Writing an adapter | `docs/adapter-guide.md` |
+| Workflows, artifacts, kinds generate / questions / compose, seams | `docs/workflows.md` |
 | Media staging flow | `docs/media.md` |
 | Async apply, undo, retention | `docs/scale-and-undo.md` |
 | Spawn rules, spawn surfaces (CSV, gap, list) | `docs/spawn-rules.md`, `docs/spawn-surfaces.md` |
@@ -230,5 +245,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
   pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
   Details: `docs/api.md` § Costs.
+- **Step params ride on `StepParams`** — kind `Params` drop unknown keys, so `run` / `step` / `inputs` survive
+  only on the three step kinds; a definition step must use one of them (`clean()` enforces it).
+- **Never move a run by hand** — `steps_state` and `status` change only in `workflow_service`, under the run's
+  row lock; an approved step cannot be regenerated or undone (artifact `revert` refuses).
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.
