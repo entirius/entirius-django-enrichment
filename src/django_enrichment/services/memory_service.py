@@ -44,10 +44,12 @@ def recall(*, channel: str, subject_module: str, subject_ref: str, kinds: list[s
     return _budgeted(lines, budget_chars)
 
 
-def fresh(*, channel: str, subject_module: str, subject_ref: str, kind: str) -> MemoryEntry | None:
-    """The newest active, unexpired entry of `kind` about the subject, else about its category."""
+def fresh(*, channel: str, subject_module: str, subject_ref: str, kind: str, language: str = "") -> MemoryEntry | None:
+    """The newest active, unexpired entry of `kind` in `language` (`data.language`, blank = none recorded) about
+    the subject, else about its category."""
     for ref in _subject_then_category(subject_module, subject_ref):
-        if entry := _active(channel, subject_module, ref, [kind]).first():
+        entries = _active(channel, subject_module, ref, [kind])
+        if entry := next((e for e in entries if (e.data or {}).get("language", "") == language), None):
             return entry
     return None
 

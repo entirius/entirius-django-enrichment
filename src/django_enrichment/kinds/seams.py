@@ -68,10 +68,20 @@ def profile_block(data: str) -> str:
     return join_prompts(PROFILE_NOTE, fenced("company_profile", data)) if data else ""
 
 
-def memory_block(*, channel: str, subject_module: str, subject_ref: str) -> str:
-    """Remembered SEO briefs about the subject (then its category) as a fenced data block."""
-    found = recall(channel=channel, subject_module=subject_module, subject_ref=subject_ref, kinds=CONTENT_MEMORY_KINDS)
+def memory_block(*, channel: str, subject_module: str, subject_ref: str, task: Any = None) -> str:
+    """Remembered SEO briefs about the subject (then its category) as a fenced data block — without the kinds
+    the task's augmentations already put in the prompt (`content_memory_kinds`)."""
+    if not (kinds := content_memory_kinds(task)):
+        return ""
+    found = recall(channel=channel, subject_module=subject_module, subject_ref=subject_ref, kinds=kinds)
     return join_prompts(MEMORY_NOTE, fenced("memory", found)) if found else ""
+
+
+def content_memory_kinds(task: Any = None) -> list[str]:
+    """`CONTENT_MEMORY_KINDS` minus the task's augmentations (`params.augment`) — an augmentation key names the
+    memory kind it writes, and its own block already carries it."""
+    augmented = set((getattr(task, "params", None) or {}).get("augment") or [])
+    return [kind for kind in CONTENT_MEMORY_KINDS if kind not in augmented]
 
 
 def recall(*, channel: str, subject_module: str, subject_ref: str, kinds: list[str]) -> str:

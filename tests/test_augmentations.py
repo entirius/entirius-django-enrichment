@@ -16,7 +16,8 @@ from django_utils.toolbox.testing import CANNED_COMPLETION, error_response, mock
 
 from django_enrichment import augmentations
 from django_enrichment.augmentations import AugmentResult, seo_brief
-from django_enrichment.kinds import SubjectError
+from django_enrichment.augmentations.seo_answers import SeedsAnswer
+from django_enrichment.kinds import SubjectError, seams
 from django_enrichment.kinds.base import fenced
 from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntry
 from django_enrichment.services import task_service, template_service
@@ -42,6 +43,7 @@ EVALUATION = {
     "serp_notes": "Rejected 'how to clean a linen sofa': the results are cleaning guides (informational).",
     "gaps": ["Which fabrics wear best"],
 }
+PL = {"language": "pl"}
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("toolbox_settings")]
 
 
@@ -102,14 +104,14 @@ def _run_task(capture, *, params: dict | None = None, refs: tuple[str, ...] = ("
     return task, routes.pop("complete"), routes
 
 
-def _remember(subject_ref: str, *, expires_in: timedelta = timedelta(days=30)) -> MemoryEntry:
+def _remember(subject_ref: str, *, expires_in: timedelta = timedelta(days=30), language: str = "pl") -> MemoryEntry:
     return MemoryEntry.objects.create(
         channel="default",
         subject_module="pim",
         subject_ref=subject_ref,
         kind="seo_brief",
         title="SEO brief: linen sofa",
-        data=EVALUATION,
+        data={**EVALUATION, "language": language},
         expires_at=timezone.now() + expires_in,
     )
 
@@ -181,10 +183,10 @@ class TestSeoBriefFullPath:
         task, router, routes = _run_task(django_capture_on_commit_callbacks)
         assert task.status == "done", task.errors
         seeds = ["linen sofa", "how to clean a linen sofa", "grey linen sofa", "sofa"]
-        assert _sent(routes["volume"]) == [{"keywords": seeds}]
-        assert _sent(routes["ideas"]) == [{"keywords": seeds}]
+        assert _sent(routes["volume"]) == [{"keywords": seeds, "language_code": "pl"}]
+        assert _sent(routes["ideas"]) == [{"keywords": seeds, "language_code": "pl"}]
         assert [body["keyword"] for body in _sent(routes["serp"])] == seeds[1::-1] + ["grey linen sofa"]
-        assert {body["depth"] for body in _sent(routes["serp"])} == {10}
+        assert {(body["depth"], body["language_code"]) for body in _sent(routes["serp"])} == {(10, "pl")}
         assert len(_by_selector(router, "enrichment.seo_brief.seeds")) == 1
         assert len(_by_selector(router, "enrichment.seo_brief.evaluate")) == 1
 
@@ -209,6 +211,7 @@ class TestSeoBriefFullPath:
         assert evidence["serp"]["how to clean a linen sofa"]["organic"][0]["title"] == "How to clean linen"
         assert {"phrase": "how to clean a linen sofa", "search_volume": 5000} in evidence["candidates"]
         brief = MemoryEntry.objects.get().data
+        assert brief["language"] == "pl"
         assert brief["primary"] == "linen sofa"  # not the highest-volume phrase: its SERP intent did not match
         assert "Rejected 'how to clean a linen sofa'" in brief["serp_notes"]
         assert brief["search_volume"] == {"linen sofa": 900, "grey linen sofa": 300}
@@ -257,7 +260,7 @@ class TestReuse:
         _remember("CAT-SOFAS")
         with mock_toolbox() as router:
             complete = router["complete"]
-            result = seo_brief.run(task=self._task(), subject_ref="SKU-1", context={})
+            result = seo_brief.run(task=self._task(), subject_ref="SKU-1", context=PL)
         assert (result.cost, result.memory_writes) == (Decimal(0), [])
         assert result.block.startswith("Primary phrase: linen sofa")
         assert not complete.called
@@ -265,9 +268,11 @@ class TestReuse:
     def test_subject_brief_wins_over_the_category(self, writer):
         _remember("CAT-SOFAS")
         _remember("SKU-1")
-        MemoryEntry.objects.filter(subject_ref="SKU-1").update(data={**EVALUATION, "primary": "own phrase"})
+        MemoryEntry.objects.filter(subject_ref="SKU-1").update(
+            data={**EVALUATION, "primary": "own phrase", "language": "pl"}
+        )
         with mock_toolbox():
-            result = seo_brief.run(task=self._task(), subject_ref="SKU-1", context={})
+            result = seo_brief.run(task=self._task(), subject_ref="SKU-1", context=PL)
         assert result.block.startswith("Primary phrase: own phrase")
 
     def test_reuse_in_a_task_costs_nothing(self, writer, django_capture_on_commit_callbacks):
@@ -285,6 +290,56 @@ class TestReuse:
         _, _, routes = _run_task(django_capture_on_commit_callbacks)
         assert routes["volume"].call_count == 1
         assert MemoryEntry.objects.count() == 2
+
+
+def _write_prompts(router) -> list[str]:
+    return [body["messages"][-1]["content"] for body in _by_selector(router, "enrichment.write")]
+
+
+class TestLanguages:
+    def test_two_languages_get_a_brief_each_in_their_own_market(self, writer, django_capture_on_commit_callbacks):
+        task, router, routes = _run_task(django_capture_on_commit_callbacks, params={"languages": ["pl", "en"]})
+        assert task.status == "done", task.errors
+        assert [body["language_code"] for body in _sent(routes["volume"])] == ["pl", "en"]
+        assert {body["language_code"] for body in _sent(routes["serp"])} == {"pl", "en"}
+        stored = MemoryEntry.objects.order_by("pk").values_list("subject_ref", "data__language")
+        assert list(stored) == [("CAT-SOFAS", "pl"), ("CAT-SOFAS", "en")]
+        pl_prompt, en_prompt = _write_prompts(router)
+        assert "Researched for language: pl" in pl_prompt and "Researched for language: en" not in pl_prompt
+        assert "Researched for language: en" in en_prompt and "Researched for language: pl" not in en_prompt
+
+    def test_a_brief_in_another_language_is_not_reused(self, writer, django_capture_on_commit_callbacks):
+        _remember("CAT-SOFAS", language="en")
+        _, _, routes = _run_task(django_capture_on_commit_callbacks)
+        assert routes["volume"].call_count == 1
+        assert MemoryEntry.objects.filter(data__language="pl").count() == 1
+
+    def test_no_language_sends_no_language_code(self, writer):
+        task = SimpleNamespace(pk=None, type="x", params={"channel": "default"}, scope_spec={"module": "pim"})
+        with mock_toolbox() as router:
+            routes = _mock_seo(router)
+            seo_brief.run(task=task, subject_ref="SKU-1", context={})
+        assert _sent(routes["volume"]) == [
+            {"keywords": ["linen sofa", "how to clean a linen sofa", "grey linen sofa", "sofa"]}
+        ]
+
+
+class TestMemoryBlock:
+    def test_augmented_prompt_carries_the_brief_once(self, writer, django_capture_on_commit_callbacks):
+        _remember("CAT-SOFAS")
+        _, router, _ = _run_task(django_capture_on_commit_callbacks)
+        prompt = _write_prompts(router)[0]
+        assert "<seo_brief>" in prompt and "<memory>" not in prompt
+
+    def test_without_augmentation_the_brief_comes_from_memory(self, writer, django_capture_on_commit_callbacks):
+        _remember("CAT-SOFAS")
+        _, router, _ = _run_task(django_capture_on_commit_callbacks, params={"augment": []})
+        prompt = _write_prompts(router)[0]
+        assert "<memory>" in prompt and "<seo_brief>" not in prompt
+
+    def test_step_and_kind_recall_skips_augmented_kinds(self):
+        assert seams.content_memory_kinds(SimpleNamespace(params={"augment": ["seo_brief"]})) == []
+        assert seams.content_memory_kinds(None) == ["seo_brief"]
 
 
 class TestErrors:
@@ -306,7 +361,26 @@ class TestErrors:
         task, _, _ = _run_task(django_capture_on_commit_callbacks, mocks=no_data)
         assert [error["code"] for error in task.errors] == ["SEO_BRIEF_BAD_RESPONSE"]
 
+    def test_answer_missing_a_field_is_bad_response(self, writer, django_capture_on_commit_callbacks):
+        def no_primary(routes):
+            def answer(request: httpx.Request) -> httpx.Response:
+                if json.loads(request.content)["tags"][0].startswith("enrichment.seo_brief.evaluate"):
+                    parsed = {key: value for key, value in EVALUATION.items() if key != "primary"}
+                    return httpx.Response(200, json={**CANNED_COMPLETION, "parsed": parsed})
+                return _completion(request)
+
+            routes["complete"].mock(side_effect=answer)
+
+        task, _, _ = _run_task(django_capture_on_commit_callbacks, mocks=no_primary)
+        assert [error["code"] for error in task.errors] == ["SEO_BRIEF_BAD_RESPONSE"]
+
+    def test_a_programming_error_is_not_masked_as_bad_response(self, writer, monkeypatch):
+        monkeypatch.setattr(seo_brief, "_research", lambda *args: {}["missing"])
+        task = SimpleNamespace(pk=None, type="x", params={"channel": "default"}, scope_spec={"module": "pim"})
+        with pytest.raises(KeyError):
+            seo_brief.run(task=task, subject_ref="SKU-1", context=PL)
+
     def test_no_usable_seeds_is_a_subject_error(self, writer):
         with pytest.raises(SubjectError) as exc:
-            seo_brief._seeds({"seeds": ["  ", ""]})
+            seo_brief._seeds(SeedsAnswer(seeds=["  ", ""]))
         assert exc.value.code == "SEO_BRIEF_NO_SEEDS"

@@ -49,7 +49,9 @@ class PickKind(Kind):
             extras.context_block(
                 adapter, subject_ref=subject_ref, channel=params.channel, language=language, task=task
             ),
-            seams.memory_block(channel=params.channel, subject_module=worker.target_module, subject_ref=subject_ref),
+            seams.memory_block(
+                channel=params.channel, subject_module=worker.target_module, subject_ref=subject_ref, task=task
+            ),
             seams.profile_block(profile),
             extras.augmentation_section(
                 adapter, task=task, subject_ref=subject_ref, channel=params.channel, language=language

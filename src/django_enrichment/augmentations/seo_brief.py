@@ -4,7 +4,10 @@
 
 """Augmentation `seo_brief` (contract A4 § 5) — which phrases a text should target, from search data.
 
-1. Reuse: a fresh memory `seo_brief` about the subject, then its category → that brief, cost 0.
+The brief is per language: `context["language"]` (the kinds set it) goes to every SEO call as `language_code`
+(blank → the toolbox market defaults), is stored in the brief and must match for reuse.
+
+1. Reuse: a fresh memory `seo_brief` in the language about the subject, then its category → that brief, cost 0.
 2. Research: a completion proposes 3-5 seed phrases from the context → toolbox SEO `search-volume/` and
    `keyword-ideas/` (one call each) → `serp/` for the top `SERP_TOP` seeds by volume.
 3. A completion evaluates intent first (SERP intent, winnability, gaps; volume breaks ties) →
@@ -12,7 +15,8 @@
    the scope is `category` (`params.seo_scope`; default for kind `write`, falls back to the subject without a
    category), else under the subject.
 
-Every call charges the task (`toolbox_calls`); a failure fails the subject with `SEO_BRIEF_<code>`.
+Every call charges the task (`toolbox_calls`); a toolbox failure or an answer that does not fit the boundary
+models (`seo_answers`) fails the subject with `SEO_BRIEF_<code>`; other errors propagate to the runner.
 """
 
 import json
@@ -23,8 +27,16 @@ from typing import Any
 
 from django.utils import timezone
 from django_utils.toolbox import ToolboxError
+from pydantic import ValidationError
 
 from django_enrichment.augmentations import AugmentResult
+from django_enrichment.augmentations.seo_answers import (
+    EvaluateAnswer,
+    KeywordItem,
+    SeedsAnswer,
+    SeoItems,
+    SerpData,
+)
 from django_enrichment.augmentations.seo_prompts import (
     DATA_NOTE,
     EVALUATE_SCHEMA,
@@ -52,25 +64,31 @@ class _Subject:
     channel: str
     module: str
     ref: str
+    language: str
 
 
 def run(*, task: Any, subject_ref: str, context: dict) -> AugmentResult:
-    subject = _subject(task, subject_ref)
+    subject = _subject(task, subject_ref, context)
     found = memory_service.fresh(
-        channel=subject.channel, subject_module=subject.module, subject_ref=subject.ref, kind=MEMORY_KIND
+        channel=subject.channel,
+        subject_module=subject.module,
+        subject_ref=subject.ref,
+        kind=MEMORY_KIND,
+        language=subject.language,
     )
     if found:
         return AugmentResult(block=render(found.data), cost=Decimal(0))
     try:
-        brief, cost = _research(task, context)
-    except (ToolboxError, KeyError, TypeError, ValueError) as exc:
+        brief, cost = _research(task, context, subject.language)
+    except (ToolboxError, ValidationError) as exc:
         raise _failure(exc) from exc
     return AugmentResult(block=render(brief), cost=cost, memory_writes=[_entry(task, subject, brief)])
 
 
-def _subject(task: Any, subject_ref: str) -> _Subject:
+def _subject(task: Any, subject_ref: str, context: dict) -> _Subject:
     module = (getattr(task, "scope_spec", None) or {}).get("module", "")
-    return _Subject(channel=(task.params or {}).get("channel", ""), module=module, ref=subject_ref)
+    channel = (task.params or {}).get("channel", "")
+    return _Subject(channel=channel, module=module, ref=subject_ref, language=str(context.get("language") or ""))
 
 
 @dataclass
@@ -87,43 +105,59 @@ class _Spend:
         return None if None in self.costs else sum(self.costs, Decimal(0))
 
 
-def _research(task: Any, context: dict) -> tuple[dict, Decimal | None]:
+def _research(task: Any, context: dict, language: str) -> tuple[dict, Decimal | None]:
     spend = _Spend()
     item = fenced("item_context", _dumps(context))
-    seeds = _seeds(spend.take(_complete(task, SEEDS_SYSTEM, join_prompts(DATA_NOTE, item), SEEDS_SCHEMA, "seeds")))
-    volumes = _volumes(spend.take(toolbox_calls.seo("search-volume/", {"keywords": seeds}, task=task))["items"])
-    ideas = spend.take(toolbox_calls.seo("keyword-ideas/", {"keywords": seeds}, task=task))["items"]
-    serps = {phrase: _serp(spend.take(_serp_call(task, phrase))) for phrase in _top(seeds, volumes)}
+    seeds = _seeds(SeedsAnswer.model_validate(spend.take(_complete(task, "seeds", SEEDS_SYSTEM, item))))
+    market = {"language_code": language} if language else {}
+    volumes = _volumes(_items(spend.take(_seo(task, "search-volume/", {"keywords": seeds, **market}))))
+    ideas = _items(spend.take(_seo(task, "keyword-ideas/", {"keywords": seeds, **market})))
+    serps = {
+        phrase: _serp(spend.take(_seo(task, "serp/", {"keyword": phrase, "depth": SERP_DEPTH, **market})))
+        for phrase in _top(seeds, volumes)
+    }
     evidence = {"candidates": [{"phrase": s, "search_volume": volumes.get(s)} for s in seeds]}
     evidence |= {"ideas": _ideas(ideas), "serp": serps}
-    user = join_prompts(DATA_NOTE, item, fenced("keyword_data", _dumps(evidence)))
-    answer = spend.take(_complete(task, EVALUATE_SYSTEM, user, EVALUATE_SCHEMA, "evaluate"))
-    return _brief(answer, volumes | _volumes(ideas)), spend.total()
+    data = join_prompts(item, fenced("keyword_data", _dumps(evidence)))
+    answer = EvaluateAnswer.model_validate(spend.take(_complete(task, "evaluate", EVALUATE_SYSTEM, data)))
+    return _brief(answer, volumes | _volumes(ideas), language), spend.total()
 
 
-def _complete(task: Any, system: str, user: str, schema: dict, step: str) -> toolbox_calls.Costed:
+_SCHEMAS = {"seeds": SEEDS_SCHEMA, "evaluate": EVALUATE_SCHEMA}
+
+
+def _complete(task: Any, step: str, system: str, data: str) -> toolbox_calls.Costed:
     return toolbox_calls.complete(
-        system=system, user=user, json_schema=schema, model="", kind=f"seo_brief.{step}", task=task
+        system=system,
+        user=join_prompts(DATA_NOTE, data),
+        json_schema=_SCHEMAS[step],
+        model="",
+        kind=f"seo_brief.{step}",
+        task=task,
     )
 
 
-def _serp_call(task: Any, phrase: str) -> toolbox_calls.Costed:
-    return toolbox_calls.seo("serp/", {"keyword": phrase, "depth": SERP_DEPTH}, task=task)
+def _seo(task: Any, endpoint: str, payload: dict) -> toolbox_calls.Costed:
+    return toolbox_calls.seo(endpoint, payload, task=task)
 
 
-def _seeds(answer: dict) -> list[str]:
-    seeds = list(dict.fromkeys(_phrase(seed) for seed in answer["seeds"]))
+def _items(data: Any) -> list[KeywordItem]:
+    return SeoItems.model_validate(data).items
+
+
+def _seeds(answer: SeedsAnswer) -> list[str]:
+    seeds = list(dict.fromkeys(_phrase(seed) for seed in answer.seeds))
     if not (seeds := [seed for seed in seeds if seed]):
         raise SubjectError("SEO_BRIEF_NO_SEEDS", "no seed phrases proposed")
     return seeds[:SEEDS_MAX]
 
 
 def _phrase(text: str) -> str:
-    return " ".join(str(text).split()).lower()
+    return " ".join(text.split()).lower()
 
 
-def _volumes(items: list[dict]) -> dict[str, int | None]:
-    return {_phrase(item["keyword"]): item.get("search_volume") for item in items}
+def _volumes(items: list[KeywordItem]) -> dict[str, int | None]:
+    return {_phrase(item.keyword): item.search_volume for item in items}
 
 
 def _top(seeds: list[str], volumes: dict[str, int | None]) -> list[str]:
@@ -131,27 +165,24 @@ def _top(seeds: list[str], volumes: dict[str, int | None]) -> list[str]:
     return sorted(seeds, key=lambda seed: -(volumes.get(seed) or 0))[:SERP_TOP]
 
 
-def _serp(data: dict) -> dict:
-    organic = [
-        {key: result.get(key) for key in ("rank", "domain", "title", "snippet")}
-        for result in data.get("organic", [])[:ORGANIC_KEPT]
-    ]
+def _serp(data: Any) -> dict:
+    serp = SerpData.model_validate(data)
     return {
-        "organic": organic,
-        "people_also_ask": data.get("people_also_ask", []),
-        "ai_overview": data.get("ai_overview"),
+        "organic": [result.model_dump() for result in serp.organic[:ORGANIC_KEPT]],
+        "people_also_ask": serp.people_also_ask,
+        "ai_overview": serp.ai_overview,
     }
 
 
-def _ideas(items: list[dict]) -> list[dict]:
-    ranked = sorted(items, key=lambda item: -(item.get("search_volume") or 0))[:IDEAS_KEPT]
-    return [{key: item.get(key) for key in ("keyword", "search_volume", "competition")} for item in ranked]
+def _ideas(items: list[KeywordItem]) -> list[dict]:
+    ranked = sorted(items, key=lambda item: -(item.search_volume or 0))[:IDEAS_KEPT]
+    return [item.model_dump() for item in ranked]
 
 
-def _brief(answer: dict, volumes: dict[str, int | None]) -> dict:
-    chosen = [answer["primary"], *answer["secondary"]]
-    brief = {key: answer[key] for key in ("primary", "secondary", "intent", "serp_notes", "gaps")}
-    return brief | {"search_volume": {phrase: volumes.get(_phrase(phrase)) for phrase in chosen}}
+def _brief(answer: EvaluateAnswer, volumes: dict[str, int | None], language: str) -> dict:
+    chosen = [answer.primary, *answer.secondary]
+    search_volume = {phrase: volumes.get(_phrase(phrase)) for phrase in chosen}
+    return answer.model_dump() | {"search_volume": search_volume, "language": language}
 
 
 def render(brief: dict) -> str:
@@ -164,6 +195,8 @@ def render(brief: dict) -> str:
         f"SERP notes: {brief.get('serp_notes', '')}",
         f"Content gaps: {'; '.join(brief.get('gaps') or [])}",
     ]
+    if language := brief.get("language"):
+        lines.append(f"Researched for language: {language}")
     return "\n".join(lines)
 
 

@@ -146,14 +146,15 @@ def _translate_payload(texts: dict[str, str], source: str, target: str, context:
 
 
 def seo(endpoint: str, payload: dict, *, task: Any = None) -> Costed:
-    """One toolbox SEO call (`search-volume/`, `keyword-ideas/`, `serp/`); `value` = the envelope's `data`.
+    """One toolbox SEO call (`search-volume/`, `keyword-ideas/`, `serp/`); `value` = the envelope's `data` (None
+    when missing — the caller validates it).
 
     Posted like translate (paid, `retry=False`); a toolbox cache hit comes back with cost 0."""
     with ToolboxClient() as client:
         with _unknown_cost_on_error(task, "seo"):
             body = client._post(client._url(_SEO_TOOL, endpoint), payload, retry=False)
     cost = _charge(task, "seo", body)
-    return Costed(body["data"], cost)
+    return Costed(body.get("data"), cost)
 
 
 def _default_model(client: ToolboxClient) -> str:

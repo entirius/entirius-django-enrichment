@@ -103,10 +103,11 @@ def _context(adapter: ModuleType, *, subject_ref: str, channel: str, language: s
 
 
 def augmentation_section(adapter: ModuleType, *, task: Any, subject_ref: str, channel: str, language: str) -> str:
-    """The task's augmentation blocks (`params.augment`) about the subject's context; blank when none run."""
+    """The task's augmentation blocks (`params.augment`) about the subject's context in `language` (the context's
+    `language` key); blank when none run."""
     if not (getattr(task, "params", None) or {}).get("augment"):
         return ""
-    context = _context(adapter, subject_ref=subject_ref, channel=channel, language=language)
+    context = {**_context(adapter, subject_ref=subject_ref, channel=channel, language=language), "language": language}
     blocks = seams.augmentation_blocks(task=task, subject_ref=subject_ref, context=context)
     return join_prompts(AUGMENT_NOTE, *blocks) if blocks else ""
 
