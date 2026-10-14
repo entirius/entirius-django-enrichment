@@ -153,10 +153,19 @@ class TestContext:
         assert len(instructions) + len(data) <= profile_context.CAP_CHARS + 100
         assert "[Company profile truncated:" in instructions
 
-    def test_capped_cuts_facts_last(self):
-        instructions, data = profile_context.capped("i" * 10, "f" * (profile_context.CAP_CHARS + 5))
-        assert data == "f" * profile_context.CAP_CHARS
-        assert instructions.startswith("[Company profile truncated:")
+    def test_oversized_facts_keep_always_rules_and_whole_rows(self):
+        facts = [{"id": f"f{i}", "label": "L", "value": "v" * 400} for i in range(40)]
+        _save({"facts": facts, "brand": {"text": "b" * 100}, "always_rules": ["Never promise delivery dates."]})
+        instructions, data = profile_service.context_for(channel="", task_type="t", kind="write")
+        assert "Never promise delivery dates." in instructions
+        assert profile_context.CONFLICT_NOTE in instructions
+        assert data.startswith("| id | label | value | source | verified_at |")
+        assert data.endswith(" |") and data.splitlines()[-1].startswith("| f")
+        assert len(instructions) + len(data) <= profile_context.CAP_CHARS
+
+    def test_whole_lines_cuts_at_a_line_end(self):
+        assert profile_context.whole_lines("ab\ncd\nef", 6) == "ab\ncd"
+        assert profile_context.whole_lines("abcdef", 3) == ""
 
 
 class TestStatus:

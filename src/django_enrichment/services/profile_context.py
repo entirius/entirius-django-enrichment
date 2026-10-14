@@ -6,8 +6,9 @@
 
 Sections come from `routing` (the task type, then the kind, then `DEFAULT_ROUTING`), ordered facts → brand →
 the rest (conflict priority). The operator-authored text is the instruction channel (`always_rules` always
-first); the facts registry is rendered as a data table. Both together are capped at `CAP_CHARS`; facts keep
-priority and a cut is reported in the instructions.
+first); the facts registry is rendered as a data table. Both together are capped at `CAP_CHARS`: the conflict
+note and `always_rules` are always kept, whole fact rows come next, the other sections get what is left, and a
+cut is reported in the instructions.
 """
 
 import logging
@@ -17,6 +18,7 @@ from django_enrichment.kinds.base import join_prompts
 _logger = logging.getLogger("process")
 
 CAP_CHARS = 12_000
+NOTE_RESERVE_CHARS = 100
 DEFAULT_ROUTING: dict[str, list[str]] = {
     "write": ["brand", "persona", "tone", "language", "facts"],
     "pick": ["brand", "language"],
@@ -46,12 +48,12 @@ _FACT_COLUMNS = ["id", "label", "value", "source", "verified_at"]
 def render(data: dict, *, task_type: str, kind: str) -> tuple[str, str]:
     """`(instructions, facts table)`, both blank when the routed sections are empty."""
     sections = routed_sections(data, task_type=task_type, kind=kind)
-    texts = [_section(name, data.get(name) or {}) for name in sections if name != "facts"]
-    instructions = join_prompts(_bullets("Always", data.get("always_rules", [])), *texts)
+    always = _bullets("Always", data.get("always_rules", []))
+    texts = join_prompts(*(_section(name, data.get(name) or {}) for name in sections if name != "facts"))
     facts = facts_table(data.get("facts", [])) if "facts" in sections else ""
-    if instructions or facts:
-        instructions = join_prompts(CONFLICT_NOTE, instructions)
-    return capped(instructions, facts)
+    if not (always or texts or facts):
+        return "", ""
+    return capped(join_prompts(CONFLICT_NOTE, always), texts, facts)
 
 
 def routed_sections(data: dict, *, task_type: str, kind: str) -> list[str]:
@@ -103,13 +105,23 @@ def _cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
-def capped(instructions: str, facts: str) -> tuple[str, str]:
-    """Cut both to `CAP_CHARS` in total — facts first — and say so in the instructions."""
-    total = len(instructions) + len(facts)
+def capped(head: str, texts: str, facts: str) -> tuple[str, str]:
+    """`(head + texts, facts)` cut to `CAP_CHARS`: `head` always whole, then whole fact rows, then whole text lines."""
+    total = len(join_prompts(head, texts)) + len(facts)
     if total <= CAP_CHARS:
-        return instructions, facts
-    facts = facts[:CAP_CHARS]
-    instructions = instructions[: CAP_CHARS - len(facts)]
+        return join_prompts(head, texts), facts
+    room = CAP_CHARS - len(head) - NOTE_RESERVE_CHARS
+    facts = whole_lines(facts, room)
+    texts = whole_lines(texts, room - len(facts))
+    instructions = join_prompts(head, texts)
     shown = len(instructions) + len(facts)
     _logger.warning("company profile truncated: %s of %s characters", shown, total)
     return join_prompts(instructions, f"[Company profile truncated: {shown} of {total} characters shown.]"), facts
+
+
+def whole_lines(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters at a line end (blank when not even the first line fits)."""
+    if len(text) <= limit:
+        return text
+    end = text.rfind("\n", 0, max(limit, 0) + 1)
+    return text[:end] if end > 0 else ""
