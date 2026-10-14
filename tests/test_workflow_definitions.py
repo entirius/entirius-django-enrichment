@@ -7,8 +7,8 @@
 import pytest
 from django.core.exceptions import ValidationError
 
-from django_enrichment.models import WorkflowDefinition
-from django_enrichment.services import apply_service, proposal_service
+from django_enrichment.models import TaskTemplate, Worker, WorkflowDefinition
+from django_enrichment.services import apply_service, proposal_service, template_service, worker_service
 from tests import workflow_setup as wf
 
 pytestmark = pytest.mark.django_db
@@ -61,6 +61,24 @@ class TestDefinitionValidation:
         )
 
     @pytest.mark.parametrize(
+        ("worker", "output", "message"),
+        [
+            ({"kind": "generate", "target_module": "enrichment", "active": False}, "artifact", "active and internal"),
+            (
+                {"kind": "generate", "target_module": "enrichment", "mode": "external"},
+                "artifact",
+                "active and internal",
+            ),
+            ({"kind": "generate", "target_module": "pim"}, "artifact", "must write to the 'enrichment' adapter"),
+            ({"kind": "questions", "target_module": "pim"}, "questions", "must write to the 'enrichment' adapter"),
+        ],
+    )
+    def test_step_worker_errors(self, worker, output, message):
+        saved = worker_service.save_worker(Worker(key="wf.odd", label="Odd", system_prompt="Sys.", **worker))
+        template_service.save_template(TaskTemplate(key="odd", label="Odd", worker=saved, params={"prompt": "P."}))
+        assert message in " ".join(_errors([wf.step("odd", output=output)])["steps"])
+
+    @pytest.mark.parametrize(
         ("schema", "message"),
         [
             ({"type": "array"}, '"type": "object"'),
@@ -76,7 +94,7 @@ class TestResultRef:
     def test_apply_returning_a_subject_ref_is_kept(self, fake_adapter):
         value = {"language": "en", "title": "T", "slug": "t", "body_markdown": "B", "meta": {}, "faq": []}
         proposal = proposal_service.intake(
-            target_module="pim", subject_ref="run:x", target_kind="document", target_locator={}, proposed_value=value
+            target_module="pim", subject_ref="page:x", target_kind="document", target_locator={}, proposed_value=value
         )
         applied = apply_service.apply(proposal)
         applied.refresh_from_db()

@@ -6,18 +6,23 @@
 
 A step is `{key, label, template, needs, gate, output}`. `needs` name earlier steps only, so a definition
 is acyclic by construction. The step's template must exist and run the kind its output needs
-(`STEP_OUTPUT_KINDS`); a `document` step must write to the definition's `target_module`; a `questions`
+(`STEP_OUTPUT_KINDS`) on an active internal worker; a `document` step must write to the definition's
+`target_module`, any other step to the built-in `enrichment` adapter; a `questions`
 step always waits for the operator (its answers are the point).
 """
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
-from django_enrichment.enums import STEP_OUTPUT_KINDS, StepGate, StepOutput
+from django_enrichment.adapters.artifact import KEY as ARTIFACT_KEY
+from django_enrichment.enums import STEP_OUTPUT_KINDS, StepGate, StepOutput, WorkerMode
+
+if TYPE_CHECKING:
+    from django_enrichment.models import Worker
 
 STEP_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
 
@@ -91,9 +96,20 @@ def _template_errors(spec: StepSpec, target_module: str) -> list[str]:
     template = TaskTemplate.objects.select_related("worker").filter(key=spec.template).first()
     if template is None:
         return [f"step {spec.key!r}: unknown template {spec.template!r}"]
-    worker, kind = template.worker, STEP_OUTPUT_KINDS[spec.output]
+    return _worker_errors(spec, template.worker, target_module)
+
+
+def _worker_errors(spec: StepSpec, worker: "Worker", target_module: str) -> list[str]:
+    kind = STEP_OUTPUT_KINDS[spec.output]
+    if not worker.active or worker.mode != WorkerMode.INTERNAL.value:
+        return [f"step {spec.key!r}: worker {worker.key!r} must be active and internal (our runner runs the steps)"]
     if worker.kind != kind:
         return [f"step {spec.key!r}: output {spec.output!r} needs a {kind!r} worker, template runs {worker.kind!r}"]
     if spec.output == StepOutput.DOCUMENT.value and worker.target_module != target_module:
         return [f"step {spec.key!r}: the document must go to {target_module!r}, not {worker.target_module!r}"]
+    if spec.output != StepOutput.DOCUMENT.value and worker.target_module != ARTIFACT_KEY:
+        return [
+            f"step {spec.key!r}: an {spec.output!r} step must write to the {ARTIFACT_KEY!r} adapter, "
+            f"template writes to {worker.target_module!r}"
+        ]
     return []
