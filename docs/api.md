@@ -91,7 +91,7 @@ Every revision of a `{"text"}` value (intake's revision 1, corrections, manual e
 | Code | Raised when |
 |---|---|
 | `rule` | an active profile `rules` pattern matches (`flags` `i m s x`), or a `language.spellings` `wrong` occurs (whole word, any case). A pattern that does not compile disables only its rule and logs a warning |
-| `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task params (prompt, brief, inputs) or the subject's stored context numbers — once per distinct number |
+| `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
 | `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
 
 Numbers (`qa_numbers`) are compared by value: integers, decimals with a comma or a dot, thousands grouped by
@@ -104,9 +104,11 @@ HTML tags / entities are skipped. The source context is recorded when a kind bui
 Quick actions on `POST proposals/{id}/revise/`: `check_standard` — one completion (kind tag `check`) with the
 merged profile's `checklists.text` as instructions and the text as data, answer `{problems: [{message, quote}]}`
 → `checklist` warnings stored next to the deterministic ones, no revision (no checklists → 400);
-`fix_warnings` — a correction whose instruction lists the current warnings (none → 400); its new revision is
-re-checked. `POST proposals/{id}/check/` re-runs the deterministic checks (e.g. after a profile change) and
-drops checklist warnings.
+`fix_warnings` — a correction with a fixed instruction and the current warnings as a fenced data block
+(none → 400); its new revision is re-checked. `POST proposals/{id}/check/` re-runs the deterministic checks
+(e.g. after a profile change) and drops checklist warnings. Both store warnings row-locked against the value
+they were computed on: a proposal no longer pending/drifted → 400, a value changed meanwhile → 422
+`REVISION_NOT_APPLICABLE` (nothing saved).
 
 ## Generic kinds `write` / `pick` (contract A3 § 3)
 

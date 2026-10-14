@@ -2,16 +2,16 @@
 
 ## Unreleased
 
-- QA checks (contract A4 § 4): every revision of a text value is checked deterministically (`qa_service`) and
-  carries `warnings` `[{code, message, span}]`, copied onto the proposal — `rule` (active profile `rules` with
-  flags, `language.spellings`; a pattern that does not compile disables only its rule and logs) and
-  `NUMBER_NOT_IN_FACTS` (numbers compared by value — integers, comma/dot decimals, thousands groups,
-  percentages, ranges — against the facts registry, the task params and the subject's source-context numbers
-  the kinds store in `params.context_numbers`). Quick actions `check_standard` (one completion against the
-  profile checklists → `checklist` warnings, no revision) and `fix_warnings` (a correction listing the
-  warnings); not available in batch corrections. API: `warnings` in proposal and revision responses,
-  `POST proposals/{id}/check/` (deterministic re-run), `POST proposals/{id}/facts/suggest/` (memory
-  `fact_suggestion`, "add to facts"). Migration `0012_qa_warnings`.
+- QA checks (contract A4 § 4): every revision of a text value is checked deterministically (`qa_service`) and carries
+  `warnings` `[{code, message, span}]`, copied onto the proposal — `rule` (active profile `rules` with flags,
+  `language.spellings`; a pattern that does not compile disables only its rule and logs) and `NUMBER_NOT_IN_FACTS`
+  (numbers compared by value — integers, comma/dot decimals, thousands groups, percentages, ranges — against the facts
+  registry, the task's source params (`prompt`, `brief`, `inputs`) and the subject's source-context numbers the kinds
+  store in `params.context_numbers`). Quick actions `check_standard` (one completion against the profile checklists →
+  `checklist` warnings, no revision; stored row-locked, 422 when the value changed meanwhile) and `fix_warnings` (a
+  fixed instruction, the warnings as a fenced data block); not available in batch corrections. API: `warnings` in
+  proposal and revision responses, `POST proposals/{id}/check/` (deterministic re-run), `POST
+  proposals/{id}/facts/suggest/` (memory `fact_suggestion`, "add to facts"). Migration `0012_qa_warnings`.
 - Company profile (contract A4 § 2): `Profile` (instance row + channel overlays, `data` validated by
   `schemas/profile_schema.json`, `version`) and `ProfileVersion` snapshots on every save; restore = new version.
   `profile_service.context_for` renders the merged profile for prompts — sections by `routing` (task type, kind,
