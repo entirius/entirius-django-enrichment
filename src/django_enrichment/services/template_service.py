@@ -15,7 +15,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
 
 from django_enrichment.models import TaskTemplate, Worker
-from django_enrichment.services import rules_service
+from django_enrichment.services.rule_limits import validate_rules
 
 EDITABLE_FIELDS = frozenset({"label", "worker_key", "params", "rules", "position", "active"})
 
@@ -58,7 +58,7 @@ def update_template(template: TaskTemplate, updates: dict[str, Any]) -> TaskTemp
 
 def save_template(template: TaskTemplate) -> TaskTemplate:
     """Rule limits + `full_clean` (params against the worker kind), then save. Raises `ValueError`."""
-    template.rules = rules_service.validate_rules(list(template.rules or []))
+    template.rules = validate_rules(list(template.rules or []))
     try:
         template.full_clean()
     except ValidationError as exc:

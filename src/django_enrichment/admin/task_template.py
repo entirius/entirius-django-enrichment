@@ -6,7 +6,8 @@ from django import forms
 from django.contrib import admin
 
 from django_enrichment.models import TaskTemplate
-from django_enrichment.services import rules_service, template_service
+from django_enrichment.services import template_service
+from django_enrichment.services.rule_limits import validate_rules
 
 
 class TaskTemplateForm(forms.ModelForm):
@@ -21,7 +22,7 @@ class TaskTemplateForm(forms.ModelForm):
         if not isinstance(rules, list):
             raise forms.ValidationError("rules must be a list of strings")
         try:
-            return rules_service.validate_rules([str(rule) for rule in rules])
+            return validate_rules([str(rule) for rule in rules])
         except ValueError as exc:
             raise forms.ValidationError(str(exc)) from exc
 
