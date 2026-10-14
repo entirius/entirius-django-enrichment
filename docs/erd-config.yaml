@@ -9,4 +9,5 @@ groups:
       - ContentProposal
       - ProposalRevision
       - SpawnRule
+      - TaskTemplate
       - Worker

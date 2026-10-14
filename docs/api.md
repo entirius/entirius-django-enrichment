@@ -15,12 +15,16 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | Method | Endpoint | Service | Notes |
 |--------|----------|---------|-------|
 | `GET` | `workers/?target_module=` | `worker_service.list_active` | Active workers, plain list `[{key, label, kind, target_module, mode, params_schema}]` |
-| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). Throttled (`enrichment_spawn`, 120/min). → 201 |
+| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). `template: <key>` instead of (or matching) `type` — see § Templates. Throttled (`enrichment_spawn`, 120/min). → 201 |
 | `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
 | `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status` (one or a comma list)/`batch_key`/`target_module`/`subject_ref`, paginated |
 | `GET` | `tasks/{id}/` | `task_service.get_task` | Retrieve |
 | `GET` | `tasks/{id}/targets/?page=` | `task_service.resolve_targets` | Lazy worker pull (adapter-resolved) |
 | `PATCH` | `tasks/{id}/` | `task_service.transition_status` | Drive the state machine (e.g. `in_progress`, `done`) |
+| `GET/POST` | `templates/?target_module=` | `template_service` | Plain list ordered by `position` (inactive included) `[{key, label, worker_key, worker_label, kind, target_module, params, rules, position, active}]`; create `{key, label, worker_key, params, rules, position, active}` → 201 |
+| `GET/PATCH/DELETE` | `templates/{key}/` | `template_service` | `key` immutable; DELETE → 204 |
+| `GET` | `fields/?target_module=&channel=&language=` | `catalog_service.describe_fields` | Adapter field catalog `[{key, label, type, max_length, translatable, options?, options_truncated?}]`; 404 `NOT_SUPPORTED` without `describe_fields` |
+| `GET` | `languages/?target_module=&channel=` | `catalog_service.channel_languages` | `["pl", "en", …]` (main first); 404 `NOT_SUPPORTED` without `channel_languages` |
 | `GET/POST` | `spawn-rules/` | `spawn_rule_service.list_rules`/`create_rule` | SpawnRule CRUD. Filters: `active`, `search`. → 200/201 |
 | `GET/PATCH/DELETE` | `spawn-rules/{key}/` | `spawn_rule_service` | `key` immutable (schema drops it) |
 | `POST` | `spawn-rules/{key}/run/` | `spawn_rule_service.run_rule` | Throttled (`enrichment_spawn`). → 201 `spawned` / 200 `already_running` / 200 `no_candidates` |
@@ -34,7 +38,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `POST` | `proposals/{id}/revise/` | `revise_service.revise` | `{instruction?, quick_action?, scope?}` → 201 revision, 200 `{candidates}` for `variants`; 400 / 422 `REVISION_NOT_APPLICABLE`; toolbox errors mapped. Throttled (`enrichment_bulk`) |
 | `POST` | `proposals/{id}/revisions/{n}/restore/` | `revision_service.restore` | → 201 `restore` revision copying `n` (404 unknown `n`) |
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
-| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker}` → 200 `{target, rules}`; template → 400 until templates exist |
+| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400) |
 | `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter |
 | `POST` | `proposals/{id}/reject/` | `proposal_service.reject` | Body `{reason}` |
@@ -66,6 +70,30 @@ that changes text outside the selection is 422, nothing saved. The write re-chec
 lock: accepted/rejected meanwhile → 400; value edited meanwhile (PATCH, another correction) → 422.
 Batch: each pending text proposal of the task gets one call; failures land in `task.errors`
 (`REVISION_NOT_APPLICABLE` or the toolbox code), counts `revised` / `failed`.
+
+## Generic kinds `write` / `pick` (contract A3 § 3)
+
+Both use the adapter extras with fallbacks (`kinds/extras.py`): `describe_fields` (absent → no catalog:
+labels = keys, no limits), `channel_languages` (resolves `languages: ["*"]`; absent → subject error
+`NOT_SUPPORTED`), `make_locator` (absent → `{channel, language, field}`), `build_context` (absent → `{}`,
+sent as an `<item_context>` data block).
+
+| Kind | Params | Calls | Drafts |
+|---|---|---|---|
+| `write` | `{channel, fields, languages, prompt, rules}`; options `{rules, field_rules}` | one per subject × language; schema = one string per field (`maxLength` from the catalog) | one per field × language, `{"text"}`, `html` fields sanitised |
+| `pick` | `{channel, fields, prompt, rules}`; options `{rules}` | one per subject; schema = enum of option values per field (array for multiselect) | one per field, locator language `None`, `{"option"}` / `{"options"}` |
+
+A field of the wrong type (select in `write`, non-select or no catalog in `pick`) fails the subject with
+`FIELD_TYPE` in `task.errors`. `translate` takes an optional `params.fields` that overrides the worker's.
+
+## Templates (contract A3 § 4)
+
+`TaskTemplate` = a saved worker run: `params` (validated against the worker kind's `Params`, `channel`
+optional), `rules` (≤ 20 × ≤ 200 chars), `position`, `active`. `POST tasks/` with `template`: `type` = the
+template's worker key (a different `type` → 400), params = template params ∪ request params (request
+wins), `rules` = template rules + request rules, `params.template` keeps the key. Unknown or inactive
+template, or an inactive worker → 400. Corrections read the template's current rules (proposal → template
+→ worker) and promotion with `target: "template"` appends to them.
 
 ## The n8n worker pull-loop
 

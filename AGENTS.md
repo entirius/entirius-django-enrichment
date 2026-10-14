@@ -33,20 +33,22 @@ source module (PIM first) through a per-module adapter.
 
 ```
 src/django_enrichment/
-├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, Worker
+├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode + *_STATUS_TRANSITIONS tables
-├── kinds/              # Kind contract + registry (register_kind), base kinds translate / field / video
+├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick, extras.py
 ├── schemas/
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
 │                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
-│                       # (+ revise_prompt, revise_values), rules_service, revise_batch_service
+│                       # (+ revise_prompt, revise_values), rules_service, revise_batch_service,
+│                       # template_service, catalog_service
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
-├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker), urls, throttling, pagination
-├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin
+├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog), urls, throttling, pagination
+├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin
+├── testing/            # adapter_conformance — shared adapter test kit other modules subclass
 ├── management/commands/# prune_enrichment (retention), seed_demo_proposals
 ├── migrations/
 ├── apps.py             # EnrichmentConfig (name="django_enrichment", is_volkanos=True)
@@ -111,6 +113,12 @@ optional (`getattr`). Worker keys allow dots (`pim.translate`).
 `revision_service.add_revision` writes both (intake writes revision 1). A correction is one stateless
 completion (`revise_service`); the answer schema depends on the value shape (`revise_values`). Full
 flow: `docs/api.md` § Revisions and corrections.
+
+**Generic kinds & templates:** `write` (text fields, one call per subject × language) and `pick` (select
+values, one call per subject) read the optional adapter extras through `kinds/extras.py` (`describe_fields`,
+`channel_languages`, `make_locator`, `build_context`, each with a fallback); a kind refuses a subject with
+`SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
+`template` merges them (`template_service.merge_into_task`). Details: `docs/api.md` § Generic kinds, § Templates.
 
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the
 module-as-adapter that lets the whole bus flow run without a source module.
@@ -216,7 +224,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **`tasks/?subject_ref=` sees list-mode tasks only** — a text match of `"<ref>"` in `scope_spec.refs`
   (SQLite-safe, no JSON containment); filter/gap/csv tasks carry no refs. Full note: `docs/api.md` § Per-product view.
 - **Never write `proposed_value` directly** — go through `revision_service.add_revision`, or the
-  revision history drifts from the value. Template rule promotion returns 400 until templates exist
-  (`rules_service._promote_to_template` is the seam).
+  revision history drifts from the value.
+- **`params.template` survives kind validation only because `task_service.spawn` re-adds it** — kind
+  `Params` drop unknown keys; corrections find the template's rules through that key.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

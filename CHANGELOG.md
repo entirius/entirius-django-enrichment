@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Generic kinds (contract A3 § 3): `write` (several text fields, one completion per subject × language,
+  `maxLength` from the catalog, html sanitised, `languages: ["*"]`) and `pick` (select/multiselect enums, one
+  completion per subject); `translate` takes `params.fields`. Adapter extras with fallbacks in `kinds/extras.py`;
+  `SubjectError(code)` records codes such as `FIELD_TYPE` in `task.errors`.
+- Templates (contract A3 § 4): `TaskTemplate` model (migration `0007_task_template`, Django admin),
+  `template_service`, API `GET/POST templates/`, `GET/PATCH/DELETE templates/{key}/`; `POST tasks/` accepts
+  `template` (request params win, rules concatenated, `params.template` kept). Rule promotion to the template
+  and template rules in correction prompts.
+- Field catalog API (contract A3 § 2): `GET fields/` (404 `NOT_SUPPORTED` without `describe_fields`) and
+  `GET languages/`.
+- Adapter conformance kit `django_enrichment.testing.adapter_conformance` (read/apply/revert/drift, catalog
+  shape, `make_locator`, document create), proven on the fake adapter.
 - Revisions (contract A3 § 1): `ProposalRevision` model and `ContentProposal.rules` (migration
   `0006_proposal_revisions`); intake records revision 1, `PATCH proposals/{id}/` records a `user` revision
   (pending and drifted). Services `revision_service` (invariant owner), `revise_service` (one stateless

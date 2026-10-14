@@ -31,6 +31,16 @@ Five callables are the contract; a sixth is optional.
 | `apply(proposal) -> None` | WRITE | After review, once the drift check passes. The only write path. |
 | `revert(proposal) -> None` | WRITE | Single-level undo — restore `current_snapshot`. |
 | `release_undo_anchor(proposal) -> int` | WRITE | Optional. Cleanup-time GC of an external undo anchor. |
+| `describe_fields(*, channel, language="") -> list[dict]` | READ | Optional. Field catalog for `write`/`pick`, corrections and `GET fields/` (contract A3 § 2). |
+| `channel_languages(*, channel) -> list[str]` | READ | Optional. Resolves `languages: ["*"]`; `GET languages/`. |
+| `make_locator(*, field_key, channel, language) -> dict` | READ | Optional. Locator of a catalog field (fallback `{channel, language, field}`). |
+| `build_context(*, subject_ref, channel, language) -> dict` | READ | Optional. Item context for the AI kinds. |
+
+**Conformance kit:** subclass `django_enrichment.testing.adapter_conformance.AdapterConformance`
+(+ `FieldCatalogConformance`, `DocumentCreateConformance`) in your module's tests and provide the
+fixtures `adapter`, `conformance_case` (a seeded `ConformanceCase`, parametrise per target kind),
+`catalog_channel` and `document_case`. The module docstring has a worked example; `tests/test_adapter_conformance.py`
+runs it on the fake adapter.
 
 The exact signatures live in `django_enrichment/adapters/base.py`. The bus calls `resolve_targets`
 when a worker pulls targets, `read_current` at intake and again before apply (that second call is the
