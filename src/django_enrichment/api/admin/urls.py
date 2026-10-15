@@ -53,6 +53,7 @@ urlpatterns = [
         CatalogViewSet.as_view({"post": "resolve_subjects"}),
         name="admin-subjects-resolve",
     ),
+    path("subjects/pictures/", CatalogViewSet.as_view({"get": "subject_pictures"}), name="admin-subjects-pictures"),
     # Workflows (contract A4 § 6)
     path("workflows/", WorkflowViewSet.as_view({"get": "list"}), name="admin-workflows-list"),
     path("runs/", RunViewSet.as_view({"get": "list", "post": "create"}), name="admin-runs-list"),

@@ -81,8 +81,8 @@ class WorkerQueueThrottle(UserRateThrottle):
 
 
 class LookupThrottle(UserRateThrottle):
-    """Caps `POST subjects/resolve/` — each call looks up to 500 refs in the source module. A pasting operator
-    stays far below it. Service override: `DEFAULT_THROTTLE_RATES["enrichment_lookup"]`."""
+    """Caps `POST subjects/resolve/` (each call looks up to 500 refs in the source module) and
+    `GET subjects/pictures/`. A pasting or picking operator stays far below it. Service override: `DEFAULT_THROTTLE_RATES["enrichment_lookup"]`."""
 
     scope = "enrichment_lookup"
     rate = "60/min"

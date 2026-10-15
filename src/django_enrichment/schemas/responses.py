@@ -303,6 +303,15 @@ class SubjectResolveResponse(BaseModel):
     unknown: list[str] = Field(examples=[["SKU-404"]])
 
 
+class SubjectPictureResponse(BaseModel):
+    """`GET subjects/pictures/` item — one picture of the subject, main first."""
+
+    ref: str = Field(description="Stable picture id; goes to `params.picture_ref`", examples=["412"])
+    label: str = Field(description="The picture's name or alt text; blank when it has none", examples=["Front view"])
+    url: str = Field(description="Image URL the CMS can show", examples=["/media/image/ab/cd/abcd.jpg"])
+    is_main: bool = Field(examples=[True])
+
+
 class WorkflowStepResponse(BaseModel):
     """One step of a workflow definition."""
 

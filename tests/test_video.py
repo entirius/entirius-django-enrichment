@@ -14,6 +14,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django_utils.toolbox import ToolboxError
 
 from django_enrichment.enums import TaskStatus
+from django_enrichment.kinds.base import SubjectError
 from django_enrichment.kinds.video import VideoKind
 from django_enrichment.models import ContentProposal
 from django_enrichment.services import proposal_service, staging_store, task_service, toolbox_calls
@@ -45,6 +46,20 @@ def main_picture(fake_adapter, monkeypatch):
         return _PNG, "image/png"
 
     monkeypatch.setattr(fake_adapter, "main_picture", _main_picture, raising=False)
+    return calls
+
+
+@pytest.fixture
+def picture(fake_adapter, monkeypatch):
+    calls = []
+
+    def _picture(*, subject_ref, channel, picture_ref):
+        calls.append((subject_ref, channel, picture_ref))
+        if picture_ref != "7":
+            raise LookupError(picture_ref)
+        return _PNG, "image/png"
+
+    monkeypatch.setattr(fake_adapter, "picture", _picture, raising=False)
     return calls
 
 
@@ -186,6 +201,35 @@ class TestVideoKind:
         assert b"Calm.\n\nWooden table." in body
         assert b'name="aspect_ratio"\r\n\r\n16:9' in body
 
+    def test_chosen_picture_is_animated(self, main_picture, picture):
+        task = SimpleNamespace(params={"channel": "default", "picture_ref": "7"})
+        with respx.mock() as router:
+            submit = _mock_job(router, "done")
+            [draft] = VideoKind().run(_worker(), task, "SKU-1")
+        assert picture == [("SKU-1", "default", "7")]
+        assert main_picture == []
+        assert draft.target_kind == "video"
+        assert b'name="image"; filename="image"' in submit.calls[0].request.content
+
+    def test_a_foreign_picture_is_refused(self, picture):
+        task = SimpleNamespace(params={"channel": "default", "picture_ref": "99"})
+        with respx.mock(assert_all_called=False) as router:
+            submit = _mock_job(router, "done")
+            with pytest.raises(SubjectError) as caught:
+                VideoKind().run(_worker(), task, "SKU-1")
+        assert caught.value.code == "PICTURE_NOT_FOUND"
+        assert not submit.called
+
+    def test_adapter_without_picture_fails(self, main_picture):
+        task = SimpleNamespace(params={"channel": "default", "picture_ref": "7"})
+        with pytest.raises(ValueError, match="has no picture"):
+            VideoKind().run(_worker(), task, "SKU-1")
+
+    def test_picture_ref_survives_kind_validation(self):
+        params = VideoKind.Params.model_validate({"channel": "default", "picture_ref": "7"}).model_dump()
+        assert params["picture_ref"] == "7"
+        assert VideoKind.Params.model_validate({"channel": "default"}).picture_ref == ""
+
     def test_adapter_without_main_picture_fails(self, fake_adapter):
         task = SimpleNamespace(params={"channel": "default"})
         with pytest.raises(ValueError, match="main_picture"):
@@ -204,3 +248,17 @@ class TestVideoKind:
         assert task.status == TaskStatus.DONE.value
         assert (proposal.target_kind, proposal.source) == ("video", "worker:pim.social_video@v1")
         assert staging_store.exists(proposal.staged_file)
+
+    @pytest.mark.django_db
+    def test_runner_carries_picture_ref(self, picture, make_worker, staging_dir):
+        make_worker(key="pim.social_video", kind="video", options={"preset": "orbit"}, system_prompt="Calm.")
+        scope = {"mode": "list", "module": "pim", "refs": ["SKU-1"]}
+        params = {"channel": "default", "picture_ref": "7"}
+        task = task_service.spawn(type="pim.social_video", scope_spec=scope, params=params)
+        assert task.params["picture_ref"] == "7"
+        with respx.mock() as router:
+            _mock_job(router, "done")
+            run_queue(task)
+        task.refresh_from_db()
+        assert task.status == TaskStatus.DONE.value
+        assert picture == [("SKU-1", "default", "7")]

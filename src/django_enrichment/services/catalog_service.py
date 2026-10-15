@@ -3,7 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 """Field catalog passthrough (contract A3 § 2) — the adapter's optional `describe_fields` /
-`channel_languages` / `subject_labels`, for the CMS run dialog. An adapter without the extra → `NotSupportedError`."""
+`channel_languages` / `subject_labels` / `list_pictures`, for the CMS run dialog. An adapter without the extra → `NotSupportedError`."""
 
 from django.core.exceptions import ObjectDoesNotExist
 
@@ -33,6 +33,15 @@ def resolve_subjects(*, target_module: str, channel: str, refs: list[str]) -> di
         "known": [{"ref": ref, "label": labels[ref]} for ref in refs if ref in labels],
         "unknown": [ref for ref in refs if ref not in labels],
     }
+
+
+def subject_pictures(*, target_module: str, channel: str, ref: str) -> list[dict]:
+    """`[{ref, label, url, is_main}]` — the pictures of one subject (adapter `list_pictures`), main first."""
+    list_pictures = _extra(target_module, "list_pictures")
+    try:
+        return list_pictures(subject_ref=ref, channel=channel)
+    except ObjectDoesNotExist as exc:
+        raise ValueError(f"item {ref!r} in channel {channel!r} not found") from exc
 
 
 def _extra(target_module: str, name: str):

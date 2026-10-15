@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Video from a chosen picture (plan 24): `GET subjects/pictures/?module=&channel=&ref=` (area `enrichment.proposals`,
+  throttle `enrichment_lookup`) → `[{ref, label, url, is_main}]`, backed by the optional adapter extra
+  `list_pictures(*, subject_ref, channel)` (absent → 404 `NOT_SUPPORTED`). The `video` kind takes an optional
+  `params.picture_ref` and reads that picture through the optional extra `picture(*, subject_ref, channel, picture_ref)`;
+  a picture that is not the subject's fails it with `PICTURE_NOT_FOUND`. Without the ref it animates the main picture.
 - Video job calls report the toolbox's own error code and message (e.g. `PRESET_NOT_FOUND`) instead of an
   unexpected error.
 - `POST subjects/resolve/` (area `enrichment.proposals`, throttle `enrichment_lookup` 60/min): `{module, channel, refs}`

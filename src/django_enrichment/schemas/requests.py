@@ -320,6 +320,14 @@ class SubjectResolveRequest(BaseModel):
     )
 
 
+class SubjectPicturesQuery(BaseModel):
+    """`GET subjects/pictures/` — the pictures of one subject (SKU) in a module's channel."""
+
+    module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    ref: str = Field(min_length=1, max_length=128, examples=["SKU-1"])
+
+
 class RunStartRequest(BaseModel):
     """`POST runs/` — start a workflow; `inputs` (the brief) is validated against the definition's `inputs_schema`."""
 

@@ -118,7 +118,7 @@ drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_
 `translate` / `field` / `video` register in `EnrichmentConfig.ready()`;
 other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
 the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit on the task's lane.
-Adapter extras `build_context` (field kind) and `main_picture` (video kind; absent → subject fails) are
+Adapter extras `build_context` (field kind) and `main_picture` / `picture` (video kind, the latter for `params.picture_ref`; absent → subject fails) are
 optional (`getattr`). Worker keys allow dots (`pim.translate`).
 
 **Revisions & corrections:** `proposed_value` always equals the latest `ProposalRevision`; only

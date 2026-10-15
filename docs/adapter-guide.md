@@ -34,6 +34,9 @@ Five callables are the contract; a sixth is optional.
 | `describe_fields(*, channel, language="") -> list[dict]` | READ | Optional. Field catalog for `write`/`pick`, corrections and `GET fields/` (contract A3 § 2). |
 | `channel_languages(*, channel) -> list[str]` | READ | Optional. Resolves `languages: ["*"]`; `GET languages/`. |
 | `subject_labels(*, refs, channel) -> dict[str, str]` | READ | Optional. `{ref: label}` of the refs that exist in the channel (unknown ones left out; unknown channel → `ObjectDoesNotExist`); `POST subjects/resolve/`. |
+| `list_pictures(*, subject_ref, channel) -> list[dict]` | READ | Optional. `[{ref, label, url, is_main}]` of the subject's pictures, main first (unknown subject → `ObjectDoesNotExist`); `GET subjects/pictures/`. |
+| `main_picture(*, subject_ref, channel) -> (bytes, mime)` | READ | Optional. Input of the `video` kind without `params.picture_ref`. |
+| `picture(*, subject_ref, channel, picture_ref) -> (bytes, mime)` | READ | Optional. Input of the `video` kind with `params.picture_ref` (a `list_pictures` ref); a ref that is not the subject's → `LookupError` (the subject fails `PICTURE_NOT_FOUND`). |
 | `make_locator(*, field_key, channel, language) -> dict` | READ | Optional. Locator of a catalog field (fallback `{channel, language, field}`). |
 | `field_key(*, locator) -> str \| None` | READ | Optional. Inverse of `make_locator`: the catalog field a locator points at, for correction field meta (fallback `locator["field"]`). |
 | `build_context(*, subject_ref, channel, language) -> dict` | READ | Optional. Item context for the AI kinds. |

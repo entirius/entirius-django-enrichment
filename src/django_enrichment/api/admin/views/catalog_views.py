@@ -2,7 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Admin API — field catalog passthrough (contract A3 § 2): `GET fields/`, `GET languages/`, `POST subjects/resolve/`.
+"""Admin API — field catalog passthrough (contract A3 § 2): `GET fields/`, `GET languages/`, `POST subjects/resolve/`,
+`GET subjects/pictures/`.
 
 Thin layer over `catalog_service`. An adapter without the extra → 404 `NOT_SUPPORTED` (v2 error shape).
 """
@@ -20,19 +21,20 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import LookupThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
-from django_enrichment.schemas.requests import CatalogQuery, SubjectResolveRequest
-from django_enrichment.schemas.responses import FieldResponse, SubjectResolveResponse
+from django_enrichment.schemas.requests import CatalogQuery, SubjectPicturesQuery, SubjectResolveRequest
+from django_enrichment.schemas.responses import FieldResponse, SubjectPictureResponse, SubjectResolveResponse
 from django_enrichment.services import catalog_service
 from django_enrichment.services.catalog_service import NotSupportedError
 
 _TAGS = ["Enrichment Field Catalog"]
 _MODULE = OpenApiParameter("target_module", str, OpenApiParameter.QUERY, required=True)
 _CHANNEL = OpenApiParameter("channel", str, OpenApiParameter.QUERY, required=True)
+_LOOKUPS = frozenset({"resolve_subjects", "subject_pictures"})
 
 
-def _query(request: Request) -> CatalogQuery:
+def _query(request: Request, schema: type[CatalogQuery | SubjectPicturesQuery] = CatalogQuery):
     try:
-        return CatalogQuery(**request.query_params.dict())
+        return schema(**request.query_params.dict())
     except ValidationError as exc:
         raise_pydantic_as_drf(exc)
 
@@ -54,7 +56,7 @@ class CatalogViewSet(viewsets.ViewSet):
     serializer_class = None
 
     def get_throttles(self):
-        return [LookupThrottle()] if self.action == "resolve_subjects" else []
+        return [LookupThrottle()] if self.action in _LOOKUPS else []
 
     @extend_schema(
         tags=_TAGS,
@@ -106,3 +108,25 @@ class CatalogViewSet(viewsets.ViewSet):
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(SubjectResolveResponse(**result).model_dump(mode="json"))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Pictures of one item (main first), for choosing what a video animates",
+        parameters=[
+            OpenApiParameter("module", str, OpenApiParameter.QUERY, required=True),
+            _CHANNEL,
+            OpenApiParameter("ref", str, OpenApiParameter.QUERY, required=True),
+        ],
+        responses={200: SubjectPictureResponse, 400: None, 404: None},
+    )
+    def subject_pictures(self, request: Request) -> Response:
+        query = _query(request, SubjectPicturesQuery)
+        try:
+            pictures = catalog_service.subject_pictures(
+                target_module=query.module, channel=query.channel, ref=query.ref
+            )
+        except NotSupportedError:
+            return _not_supported("This module cannot list the pictures of its items.")
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return Response([SubjectPictureResponse(**picture).model_dump(mode="json") for picture in pictures])
