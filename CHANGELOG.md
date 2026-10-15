@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Work queue (plan 23): tasks are split into small `WorkUnit`s (migration 0014; `WorkerInstance`, `Worker.paused_reason`
+  / `paused_at`) that internal and external workers pull the same way — `POST workers/claim|heartbeat|complete|fail/`
+  with leases, retries with backoff, idempotent complete and 409 `LEASE_LOST`; `GET workers/status/`,
+  `POST workers/{key}/resume/`; task responses carry `units` (and `failed_units` on retrieve). Celery:
+  `enrichment.plan_task`, `enrichment.consume`, `enrichment.reap` (host beat, 60 s); `enrichment.run_task` is a shim.
+  Escalation (pause after repeated failures or a budget error, failed units, nobody taking work) goes through
+  `django_notifications` when installed, log only otherwise. Logger `enrichment.queue`. Settings: see AGENTS.md.
+  `dispatch_if_internal` becomes `worker_service.dispatch`; the old open-tasks + PATCH loop is deprecated.
+- Run guards: `ENRICHMENT_QUEUE_MAX_SUBJECTS` (500; list scope over it → 400) and `ENRICHMENT_TASK_MAX_COST_USD`
+  (5.00; a task at the limit stops with the plain error "Stopped: this run reached its cost limit").
+- Keep-edited fix: the operator-edited check runs before the paid call and again inside the supersede transaction
+  (`proposal_service.KeptEdited`), so an edit saved in between is never superseded.
+
 - `GET usage/month/` (area `enrichment.proposals`): this month's AI usage of the instance's toolbox client for the CMS
   header counter — `{period, tokens, cost_usd, cost_since, currency}`. Tokens from the toolbox tracker `usage/`,
   cost = the billed amount with the toolbox markup from `billing/client/` (null while billing is off). Cached 60 s;

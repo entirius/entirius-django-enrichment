@@ -179,12 +179,31 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_INTERACTIVE_QUEUE` | `"enrichment_interactive"` | runner queue of `lane=now` runs, workflow steps, batch corrections |
 | `ENRICHMENT_BULK_QUEUE` | `"enrichment_bulk"` | runner queue of `lane=queue` runs (worker concurrency 1) |
 | `ENRICHMENT_RUN_NOW_MAX_SUBJECTS` | `20` | most subjects of one `lane=now` run |
+| `ENRICHMENT_UNIT_SIZE` | `5` | subjects per work unit |
+| `ENRICHMENT_MAX_INFLIGHT_PER_WORKER` | `2` | leases one worker may hold (per lane for a lane-scoped claim) |
+| `ENRICHMENT_LEASE_S` | `300` | lease length (a heartbeat extends it) |
+| `ENRICHMENT_MAX_ATTEMPTS` | `3` | claims of a unit before it fails for good |
+| `ENRICHMENT_RETRY_BACKOFF_S` | `60` | wait before a retried unit, × attempt |
+| `ENRICHMENT_INSTANCE_ONLINE_S` | `120` | an instance is online when seen within this |
+| `ENRICHMENT_STALE_QUEUE_S` | `900` | queued this long with nobody online → "Nobody is taking work" |
+| `ENRICHMENT_PAUSE_AFTER_FAILURES` | `5` | failed units in a row (one instance) that pause the worker |
+| `ENRICHMENT_AUTO_PAUSE` | `True` | `False` = notify only |
+| `ENRICHMENT_BUDGET_ERROR_CODES` | 4 toolbox codes | error codes that pause the worker at once |
+| `ENRICHMENT_NOTIFY_CHANNEL` / `_ROLE` | `"default-europe"` / `"operator"` | `django_notifications` channel idx and recipient role (missing → log only) |
+| `ENRICHMENT_PLAN_BATCH` / `_EVENTS_CAP` / `_CONSUME_MAX_UNITS` | `200` / `20` / `10` | units per insert, events kept per unit, units per consume run |
+| `ENRICHMENT_QUEUE_MAX_SUBJECTS` | `500` | most subjects of one run (list scope refused at spawn, planner caps all scopes) |
+| `ENRICHMENT_TASK_MAX_COST_USD` | `"5.00"` | a task at this cost stops (queued units cancelled, notification) |
 | `ENRICHMENT_RETENTION_DAYS` | `30` | undo window = retention |
 | `ENRICHMENT_MAX_CSV_BYTES` | 10 MB | CSV import size cap |
 | `ENRICHMENT_SPAWN_DEFAULT_LIMIT` | `200` | gap-task budget when a rule sets no `limit` |
 | `ENRICHMENT_SPAWN_COOLDOWN_DAYS` | `7` | gap cooldown when a rule sets no `cooldown_days` |
 
 ## Gotchas
+
+- Work queue (plan 23): a task becomes `WorkUnit`s (`work_units`) after commit; internal and external workers use
+  the same `work_queue_service`. The host MUST schedule `enrichment.reap` (60 s) and run workers on both lane
+  queues. A lost lease clears `lease_token`; a done unit keeps it (idempotent `complete`). Details in
+  `docs/services.md` § Work queue and `docs/api.md`.
 
 - The PIM adapter does NOT live here — it lives in `django-pim` (`services/enrichment_adapter.py`),
   duck-typed, self-registering. The bus never imports a source module directly.

@@ -111,6 +111,29 @@ The PIM adapter's `apply()` body lives in `django-pim` (etap-04). The bus suite 
 apply through the in-memory fake (no django-pim dependency in this module's tests); the real PIM
 read-merge-write + inheritance-override path is tested in django-pim `tests/test_enrichment_adapter.py`.
 
+## Work queue (plan 23)
+
+| Service | Role |
+|---|---|
+| `unit_planner` | `plan_task` (Celery, row lock, one transaction): targets paged through `task_service.resolve_targets`, split into units, `ENRICHMENT_QUEUE_MAX_SUBJECTS` cap; a resolve failure fails the task |
+| `work_queue_service` | `claim` (`select_for_update(skip_locked)` under a lock on the Worker row: pause, in-flight cap, interactive lane first, backoff), `heartbeat`, `fail`, `requeue_or_fail` |
+| `unit_result_service` | `complete`: idempotent per token, intake through `runner_service.intake_subject`, discards after a cancel |
+| `task_progress_service` | task status derived from units, failed units into `counts` / `errors`, cancel, summaries, gap re-planning |
+| `queue_reaper` | beat `enrichment.reap` (60 s): expired leases, stale-queue alerts, cost stops, restart of consumers |
+| `queue_escalation` | pause + notifications through `django_notifications` (soft: absent / missing channel → log only) |
+| `cost_guard_service` | stops a task at `ENRICHMENT_TASK_MAX_COST_USD` |
+| `consumer_service` | internal consumer (`enrichment.consume`): same claim/complete path as an external worker |
+| `queue_status`, `unit_payload`, `queue_log`, `queue_config`, `queue_dispatch` | CMS status + resume, claim payload, `enrichment.queue` key=value log + capped `WorkUnit.events`, settings reader, Celery hand-off |
+
+Logger `enrichment.queue`: one line per event, `event=… unit=… task=… worker=… instance=… attempt=… lane=…
+duration_ms=… code=…`; never subject content or secrets. Proposal intake can take `keep_edited=True`
+(`proposal_service.KeptEdited`): the supersede step locks the target's pending rows and refuses to supersede an
+operator-edited one; the consumer also skips a subject with an edited pending proposal of the same worker before the
+paid call.
+
+Celery tasks: `enrichment.plan_task`, `enrichment.consume`, `enrichment.reap`; `enrichment.run_task` is a shim that
+plans the task. The host schedules `enrichment.reap` every 60 s (`CELERY_BEAT_SCHEDULE`).
+
 ## Async note
 
 `bulk_accept` dispatches `tasks/apply_tasks.apply_proposals_task` (a one-liner over `apply_many`).

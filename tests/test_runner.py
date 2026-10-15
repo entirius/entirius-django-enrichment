@@ -96,7 +96,7 @@ class TestDispatch:
         with django_capture_on_commit_callbacks(execute=True) as callbacks:
             task = _spawn(["SKU-1"])
         assert len(callbacks) == 1  # plan only
-        assert task.units.filter(status="queued").count() == 1
+        assert task.work_units.filter(status="queued").count() == 1
         task.refresh_from_db()
         assert task.status == TaskStatus.OPEN.value
 
@@ -164,7 +164,7 @@ class TestRun:
         task = self._run(["SKU-1", "SKU-2", "SKU-3"], cancel_on=["SKU-1"])
         assert task.status == TaskStatus.CANCELLED.value
         assert not ContentProposal.objects.exists()  # cancelled before submit → the unit's results are discarded
-        assert set(task.units.values_list("status", flat=True)) == {"cancelled"}
+        assert set(task.work_units.values_list("status", flat=True)) == {"cancelled"}
 
     def test_rerun_supersedes_an_untouched_pending_proposal(self, echo_worker):
         echo_worker()

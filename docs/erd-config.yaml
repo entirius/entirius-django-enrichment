@@ -11,6 +11,8 @@ groups:
       - SpawnRule
       - TaskTemplate
       - Worker
+      - WorkerInstance
+      - WorkUnit
   - name: workflows
     title: "Workflows"
     models:

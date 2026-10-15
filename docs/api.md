@@ -188,7 +188,7 @@ template, or an inactive worker → 400. Corrections read the template's current
 
 Two Celery lanes for the internal runner: `now` → `ENRICHMENT_INTERACTIVE_QUEUE` (`enrichment_interactive`), `queue`
 → `ENRICHMENT_BULK_QUEUE` (`enrichment_bulk`; the host runs its worker with concurrency 1, so a bulk run never blocks
-a click). `worker_service.dispatch_if_internal` routes by `task.lane` (`lane_service.celery_queue`). Workflow steps
+a click). `queue_dispatch` (planner and consumer) routes by `task.lane` (`lane_service.celery_queue`). Workflow steps
 always spawn on `now`; batch corrections (`tasks/{id}/revise/`) always run on the interactive queue. External workers
 ignore the lane.
 
@@ -220,25 +220,43 @@ their supersede behaviour.
 the same lane created before it (0 = next); `null` once it runs, after it finished, or for an external worker.
 `POST tasks/` adds `skipped_in_flight: [refs]` (empty when nothing was skipped).
 
-## The n8n worker pull-loop
+## Work queue: the worker pull API (plan 23)
 
-The worker owns no selection logic — it pulls typed tasks, generates, and posts proposals back:
+A task is planned into small `WorkUnit`s (`ENRICHMENT_UNIT_SIZE`, default 5 subjects) after commit; internal and
+external workers pull them the same way: **claim → (heartbeat) → complete | fail**. All endpoints are admin-only
+(`JWTAuthentication` + staff), throttled by `WorkerQueueThrottle` (scope `enrichment_queue`, 300/min), area
+`enrichment.proposals`.
 
-```
-GET  /tasks/?status=open&type=fix-attribute      # claim work
-GET  /tasks/{id}/targets/?page=1                 # resolve scope lazily (adapter-paged)
-POST /proposals/   {task_id, external_ref, ...}  # submit one proposal per target/field
-PATCH /tasks/{id}/ {"status": "done"}            # close the task (after mark in_progress)
-```
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| POST | `workers/claim/` | `{worker, instance, version?, lane?}` | 200 unit · 204 nothing to do (also: worker paused, in-flight cap reached) · 404 unknown / inactive worker |
+| POST | `workers/heartbeat/` | `{token}` | 200 `{lease_until}` · 409 `LEASE_LOST` |
+| POST | `workers/complete/` | `{token, results: [{subject_ref, drafts: [{target_kind, target_locator, proposed_value, subject_label?}], error_code?, error_id?}]}` | 200 `{succeeded, failed, kept_edited, discarded}` · 400 (result names a subject outside the unit) · 409 `LEASE_LOST` |
+| POST | `workers/fail/` | `{token, code, message, retryable=true}` | 200 `{unit_id, status, attempts, not_before}` · 409 `LEASE_LOST` |
+| GET | `workers/status/` | — | list of `{key, label, mode, state (running\|paused), paused_reason, paused_at, online_instances, queued_units, oldest_queued_age_s, leased_units, failed_units_24h, nobody_taking}` |
+| POST | `workers/{key}/resume/` | — | 200 status row · 404 |
 
-`targets` never materialises the whole catalogue — the adapter bounds each page (PIM: SKUs).
+Claim 200: `{unit_id, token, lease_until, attempt, task_id, type, params, scope_module, subject_refs, context}`
+(`context` = the worker's `kind`, `version`, `system_prompt`, `model`, `options`). The lease lasts
+`ENRICHMENT_LEASE_S` (300 s); a heartbeat extends it by the same time. A worker may hold
+`ENRICHMENT_MAX_INFLIGHT_PER_WORKER` (2) leases. `complete` is idempotent per token: a repeat answers the stored
+outcome. A subject missing from `results` counts as failed (`NO_RESULT`). Results go through the same intake as before
+(supersede, keep-edited). After a cancel, `complete` answers `discarded: true` and stores nothing.
 
-**Gap-mode tasks are a work queue:** `scope_spec.mode == "gap"` targets are post-filtered (targets
-with a pending/drifted proposal, or rejected/applied inside the cooldown window, drop off) and
-capped by `params.limit`. The worker therefore re-pulls **`page=1` until it comes back empty** —
-`page++` would silently skip items as consumed targets fall off the front. A failed generation is
-submitted as a low-confidence proposal carrying the error note, never silently skipped (the same
-target would re-surface forever). `page++` stays correct for `csv`/`list`/`filter` (static sets).
+`fail`: retryable and attempts < `ENRICHMENT_MAX_ATTEMPTS` (3) → the unit is queued again after
+`ENRICHMENT_RETRY_BACKOFF_S` × attempt; else it fails for good (task `counts.failed`, `errors`, a notification).
+A budget error code (`ENRICHMENT_BUDGET_ERROR_CODES`) pauses the worker at once.
+
+Task detail: `GET tasks/` and `GET tasks/{id}/` carry `units` (`{queued, leased, done, failed, cancelled}`);
+the detail adds `failed_units` (`[{id, subject_refs, attempts, error: {code, message}, events}]`, last 5 events each).
+`PATCH tasks/{id}/` stays for the CMS (cancel): queued units are cancelled, a leased one finishes and its results are
+discarded.
+
+**Deprecated for external workers:** the old loop (`GET tasks/?status=open` → `tasks/{id}/targets/` → `POST
+proposals/` → `PATCH tasks/{id}/` done) still works but bypasses leases, retries and escalation. Use the pull API.
+
+**Gap-mode tasks** are re-planned by the queue: when a gap task's units run out, page 1 is resolved again and only
+subjects without a unit become new units; a task ends when nothing new appears.
 
 ## Spawn rules (etap-13)
 
