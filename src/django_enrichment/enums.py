@@ -20,6 +20,19 @@ class TaskLane(models.TextChoices):
     QUEUE = "queue", "Queue"
 
 
+class UnitStatus(models.TextChoices):
+    """One `WorkUnit` of the work queue: queued → leased → done | failed; cancelled with its task."""
+
+    QUEUED = "queued", "Queued"
+    LEASED = "leased", "Leased"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+TERMINAL_UNIT_STATUSES = frozenset({UnitStatus.DONE.value, UnitStatus.FAILED.value, UnitStatus.CANCELLED.value})
+
+
 class ProposalStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPLIED = "applied", "Applied"

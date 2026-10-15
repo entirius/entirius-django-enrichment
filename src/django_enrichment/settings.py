@@ -81,3 +81,36 @@ ENRICHMENT_REVISE_LOCK_SECONDS = getattr(settings, "ENRICHMENT_REVISE_LOCK_SECON
 ENRICHMENT_INTERACTIVE_QUEUE = getattr(settings, "ENRICHMENT_INTERACTIVE_QUEUE", "enrichment_interactive")
 ENRICHMENT_BULK_QUEUE = getattr(settings, "ENRICHMENT_BULK_QUEUE", "enrichment_bulk")
 ENRICHMENT_RUN_NOW_MAX_SUBJECTS = getattr(settings, "ENRICHMENT_RUN_NOW_MAX_SUBJECTS", 20)
+
+# Work queue (plan 23). Every knob is read at call time through `queue_config.get` (host/test override wins).
+#
+# ENRICHMENT_UNIT_SIZE              — subjects per work unit (small on purpose: a lost lease costs few paid calls).
+# ENRICHMENT_MAX_INFLIGHT_PER_WORKER — leases one worker may hold at once, per lane.
+# ENRICHMENT_LEASE_S                — lease length; a heartbeat extends it by the same amount.
+# ENRICHMENT_MAX_ATTEMPTS           — claims of one unit before it fails for good.
+# ENRICHMENT_RETRY_BACKOFF_S        — wait before a retried unit is claimable again (× attempt).
+# ENRICHMENT_INSTANCE_ONLINE_S      — an instance is online when seen within this many seconds.
+# ENRICHMENT_STALE_QUEUE_S          — queued longer than this with no online instance → "nobody is taking work".
+# ENRICHMENT_PAUSE_AFTER_FAILURES   — consecutive failed units of one worker that pause it.
+# ENRICHMENT_AUTO_PAUSE             — False = only notify, never pause.
+# ENRICHMENT_BUDGET_ERROR_CODES     — toolbox error codes that pause the worker at once (budget / hard cap).
+# ENRICHMENT_NOTIFY_CHANNEL         — django_notifications channel idx for escalations (missing → log only).
+# ENRICHMENT_NOTIFY_ROLE            — recipient role of escalations.
+# ENRICHMENT_PLAN_BATCH             — units created per insert while planning a task.
+# ENRICHMENT_EVENTS_CAP             — events kept per unit.
+# ENRICHMENT_CONSUME_MAX_UNITS      — units one consume run handles before re-queueing itself (bounds a Celery slot).
+ENRICHMENT_UNIT_SIZE = 5
+ENRICHMENT_MAX_INFLIGHT_PER_WORKER = 2
+ENRICHMENT_LEASE_S = 300
+ENRICHMENT_MAX_ATTEMPTS = 3
+ENRICHMENT_RETRY_BACKOFF_S = 60
+ENRICHMENT_INSTANCE_ONLINE_S = 120
+ENRICHMENT_STALE_QUEUE_S = 900
+ENRICHMENT_PAUSE_AFTER_FAILURES = 5
+ENRICHMENT_AUTO_PAUSE = True
+ENRICHMENT_BUDGET_ERROR_CODES = ("BUDGET_EXCEEDED", "HARD_CAP_REACHED", "SPEND_CAP_EXCEEDED", "QUOTA_EXCEEDED")
+ENRICHMENT_NOTIFY_CHANNEL = "default-europe"
+ENRICHMENT_NOTIFY_ROLE = "operator"
+ENRICHMENT_PLAN_BATCH = 200
+ENRICHMENT_EVENTS_CAP = 20
+ENRICHMENT_CONSUME_MAX_UNITS = 10

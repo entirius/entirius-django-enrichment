@@ -35,6 +35,9 @@ class Worker(BaseModel):
     options = models.JSONField(default=dict, blank=True)
     active = models.BooleanField(default=True, db_index=True)
     version = models.PositiveIntegerField(default=1, editable=False)
+    # Work queue: blank = running. A paused worker's units are not handed out (`work_queue_service.claim`).
+    paused_reason = models.CharField(max_length=255, blank=True, default="")
+    paused_at = models.DateTimeField(null=True, blank=True)
 
     def clean(self) -> None:
         from django_enrichment.kinds import get_kind
