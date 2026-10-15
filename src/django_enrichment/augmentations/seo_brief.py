@@ -163,10 +163,18 @@ def _items(data: Any) -> list[KeywordItem]:
 
 
 def _seeds(answer: SeedsAnswer) -> list[str]:
-    seeds = list(dict.fromkeys(_phrase(seed) for seed in answer.seeds))
-    if not (seeds := [seed for seed in seeds if 0 < len(seed) <= SEED_MAX_CHARS]):
+    """Phrases within the toolbox keyword limit; only when none fits, the overlong ones cut to whole words."""
+    phrases = list(dict.fromkeys(_phrase(seed) for seed in answer.seeds))
+    seeds = [seed for seed in phrases if 0 < len(seed) <= SEED_MAX_CHARS]
+    if not (seeds := seeds or list(dict.fromkeys(filter(None, map(_cut, phrases))))):
         raise SubjectError("SEO_BRIEF_NO_SEEDS", "no seed phrases proposed")
     return seeds[:SEEDS_MAX]
+
+
+def _cut(phrase: str) -> str:
+    """`phrase` cut at the last word break within the limit; blank when it has none."""
+    head = phrase[: SEED_MAX_CHARS + 1]
+    return head.rsplit(" ", 1)[0] if " " in head else ""
 
 
 def _phrase(text: str) -> str:

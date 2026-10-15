@@ -17,6 +17,7 @@ from django_utils.toolbox.testing import CANNED_COMPLETION, error_response, mock
 from django_enrichment import augmentations
 from django_enrichment.augmentations import AugmentResult, seo_brief
 from django_enrichment.augmentations.seo_answers import SeedsAnswer
+from django_enrichment.augmentations.seo_prompts import SEED_MAX_CHARS
 from django_enrichment.kinds import SubjectError, seams, step
 from django_enrichment.kinds.base import fenced
 from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntry
@@ -428,3 +429,15 @@ class TestErrors:
     def test_seeds_longer_than_the_toolbox_limit_are_dropped(self, writer):
         long_seed = "word " * 30
         assert seo_brief._seeds(SeedsAnswer(seeds=[long_seed, "sofa", "modular sofa"])) == ["sofa", "modular sofa"]
+
+    def test_only_overlong_seeds_are_cut_to_whole_words_within_the_limit(self, writer):
+        long_seed = "modular sofa " * 10
+        seeds = seo_brief._seeds(SeedsAnswer(seeds=[long_seed]))
+        assert len(seeds) == 1
+        assert 0 < len(seeds[0]) <= SEED_MAX_CHARS
+        assert long_seed.startswith(seeds[0]) and not seeds[0].endswith(" ")
+
+    def test_an_overlong_seed_without_a_word_break_is_no_seed(self, writer):
+        with pytest.raises(SubjectError) as exc:
+            seo_brief._seeds(SeedsAnswer(seeds=["x" * (SEED_MAX_CHARS + 5)]))
+        assert exc.value.code == "SEO_BRIEF_NO_SEEDS"

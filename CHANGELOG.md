@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- SEO brief: when every proposed seed phrase is over the toolbox keyword limit (80 characters), the phrases are cut
+  at the last word break within it instead of failing the subject with `SEO_BRIEF_NO_SEEDS`; seeds within the limit
+  still win and the overlong ones are dropped next to them.
 - Image processing (plan 25): kind `image` — params `operation` (packshot | lifestyle | enhance | instruct), `preset`,
   `prompt` (≤ 1000, required for a run of `instruct`; a template may leave it to the run), `picture_ref` (blank = the
   main picture from `list_pictures`), `n` 1–4. `toolbox_calls.generate_image` runs the toolbox image job (submit,
