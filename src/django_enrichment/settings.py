@@ -130,3 +130,7 @@ ENRICHMENT_TASK_MAX_COST_USD = "5.00"
 # ENRICHMENT_TRANSIENT_ERROR_CODES — failure codes treated as transient.
 ENRICHMENT_TRANSIENT_RETRIES = 1
 ENRICHMENT_TRANSIENT_ERROR_CODES = ("TOOLBOX_HTTP_502", "TOOLBOX_HTTP_503", "TOOLBOX_HTTP_504", "TIMEOUT")
+
+# Completion output budget, sent as `max_tokens` on every completion (the toolbox default of 1024 truncates an
+# article draft, which the toolbox answers with 502 PROVIDER_ERROR). Billing follows the real output.
+ENRICHMENT_COMPLETION_MAX_TOKENS = 8192

@@ -131,3 +131,13 @@ class TestTransientRetry:
         kind = Flaky(failures=1)
         assert self._run(kind).error_code == "TOOLBOX_HTTP_502"
         assert kind.calls == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("toolbox_settings")
+def test_completion_sends_the_output_budget(settings):
+    settings.ENRICHMENT_COMPLETION_MAX_TOKENS = 4096
+    with mock_toolbox() as router:
+        route = router["complete"].mock(return_value=httpx.Response(200, json={**CANNED_COMPLETION, "parsed": {}}))
+        toolbox_calls.complete(system="", user="u", json_schema={"type": "object"}, model="m", kind="generate")
+    assert json.loads(route.calls.last.request.content)["max_tokens"] == 4096

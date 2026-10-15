@@ -105,6 +105,7 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
             model=model or _default_model(client),
             messages=messages,
             json_schema=provider_schema(json_schema),
+            max_tokens=_max_tokens(),
             tags=_tags(kind, task),
         )
         with _unknown_cost_on_error(task, "completion"):
@@ -113,6 +114,11 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     if response.parsed is None:
         raise ValueError("toolbox completion returned no structured answer")
     return Costed(response.parsed, cost)
+
+
+def _max_tokens() -> int:
+    default = enrichment_settings.ENRICHMENT_COMPLETION_MAX_TOKENS
+    return getattr(settings, "ENRICHMENT_COMPLETION_MAX_TOKENS", default)
 
 
 def provider_schema(schema: Any) -> Any:
