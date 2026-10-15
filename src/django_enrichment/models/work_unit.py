@@ -16,7 +16,7 @@ class WorkUnit(BaseModel):
     `complete` answers the same. `lease_token` is cleared when the lease is lost and kept once the unit is done.
     """
 
-    task = models.ForeignKey("django_enrichment.EnrichmentTask", on_delete=models.CASCADE, related_name="units")
+    task = models.ForeignKey("django_enrichment.EnrichmentTask", on_delete=models.CASCADE, related_name="work_units")
     worker_key = models.CharField(max_length=64)
     subject_refs = models.JSONField(default=list)
     lane = models.CharField(max_length=8, choices=TaskLane.choices, default=TaskLane.QUEUE)

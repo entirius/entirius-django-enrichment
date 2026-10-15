@@ -46,11 +46,11 @@ def _plan(task_id: int) -> int:
     with transaction.atomic():
         task = EnrichmentTask.objects.select_for_update().get(pk=task_id)
         worker = Worker.objects.filter(key=task.type, active=True).first()
-        if worker is None or task.status != TaskStatus.OPEN.value or (task.units.exists() and not task.batch_key):
+        if worker is None or task.status != TaskStatus.OPEN.value or (task.work_units.exists() and not task.batch_key):
             return 0
         created = plan_units(task)
         queue_log.log("planned", task=task.pk, worker=task.type, lane=task.lane, units=created)
-        if created == 0 and not task.units.exists():
+        if created == 0 and not task.work_units.exists():
             task_progress_service.finish_if_settled(task)
     if created and worker.mode == WorkerMode.INTERNAL.value:
         queue_dispatch.kick_consumer(worker.key, task.lane)
@@ -69,7 +69,7 @@ def _fail_task(task_id: int, exc: Exception) -> None:
 
 def plan_units(task: EnrichmentTask) -> int:
     """Create units for the subjects the task has no unit for yet. The caller holds the task row lock."""
-    seen = {ref for refs in task.units.values_list("subject_refs", flat=True) for ref in refs}
+    seen = {ref for refs in task.work_units.values_list("subject_refs", flat=True) for ref in refs}
     size, batch, created = queue_config.get("ENRICHMENT_UNIT_SIZE"), queue_config.get("ENRICHMENT_PLAN_BATCH"), 0
     room = max(queue_config.get("ENRICHMENT_QUEUE_MAX_SUBJECTS") - len(seen), 0)
     chunks = _chunks(islice(_fresh_subjects(task, seen), room), size)

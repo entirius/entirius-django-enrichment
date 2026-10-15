@@ -15,8 +15,9 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from django_enrichment.api.admin.permissions import IsAdminUser
-from django_enrichment.schemas.responses import WorkerResponse
-from django_enrichment.services import worker_service
+from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.schemas.responses import WorkerResponse, WorkerStatusResponse
+from django_enrichment.services import queue_status, worker_service
 
 _TAGS = ["Enrichment Workers"]
 
@@ -38,3 +39,23 @@ class WorkerViewSet(viewsets.ViewSet):
         return Response(
             [WorkerResponse(**worker_service.describe(worker)).model_dump(mode="json") for worker in workers]
         )
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Queue state of every active worker",
+        responses={200: WorkerStatusResponse},
+    )
+    def status(self, request: Request) -> Response:
+        rows = queue_status.workers_status()
+        return Response([WorkerStatusResponse(**row).model_dump(mode="json") for row in rows])
+
+    @extend_schema(
+        tags=_TAGS, summary="Resume a paused worker", request=None, responses={200: WorkerStatusResponse, 404: None}
+    )
+    def resume(self, request: Request, key: str) -> Response:
+        try:
+            queue_status.resume(key)
+        except ValueError as exc:
+            raise_as_drf(exc)
+        row = next(r for r in queue_status.workers_status() if r["key"] == key)
+        return Response(WorkerStatusResponse(**row).model_dump(mode="json"))

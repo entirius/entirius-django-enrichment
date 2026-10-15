@@ -39,6 +39,12 @@ class TaskResponse(BaseModel):
     queued_ahead: int | None = Field(
         None, description="Open runs of its lane created before it; null once running or for an external worker"
     )
+    units: dict[str, int] = Field(
+        default_factory=dict, description="Work units by status: queued | leased | done | failed | cancelled"
+    )
+    failed_units: list[dict] = Field(
+        default_factory=list, description="Retrieve only: latest failed units with their error and last events"
+    )
     # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
     proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
@@ -427,3 +433,55 @@ class AIUsageMonthResponse(BaseModel):
     )
     cost_since: date | None = Field(description="Billing started inside the month: the cost covers only from here")
     currency: str
+
+
+class ClaimedUnitResponse(BaseModel):
+    """`POST /workers/claim/` 200 — one leased unit and everything needed to do it."""
+
+    unit_id: int
+    token: str = Field(description="Lease token; send it with heartbeat / complete / fail")
+    lease_until: datetime
+    attempt: int
+    task_id: int
+    type: str = Field(description="Task type = worker key")
+    params: dict
+    scope_module: str
+    subject_refs: list[str]
+    context: dict = Field(description="The worker's calibration: kind, version, system_prompt, model, options")
+
+
+class HeartbeatResponse(BaseModel):
+    lease_until: datetime
+
+
+class UnitOutcomeResponse(BaseModel):
+    """`POST /workers/complete/` — how the unit's subjects ended."""
+
+    succeeded: int
+    failed: int
+    kept_edited: int
+    discarded: bool = Field(False, description="True when the task was cancelled before the results arrived")
+
+
+class FailedUnitResponse(BaseModel):
+    unit_id: int
+    status: str
+    attempts: int
+    not_before: datetime | None
+
+
+class WorkerStatusResponse(BaseModel):
+    """`GET /workers/status/` item — the state of one active worker's queue."""
+
+    key: str
+    label: str
+    mode: str
+    state: str = Field(description="running | paused", examples=["running"])
+    paused_reason: str
+    paused_at: datetime | None
+    online_instances: int
+    queued_units: int
+    oldest_queued_age_s: int | None
+    leased_units: int
+    failed_units_24h: int
+    nobody_taking: bool = Field(description="Work waits past the stale limit and no instance is online")

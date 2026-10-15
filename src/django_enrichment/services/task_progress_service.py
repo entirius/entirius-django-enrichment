@@ -32,7 +32,7 @@ def refresh(task_id: int) -> None:
 
 def finish_if_settled(task: EnrichmentTask) -> None:
     """Close the task once no unit is queued or leased (and a gap task has nothing new to plan)."""
-    if task.units.filter(status__in=_RUNNING).exists() or _replanned(task):
+    if task.work_units.filter(status__in=_RUNNING).exists() or _replanned(task):
         return
     totals = _totals(task)
     status = TaskStatus.DONE if totals["succeeded"] or not totals["problems"] else TaskStatus.FAILED
@@ -48,7 +48,7 @@ def finish_if_settled(task: EnrichmentTask) -> None:
 
 
 def _replanned(task: EnrichmentTask) -> bool:
-    if task.scope_spec.get("mode") != "gap" or not task.units.exists():
+    if task.scope_spec.get("mode") != "gap" or not task.work_units.exists():
         return False
     from django_enrichment.services import queue_dispatch, unit_planner
 
@@ -59,10 +59,10 @@ def _replanned(task: EnrichmentTask) -> bool:
 
 
 def _totals(task: EnrichmentTask) -> dict[str, int]:
-    done = task.units.filter(status=UnitStatus.DONE.value).values_list("outcome", flat=True)
+    done = task.work_units.filter(status=UnitStatus.DONE.value).values_list("outcome", flat=True)
     succeeded = sum(outcome.get("succeeded", 0) for outcome in done)
     failed_subjects = sum(outcome.get("failed", 0) for outcome in done)
-    failed_units = task.units.filter(status=UnitStatus.FAILED.value).count()
+    failed_units = task.work_units.filter(status=UnitStatus.FAILED.value).count()
     return {"succeeded": succeeded, "problems": failed_subjects + failed_units}
 
 
@@ -88,7 +88,7 @@ def record_unit_failure(unit: WorkUnit) -> None:
 
 def cancel_units(task: EnrichmentTask) -> int:
     """The task was closed (cancelled by the operator): queued units are cancelled, leased ones finish on their own."""
-    cancelled = task.units.filter(status=UnitStatus.QUEUED.value).update(status=UnitStatus.CANCELLED.value)
+    cancelled = task.work_units.filter(status=UnitStatus.QUEUED.value).update(status=UnitStatus.CANCELLED.value)
     if cancelled:
         queue_log.log("units_cancelled", task=task.pk, units=cancelled)
     return cancelled

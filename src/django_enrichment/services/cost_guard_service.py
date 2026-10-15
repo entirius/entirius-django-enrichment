@@ -26,7 +26,7 @@ def stop_over_cost(worker_key: str | None = None) -> int:
     tasks = EnrichmentTask.objects.filter(
         status__in=[TaskStatus.OPEN.value, TaskStatus.IN_PROGRESS.value],
         cost_usd__gte=max_cost(),
-        units__status=UnitStatus.QUEUED.value,
+        work_units__status=UnitStatus.QUEUED.value,
     ).distinct()
     if worker_key:
         tasks = tasks.filter(type=worker_key)

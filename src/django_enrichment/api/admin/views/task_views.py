@@ -31,7 +31,7 @@ from django_enrichment.schemas.responses import (
     TaskResponse,
     TaskSpawnResponse,
 )
-from django_enrichment.services import lane_service, run_service, task_service
+from django_enrichment.services import lane_service, run_service, task_progress_service, task_service
 
 _TAGS = ["Enrichment Tasks"]
 
@@ -44,7 +44,11 @@ def _serialize_with_proposals(tasks: list) -> list[dict]:
     """Tasks plus the status counts of their proposals (what the operator still has to review) and queue position."""
     counts = task_service.proposal_counts([t.pk for t in tasks])
     ahead = lane_service.queued_ahead(tasks)
-    return [{**_serialize(t), "proposal_counts": counts[t.pk], "queued_ahead": ahead[t.pk]} for t in tasks]
+    units = task_progress_service.unit_summary([t.pk for t in tasks])
+    return [
+        {**_serialize(t), "proposal_counts": counts[t.pk], "queued_ahead": ahead[t.pk], "units": units[t.pk]}
+        for t in tasks
+    ]
 
 
 class AlreadyRunning(drf_exceptions.APIException):
@@ -110,7 +114,8 @@ class TaskViewSet(viewsets.ViewSet):
 
     @extend_schema(tags=_TAGS, summary="Retrieve task", responses={200: TaskResponse, 404: None})
     def retrieve(self, request: Request, pk: int) -> Response:
-        return Response(_serialize_with_proposals([_get_task_or_404(pk)])[0])
+        body = _serialize_with_proposals([_get_task_or_404(pk)])[0]
+        return Response({**body, "failed_units": task_progress_service.failed_units(pk)})
 
     @extend_schema(
         tags=_TAGS,

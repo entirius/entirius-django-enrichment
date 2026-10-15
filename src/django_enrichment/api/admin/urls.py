@@ -10,6 +10,7 @@ from django_enrichment.api.admin.views.catalog_views import CatalogViewSet
 from django_enrichment.api.admin.views.memory_views import MemoryViewSet
 from django_enrichment.api.admin.views.profile_views import ProfileViewSet
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
+from django_enrichment.api.admin.views.queue_views import WorkQueueViewSet
 from django_enrichment.api.admin.views.revision_views import RevisionViewSet, RulePromotionViewSet
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
@@ -31,6 +32,13 @@ urlpatterns = [
     path("usage/month/", AIUsageViewSet.as_view({"get": "month"}), name="admin-usage-month"),
     # Workers
     path("workers/", WorkerViewSet.as_view({"get": "list"}), name="admin-workers-list"),
+    path("workers/status/", WorkerViewSet.as_view({"get": "status"}), name="admin-workers-status"),
+    path("workers/<str:key>/resume/", WorkerViewSet.as_view({"post": "resume"}), name="admin-workers-resume"),
+    # Work queue: the pull model of external and internal workers
+    path("workers/claim/", WorkQueueViewSet.as_view({"post": "claim"}), name="admin-queue-claim"),
+    path("workers/heartbeat/", WorkQueueViewSet.as_view({"post": "heartbeat"}), name="admin-queue-heartbeat"),
+    path("workers/complete/", WorkQueueViewSet.as_view({"post": "complete"}), name="admin-queue-complete"),
+    path("workers/fail/", WorkQueueViewSet.as_view({"post": "fail"}), name="admin-queue-fail"),
     # Templates & field catalog (contract A3 § 2, § 4)
     path("templates/", TemplateViewSet.as_view({"get": "list", "post": "create"}), name="admin-templates-list"),
     path(

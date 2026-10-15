@@ -64,3 +64,17 @@ class BulkActionThrottle(UserRateThrottle):
             return super().get_rate()
         except Exception:  # noqa: BLE001 — DRF raises ImproperlyConfigured when the scope is unset
             return self.rate
+
+
+class WorkerQueueThrottle(UserRateThrottle):
+    """Caps the worker pull API (claim / heartbeat / complete / fail). Workers poll, so the cap is generous;
+    it only stops a runaway loop. Service override: `DEFAULT_THROTTLE_RATES["enrichment_queue"]`."""
+
+    scope = "enrichment_queue"
+    rate = "300/min"
+
+    def get_rate(self) -> str:
+        try:
+            return super().get_rate()
+        except Exception:  # noqa: BLE001 — DRF raises ImproperlyConfigured when the scope is unset
+            return self.rate

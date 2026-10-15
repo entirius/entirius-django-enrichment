@@ -69,27 +69,27 @@ def _ok(*refs: str) -> list[SubjectResult]:
 class TestPlanning:
     def test_targets_are_split_into_small_units(self, planned):
         task = planned()
-        assert [u.subject_refs for u in task.units.order_by("pk")] == [
+        assert [u.subject_refs for u in task.work_units.order_by("pk")] == [
             ["SKU-1", "SKU-2"],
             ["SKU-3", "SKU-4"],
             ["SKU-5"],
         ]
-        assert {u.lane for u in task.units.all()} == {task.lane}
+        assert {u.lane for u in task.work_units.all()} == {task.lane}
 
     def test_planning_twice_adds_nothing(self, planned):
         task = planned()
         assert unit_planner.plan_task(task.pk) == 0
-        assert task.units.count() == 3
+        assert task.work_units.count() == 3
 
     def test_planner_stops_at_the_subject_cap(self, echo_worker, settings):  # noqa: F811
         echo_worker(mode="external")
         task = _spawn(["SKU-1", "SKU-2", "SKU-3", "SKU-4", "SKU-5"])
         settings.ENRICHMENT_QUEUE_MAX_SUBJECTS = 3
         unit_planner.plan_task(task.pk)
-        assert task.units.count() == 2
+        assert task.work_units.count() == 2
 
     def test_empty_task_is_done(self, planned):
-        assert planned(refs=()).units.count() == 0
+        assert planned(refs=()).work_units.count() == 0
         assert EnrichmentTask.objects.get().status == TaskStatus.DONE.value
 
     def test_spawn_over_the_queue_cap_is_refused(self, echo_worker, settings):  # noqa: F811
@@ -136,7 +136,7 @@ class TestClaim:
         fast = _spawn(["SKU-9"], lane="now")
         unit_planner.plan_task(fast.pk)
         assert work_queue_service.claim(KEY, "a").task_id == fast.pk
-        assert slow.units.filter(status="queued").count() == 3
+        assert slow.work_units.filter(status="queued").count() == 3
 
     def test_lane_filter(self, planned):
         task = planned()
@@ -154,7 +154,7 @@ class TestClaim:
         task = planned()
         task_service.transition_status(task, TaskStatus.CANCELLED.value)
         assert work_queue_service.claim(KEY, "a") is None
-        assert set(task.units.values_list("status", flat=True)) == {"cancelled"}
+        assert set(task.work_units.values_list("status", flat=True)) == {"cancelled"}
 
 
 class TestLease:
@@ -344,7 +344,7 @@ class TestGuards:
         EnrichmentTask.objects.filter(pk=task.pk).update(cost_usd=Decimal("1.50"))
         assert work_queue_service.claim(KEY, "a") is None
         task.refresh_from_db()
-        assert set(task.units.values_list("status", flat=True)) == {"cancelled"}
+        assert set(task.work_units.values_list("status", flat=True)) == {"cancelled"}
         assert task.errors[0]["message"] == cost_guard_service.MESSAGE
         assert len(notes) == 1
         assert cost_guard_service.stop_over_cost() == 0

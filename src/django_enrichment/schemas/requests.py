@@ -10,6 +10,7 @@ OpenAPI schema via drf-spectacular.
 """
 
 import json
+import uuid
 from decimal import Decimal
 from typing import Literal
 
@@ -340,3 +341,48 @@ class MemoryPromoteRequest(BaseModel):
     """`POST memory/{id}/promote/` — rule → `always_rules` (default) or `rules`; fact → `facts` (default)."""
 
     target: Literal["always_rules", "rules", "facts"] | None = Field(None, examples=["always_rules"])
+
+
+class ClaimRequest(BaseModel):
+    """`POST /workers/claim/` — ask for one unit of work."""
+
+    worker: str = Field(min_length=1, max_length=64, description="Worker key = task type", examples=["pim.writer"])
+    instance: str = Field(
+        min_length=1, max_length=128, description="Who asks (host + pid, an n8n id)", examples=["n8n-1"]
+    )
+    version: str = Field("", max_length=32, description="Version of the asking process", examples=["1.4.0"])
+    lane: Literal["", "now", "queue"] = Field("", description="Limit to one lane; blank = any, interactive first")
+
+
+class LeaseRequest(BaseModel):
+    """`POST /workers/heartbeat/` — keep a lease alive."""
+
+    token: uuid.UUID = Field(description="Lease token from claim")
+
+
+class DraftIn(BaseModel):
+    target_kind: str = Field(min_length=1, max_length=64, examples=["attribute_value"])
+    target_locator: dict = Field(examples=[{"channel": "default", "language": "pl", "feature_idx": "meta_title"}])
+    proposed_value: dict = Field(examples=[{"text": "New title"}])
+    subject_label: str = Field("", max_length=255)
+
+
+class SubjectResultIn(BaseModel):
+    subject_ref: str = Field(min_length=1, max_length=255, examples=["SKU-1"])
+    drafts: list[DraftIn] = Field(default_factory=list, max_length=50)
+    error_code: str = Field("", max_length=64, description="Set when this subject failed", examples=["TIMEOUT"])
+    error_id: str = Field("", max_length=64, description="Id of the worker's own log trace")
+
+
+class CompleteRequest(LeaseRequest):
+    """`POST /workers/complete/` — report the results of a unit; a subject without a result counts as failed."""
+
+    results: list[SubjectResultIn] = Field(max_length=100)
+
+
+class FailRequest(LeaseRequest):
+    """`POST /workers/fail/` — the unit could not be done."""
+
+    code: str = Field(pattern=r"^[A-Z0-9_]{1,64}$", examples=["TIMEOUT"])
+    message: str = Field(max_length=300, description="Plain words for the operator, never raw exception text")
+    retryable: bool = True

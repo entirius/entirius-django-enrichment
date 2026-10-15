@@ -83,7 +83,7 @@ class Migration(migrations.Migration):
                     "task",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
-                        related_name="units",
+                        related_name="work_units",
                         to="django_enrichment.enrichmenttask",
                     ),
                 ),
