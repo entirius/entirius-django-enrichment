@@ -6,7 +6,7 @@
 
 import pytest
 
-from django_enrichment.models import EnrichmentTask, ProfileVersion
+from django_enrichment.models import EnrichmentTask, Profile, ProfileVersion
 from django_enrichment.schemas.profile import validation_errors
 from django_enrichment.services import profile_context, profile_service
 from django_enrichment.services.profile_service import ProfileValidationError
@@ -72,6 +72,14 @@ class TestVersions:
         profile = profile_service.restore("", 1)
         assert (profile.version, profile.data) == (3, {"always_rules": ["A"]})
         assert profile_service.list_versions().first().note == "restored version 1"
+
+    def test_save_after_a_lagging_version_continues_past_the_snapshots(self):
+        _save({"always_rules": ["A"]})
+        _save({"always_rules": ["B"]})
+        Profile.objects.filter(channel="").update(version=1)  # e.g. a fixture reloaded over a used profile
+        profile = _save({"always_rules": ["C"]})
+        assert profile.version == 3
+        assert profile_service.list_versions().first().version == 3
 
     def test_restore_unknown_version_is_not_found(self):
         with pytest.raises(ValueError, match="not found"):

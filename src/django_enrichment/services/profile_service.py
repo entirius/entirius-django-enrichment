@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Max, QuerySet
 
 from django_enrichment.models import EnrichmentTask, Profile, ProfileVersion
 from django_enrichment.schemas.profile import SCHEMA_VERSION, validation_errors
@@ -54,11 +54,17 @@ def update_profile(
         data = change(dict(profile.data))
         if errors := validation_errors(data):
             raise ProfileValidationError(errors)
-        profile.data, profile.version, profile.updated_by = data, profile.version + 1, user
+        profile.data, profile.version, profile.updated_by = data, _next_version(profile), user
         profile.schema_version = SCHEMA_VERSION
         profile.save()
         ProfileVersion.objects.create(profile=profile, version=profile.version, data=data, note=note, created_by=user)
     return profile
+
+
+def _next_version(profile: Profile) -> int:
+    """One past the highest snapshot: `profile.version` can lag behind them (e.g. a fixture reloaded)."""
+    latest = ProfileVersion.objects.filter(profile=profile).aggregate(latest=Max("version"))["latest"] or 0
+    return max(latest, profile.version) + 1
 
 
 def list_versions(channel: str = INSTANCE) -> QuerySet[ProfileVersion]:
