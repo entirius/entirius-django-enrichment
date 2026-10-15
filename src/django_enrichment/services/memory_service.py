@@ -39,7 +39,7 @@ def remember(entry: MemoryEntry) -> MemoryEntry:
 
 def recall(*, channel: str, subject_module: str, subject_ref: str, kinds: list[str], budget_chars: int) -> str:
     """The remembered entries as one line each, subject first, then its category; blank when none."""
-    refs = _subject_then_category(subject_module, subject_ref)
+    refs = _subject_then_category(channel, subject_module, subject_ref)
     lines = [_line(entry) for ref in refs for entry in _active(channel, subject_module, ref, kinds)]
     return _budgeted(lines, budget_chars)
 
@@ -47,22 +47,22 @@ def recall(*, channel: str, subject_module: str, subject_ref: str, kinds: list[s
 def fresh(*, channel: str, subject_module: str, subject_ref: str, kind: str, language: str = "") -> MemoryEntry | None:
     """The newest active, unexpired entry of `kind` in `language` (`data.language`, blank = none recorded) about
     the subject, else about its category."""
-    for ref in _subject_then_category(subject_module, subject_ref):
+    for ref in _subject_then_category(channel, subject_module, subject_ref):
         entries = _active(channel, subject_module, ref, [kind])
         if entry := next((e for e in entries if (e.data or {}).get("language", "") == language), None):
             return entry
     return None
 
 
-def _subject_then_category(subject_module: str, subject_ref: str) -> list[str]:
+def _subject_then_category(channel: str, subject_module: str, subject_ref: str) -> list[str]:
     refs = [subject_ref]
-    if (category := category_of(subject_module, subject_ref)) and category != subject_ref:
+    if (category := category_of(subject_module, subject_ref, channel=channel)) and category != subject_ref:
         refs.append(category)
     return refs
 
 
-def category_of(subject_module: str, subject_ref: str) -> str | None:
-    """The subject's category ref via the adapter extra `category_of`; None without one."""
+def category_of(subject_module: str, subject_ref: str, *, channel: str = "") -> str | None:
+    """The subject's category ref in `channel` via the adapter extra `category_of`; None without one."""
     if not subject_module or not subject_ref:
         return None
     try:
@@ -70,7 +70,7 @@ def category_of(subject_module: str, subject_ref: str) -> str | None:
     except ValueError:
         return None
     category = getattr(adapter, "category_of", None)
-    return category(subject_ref) if category else None
+    return category(subject_ref, channel=channel) if category else None
 
 
 def _active(channel: str, subject_module: str, subject_ref: str, kinds: list[str]) -> QuerySet[MemoryEntry]:

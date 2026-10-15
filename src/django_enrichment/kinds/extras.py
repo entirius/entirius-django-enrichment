@@ -10,6 +10,7 @@
 | `channel_languages` | `["*"]` cannot be resolved → `SubjectError` |
 | `make_locator`      | `{channel, language, field}`                |
 | `field_key`         | `locator["field"]` (inverse of the fallback locator) |
+| `subject_languages` | every requested language                    |
 | `build_context`     | `{}`                                        |
 
 `augmentation_section` runs the task's augmentations (`params.augment`) on the same context.
@@ -67,6 +68,15 @@ def languages(adapter: ModuleType, *, channel: str, requested: list[str]) -> lis
         raise SubjectError("NOT_SUPPORTED", "the adapter cannot list channel languages")
     expanded = [lang for item in requested for lang in (channel_languages if item == ALL_LANGUAGES else [item])]
     return list(dict.fromkeys(expanded))
+
+
+def for_subject(adapter: ModuleType, *, subject_ref: str, languages: list[str]) -> list[str]:
+    """`languages` the subject exists in (adapter `subject_languages`; absent → all of them), order kept."""
+    subject_languages = getattr(adapter, "subject_languages", None)
+    if subject_languages is None:
+        return languages
+    available = set(subject_languages(subject_ref=subject_ref))
+    return [language for language in languages if language in available]
 
 
 def main_language(adapter: ModuleType, *, channel: str) -> str:

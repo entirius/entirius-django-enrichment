@@ -219,7 +219,7 @@ def _entry(task: Any, subject: _Subject, brief: dict) -> MemoryEntry:
 def _memory_ref(task: Any, subject: _Subject) -> str:
     if _scope(task) != "category":
         return subject.ref
-    return memory_service.category_of(subject.module, subject.ref) or subject.ref
+    return memory_service.category_of(subject.module, subject.ref, channel=subject.channel) or subject.ref
 
 
 def _scope(task: Any) -> str:

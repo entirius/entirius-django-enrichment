@@ -36,6 +36,8 @@ Five callables are the contract; a sixth is optional.
 | `make_locator(*, field_key, channel, language) -> dict` | READ | Optional. Locator of a catalog field (fallback `{channel, language, field}`). |
 | `field_key(*, locator) -> str \| None` | READ | Optional. Inverse of `make_locator`: the catalog field a locator points at, for correction field meta (fallback `locator["field"]`). |
 | `build_context(*, subject_ref, channel, language) -> dict` | READ | Optional. Item context for the AI kinds. |
+| `subject_languages(*, subject_ref) -> list[str]` | READ | Optional. Languages the subject exists in; `write` drops the others (none left → the subject is skipped, no AI call, no failure). |
+| `category_of(subject_ref, *, channel=None) -> str \| None` | READ | Optional. Memory ref of the subject's category in `channel` (recall, `seo_brief` category scope). |
 
 **Conformance kit:** subclass `django_enrichment.testing.adapter_conformance.AdapterConformance`
 (+ `FieldCatalogConformance`, `DocumentCreateConformance`) in your module's tests and provide the

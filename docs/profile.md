@@ -76,7 +76,7 @@ subject too), `kind` `seo_brief | answer | rule_suggestion | fact_suggestion`, `
 
 **Recall** — `memory_service.recall(*, channel, subject_module, subject_ref, kinds, budget_chars) -> str`: one line
 per entry (`- [kind] title: text`, `data` as JSON when there is no text), the subject's entries first, then its
-category's when the adapter has the optional extra `category_of(subject_ref) -> str | None`; newest first; only
+category's when the adapter has the optional extra `category_of(subject_ref, *, channel) -> str | None` (asked in the recall channel); newest first; only
 `active`, unexpired entries of the instance or the given channel; whole lines up to the budget (a single
 oversized first line is cut). Prompts use 3 000 characters (`seams.MEMORY_BUDGET_CHARS`):
 

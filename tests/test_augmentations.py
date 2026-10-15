@@ -88,7 +88,7 @@ def _by_selector(complete, prefix: str) -> list[dict]:
 @pytest.fixture
 def writer(make_worker, fake_adapter, monkeypatch):
     fake_adapter.set_catalog(CATALOG)
-    monkeypatch.setattr(fake_adapter, "category_of", lambda subject_ref: "CAT-SOFAS", raising=False)
+    monkeypatch.setattr(fake_adapter, "category_of", lambda subject_ref, *, channel=None: "CAT-SOFAS", raising=False)
     return make_worker(key="pim.writer", label="Writer", kind="write", options={})
 
 
@@ -235,6 +235,19 @@ class TestScope:
         assert routes["volume"].call_count == 1  # SKU-2 reused the category brief
         assert len(_by_selector(router, "enrichment.write")) == 2
         assert task.cost_breakdown["seo"] == "0.18600000"
+
+    def test_category_is_looked_up_in_the_subject_channel(
+        self, writer, fake_adapter, monkeypatch, django_capture_on_commit_callbacks
+    ):
+        channels: list[str | None] = []
+
+        def category_of(subject_ref, *, channel=None):
+            channels.append(channel)
+            return "CAT-SOFAS"
+
+        monkeypatch.setattr(fake_adapter, "category_of", category_of, raising=False)
+        _run_task(django_capture_on_commit_callbacks)
+        assert channels and set(channels) == {"default"}
 
     def test_scope_subject_remembers_the_subject(self, writer, django_capture_on_commit_callbacks):
         _run_task(django_capture_on_commit_callbacks, params={"seo_scope": "subject"})

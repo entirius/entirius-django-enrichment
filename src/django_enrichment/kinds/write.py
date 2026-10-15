@@ -7,7 +7,9 @@
 Augmentations (`params.augment`) run per subject × language (a brief researched in one language never reaches
 another language's prompt). The answer is one JSON object with a string property per field (`maxLength` from the field catalog);
 `html` fields are sanitised with the field kind's allowlist. One draft per field × language, located
-with the adapter's `make_locator`. Select fields belong to `pick` → subject error `FIELD_TYPE`.
+with the adapter's `make_locator`. Languages the subject does not exist in (adapter extra `subject_languages`) are
+left out; a subject with none of the requested languages yields no drafts (no AI call, no failure).
+Select fields belong to `pick` → subject error `FIELD_TYPE`.
 """
 
 from dataclasses import dataclass
@@ -48,6 +50,7 @@ class WriteKind(Kind):
         adapter = get_adapter(worker.target_module)
         run = _WriteRun(worker, task, WriteOptions.model_validate(worker.options), params, adapter)
         languages = extras.languages(adapter, channel=params.channel, requested=params.languages)
+        languages = extras.for_subject(adapter, subject_ref=subject_ref, languages=languages)
         return [draft for language in languages for draft in run.drafts(subject_ref, language)]
 
 

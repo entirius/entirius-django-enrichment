@@ -107,6 +107,14 @@ class AdapterConformance:
         adapter.revert(applied)
         assert read(adapter, conformance_case) == snapshot
 
+    def test_category_of_takes_a_channel(self, adapter, conformance_case):
+        """Optional extra `category_of(subject_ref, *, channel)`: a memory ref apart from the subject's, or None."""
+        if not hasattr(adapter, "category_of"):
+            pytest.skip("the adapter has no category_of (memory recalls the subject only)")
+        for channel in (None, ""):
+            category = adapter.category_of(conformance_case.subject_ref, channel=channel)
+            assert category is None or (isinstance(category, str) and category != conformance_case.subject_ref)
+
     def test_drift_is_visible_in_read_current(self, adapter, conformance_case):
         """An edit made after our apply shows up in `read_current` — the bus's drift / undo-block check."""
         adapter.apply(proposal(conformance_case, conformance_case.value, read(adapter, conformance_case)))

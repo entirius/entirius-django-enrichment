@@ -56,10 +56,18 @@ class TestRecall:
         assert "theirs" not in _recall() and "mine" in _recall() and "instance" in _recall()
 
     def test_category_follows_the_subject(self, fake_adapter, monkeypatch):
-        monkeypatch.setattr(fake_adapter, "category_of", lambda ref: "category:sofas", raising=False)
+        monkeypatch.setattr(fake_adapter, "category_of", lambda ref, *, channel=None: "category:sofas", raising=False)
         _entry("category brief", subject_ref="category:sofas")
         _entry("own brief")
         assert _recall().splitlines() == ["- [seo_brief] own brief: own brief text", _line("category brief")]
+
+    def test_category_is_looked_up_in_the_recall_channel(self, fake_adapter, monkeypatch):
+        asked: list[tuple[str, str | None]] = []
+        monkeypatch.setattr(
+            fake_adapter, "category_of", lambda ref, *, channel=None: asked.append((ref, channel)), raising=False
+        )
+        _recall()
+        assert asked == [("SKU-1", "shop")]
 
     def test_no_category_without_the_extra(self, fake_adapter):
         _entry("category brief", subject_ref="category:sofas")

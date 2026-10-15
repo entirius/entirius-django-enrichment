@@ -121,7 +121,8 @@ they were computed on: a proposal no longer pending/drifted → 400, a value cha
 Both use the adapter extras with fallbacks (`kinds/extras.py`): `describe_fields` (absent → no catalog:
 labels = keys, no limits), `channel_languages` (resolves `languages: ["*"]`; absent → subject error
 `NOT_SUPPORTED`), `make_locator` (absent → `{channel, language, field}`), `field_key` (absent → `locator["field"]`),
-`build_context` (absent → `{}`, sent as an `<item_context>` data block the context cannot close). Catalog and
+`build_context` (absent → `{}`, sent as an `<item_context>` data block the context cannot close). `write` also
+narrows the languages to `subject_languages` (absent → all requested; no overlap → the subject yields nothing, no failure). Catalog and
 channel languages are asked once per language per task, not per subject.
 
 | Kind | Params | Calls | Drafts |

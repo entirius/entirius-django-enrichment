@@ -105,6 +105,17 @@ class TestWrite:
         assert route.call_count == 3
         assert [d.target_locator["language"] for d in drafts[::2]] == ["pl", "en", "de"]
 
+    def test_subject_languages_narrow_the_requested_languages(self, catalog, monkeypatch):
+        monkeypatch.setattr(catalog, "subject_languages", lambda *, subject_ref: ["en"], raising=False)
+        drafts, route = self._run(params={"languages": ["*"]})
+        assert route.call_count == 1
+        assert {d.target_locator["language"] for d in drafts} == {"en"}
+
+    def test_subject_without_a_requested_language_is_skipped_quietly(self, catalog, monkeypatch):
+        monkeypatch.setattr(catalog, "subject_languages", lambda *, subject_ref: ["fr"], raising=False)
+        drafts, route = self._run(params={"languages": ["pl", "en"]})
+        assert (drafts, route.call_count) == ([], 0)
+
     def test_missing_extras_fall_back(self, fake_adapter, monkeypatch):
         for name in ("describe_fields", "make_locator", "build_context"):
             monkeypatch.delattr(fake_adapter, name)
