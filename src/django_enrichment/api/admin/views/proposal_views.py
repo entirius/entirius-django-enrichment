@@ -26,6 +26,7 @@ from django_enrichment.api.admin.pagination import AdminPageNumberPagination
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle, IntakeThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.enums import ProposalStatus
 from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.schemas.requests import (
     BulkAcceptRequest,
@@ -87,6 +88,16 @@ def _parse_confidence_min(raw: str | None) -> Decimal | None:
         return Decimal(raw)
     except (InvalidOperation, ValueError) as exc:
         raise drf_exceptions.ValidationError("confidence_min must be a decimal") from exc
+
+
+# `?status=all` lists every status; no status param keeps the review default (pending).
+_ALL_STATUSES = "all"
+
+
+def _parse_status(raw: str | None) -> str | None:
+    if raw is None:
+        return ProposalStatus.PENDING.value
+    return None if raw == _ALL_STATUSES else raw
 
 
 def _parse_task_id(raw: str | None) -> int | None:
@@ -206,7 +217,13 @@ class ProposalViewSet(viewsets.ViewSet):
         tags=_TAGS,
         summary="List proposals for review",
         parameters=[
-            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "status",
+                str,
+                OpenApiParameter.QUERY,
+                required=False,
+                description="Default `pending`; `all` = any status",
+            ),
             OpenApiParameter("target_module", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("target_kind", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("batch_id", str, OpenApiParameter.QUERY, required=False),
@@ -227,7 +244,7 @@ class ProposalViewSet(viewsets.ViewSet):
             raise drf_exceptions.ValidationError(f"ordering must be one of {sorted(_ALLOWED_ORDERING)}")
         qp = request.query_params
         qs = proposal_service.list_for_review(
-            status=qp.get("status", "pending"),
+            status=_parse_status(qp.get("status")),
             module=qp.get("target_module"),
             target_kind=qp.get("target_kind"),
             batch_id=qp.get("batch_id"),

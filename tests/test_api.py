@@ -162,6 +162,13 @@ class TestProposals:
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
 
+    def test_list_proposals_status_all_lists_every_status(self, admin_client, fake_adapter):
+        first = admin_client.post(PROPOSALS, _intake_payload(), format="json").json()
+        admin_client.post(PROPOSALS, _intake_payload(subject_ref="SKU-2"), format="json")
+        admin_client.post(f"{PROPOSALS}{first['id']}/reject/", {}, format="json")
+        assert _statuses(admin_client, {"target_module": "pim"}) == ["pending"]
+        assert _statuses(admin_client, {"target_module": "pim", "status": "all"}) == ["pending", "rejected"]
+
     def test_list_proposals_filters_by_subject_ref(self, admin_client, fake_adapter):
         admin_client.post(PROPOSALS, _intake_payload(), format="json")
         admin_client.post(PROPOSALS, _intake_payload(subject_ref="SKU-2"), format="json")
@@ -330,3 +337,7 @@ class TestCSVImport:
         assert throttles_for("import_csv") == [SpawnThrottle]
         assert throttles_for("list") == []
         assert throttles_for("targets") == []
+
+
+def _statuses(client, params: dict) -> list[str]:
+    return sorted(p["status"] for p in client.get(PROPOSALS, params).json()["results"])
