@@ -54,7 +54,7 @@ def build_prompt(worker: Any, task: Any, params: StepParams, *, kind: str, parts
 
 
 def _data_blocks(task: Any, params: StepParams, profile_data: str) -> str:
-    context = {"brief": params.brief, "inputs": params.inputs}
+    context = {"brief": params.brief, "inputs": params.inputs, "language": str(params.brief.get("language") or "")}
     blocks = [fenced("brief", _dumps(params.brief))]
     if params.inputs:
         blocks.append(fenced("inputs", _dumps(params.inputs)))

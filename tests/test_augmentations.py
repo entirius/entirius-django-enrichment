@@ -17,7 +17,7 @@ from django_utils.toolbox.testing import CANNED_COMPLETION, error_response, mock
 from django_enrichment import augmentations
 from django_enrichment.augmentations import AugmentResult, seo_brief
 from django_enrichment.augmentations.seo_answers import SeedsAnswer
-from django_enrichment.kinds import SubjectError, seams
+from django_enrichment.kinds import SubjectError, seams, step
 from django_enrichment.kinds.base import fenced
 from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntry
 from django_enrichment.services import task_service, template_service
@@ -313,6 +313,18 @@ class TestLanguages:
         _, _, routes = _run_task(django_capture_on_commit_callbacks)
         assert routes["volume"].call_count == 1
         assert MemoryEntry.objects.filter(data__language="pl").count() == 1
+
+    def test_a_workflow_step_researches_the_brief_language(self, writer):
+        task = SimpleNamespace(
+            pk=None, type="x", params={"augment": ["seo_brief"]}, scope_spec={"module": "enrichment"}
+        )
+        params = step.StepParams(
+            channel="default", run="r1", step="keywords", brief={"topic": "Sofa", "language": "en"}
+        )
+        with mock_toolbox() as router:
+            routes = _mock_seo(router)
+            step._data_blocks(task, params, "")
+        assert {body["language_code"] for body in [*_sent(routes["volume"]), *_sent(routes["serp"])]} == {"en"}
 
     def test_no_language_sends_no_language_code(self, writer):
         task = SimpleNamespace(pk=None, type="x", params={"channel": "default"}, scope_spec={"module": "pim"})
