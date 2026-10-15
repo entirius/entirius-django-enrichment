@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `seo_brief`: a failed SERP call leaves that phrase out (cost marked unknown) instead of failing the subject.
 - Transient toolbox failures (`TOOLBOX_HTTP_502/503/504`, `TIMEOUT`) are retried in place once per subject
   (`ENRICHMENT_TRANSIENT_RETRIES`, `ENRICHMENT_TRANSIENT_ERROR_CODES`) before the subject counts as failed.
 - Provider-portable completion schema: `toolbox_calls.complete` sends the schema without value limits (`minLength`,

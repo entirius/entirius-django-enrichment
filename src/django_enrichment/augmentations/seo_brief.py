@@ -20,6 +20,7 @@ models (`seo_answers`) fails the subject with `SEO_BRIEF_<code>`; other errors p
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -58,6 +59,9 @@ IDEAS_KEPT = 20
 ORGANIC_KEPT = 10
 CATEGORY_SCOPE_KINDS = frozenset({"write"})
 MEMORY_KIND = MemoryKind.SEO_BRIEF.value
+
+
+_logger = logging.getLogger("process")
 
 
 @dataclass(frozen=True)
@@ -113,10 +117,7 @@ def _research(task: Any, context: dict, language: str) -> tuple[dict, Decimal | 
     market = {"language_code": language} if language else {}
     volumes = _volumes(_items(spend.take(_seo(task, "search-volume/", {"keywords": seeds, **market}))))
     ideas = _items(spend.take(_seo(task, "keyword-ideas/", {"keywords": seeds, **market})))
-    serps = {
-        phrase: _serp(spend.take(_seo(task, "serp/", {"keyword": phrase, "depth": SERP_DEPTH, **market})))
-        for phrase in _top(seeds, volumes)
-    }
+    serps = _serps(task, _top(seeds, volumes), market, spend)
     evidence = {"candidates": [{"phrase": s, "search_volume": volumes.get(s)} for s in seeds]}
     evidence |= {"ideas": _ideas(ideas), "serp": serps}
     data = join_prompts(item, fenced("keyword_data", _dumps(evidence)))
@@ -140,6 +141,21 @@ def _complete(task: Any, step: str, system: str, data: str) -> toolbox_calls.Cos
 
 def _seo(task: Any, endpoint: str, payload: dict) -> toolbox_calls.Costed:
     return toolbox_calls.seo(endpoint, payload, task=task)
+
+
+def _serps(task: Any, phrases: list[str], market: dict, spend: _Spend) -> dict:
+    """SERP notes per phrase; a phrase whose SERP call fails is left out (its cost unknown) — the brief still
+    rests on volumes and ideas."""
+    serps = {}
+    for phrase in phrases:
+        try:
+            costed = _seo(task, "serp/", {"keyword": phrase, "depth": SERP_DEPTH, **market})
+        except ToolboxError as exc:
+            _logger.warning("seo_brief: SERP of task %s failed (%s)", task.pk, toolbox_calls.failure_code(exc))
+            spend.costs.append(None)  # a failed paid call may still be billed
+            continue
+        serps[phrase] = _serp(spend.take(costed))
+    return serps
 
 
 def _items(data: Any) -> list[KeywordItem]:

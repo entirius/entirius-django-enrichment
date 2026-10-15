@@ -190,6 +190,21 @@ class TestSeoBriefFullPath:
         assert len(_by_selector(router, "enrichment.seo_brief.seeds")) == 1
         assert len(_by_selector(router, "enrichment.seo_brief.evaluate")) == 1
 
+    def test_a_failed_serp_leaves_that_phrase_out(self, writer, django_capture_on_commit_callbacks):
+        def flaky(request: httpx.Request) -> httpx.Response:
+            if json.loads(request.content)["keyword"] == "grey linen sofa":
+                return httpx.Response(502, text="<html>Bad gateway</html>")
+            return _serp(request)
+
+        def mocks(routes):
+            routes["serp"].mock(side_effect=flaky)
+
+        task, router, _ = _run_task(django_capture_on_commit_callbacks, mocks=mocks)
+        assert task.status == "done", task.errors
+        evaluation = _by_selector(router, "enrichment.seo_brief.evaluate")[0]
+        data = evaluation["messages"][1]["content"].split("<keyword_data>\n")[1].split("\n</keyword_data>")[0]
+        assert set(json.loads(data)["serp"]) == {"linen sofa", "how to clean a linen sofa"}
+
     def test_brief_reaches_the_write_prompt_as_a_data_block(self, writer, django_capture_on_commit_callbacks):
         _, router, _ = _run_task(django_capture_on_commit_callbacks)
         user = _by_selector(router, "enrichment.write")[0]["messages"][-1]["content"]
@@ -369,10 +384,10 @@ class TestMemoryBlock:
 
 class TestErrors:
     def test_provider_error_fails_the_subject_with_a_code(self, writer, django_capture_on_commit_callbacks):
-        def fail_serp(routes):
-            routes["serp"].mock(side_effect=None, return_value=error_response(502, "PROVIDER_ERROR"))
+        def fail_ideas(routes):
+            routes["ideas"].mock(return_value=error_response(502, "PROVIDER_ERROR"))
 
-        task, router, _ = _run_task(django_capture_on_commit_callbacks, mocks=fail_serp)
+        task, router, _ = _run_task(django_capture_on_commit_callbacks, mocks=fail_ideas)
         assert task.status == "failed"
         assert [error["code"] for error in task.errors] == ["SEO_BRIEF_PROVIDER_ERROR"]
         assert task.cost_complete is False  # the failed paid call may be billed
