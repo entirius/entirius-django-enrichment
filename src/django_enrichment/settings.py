@@ -65,3 +65,10 @@ ENRICHMENT_SPAWN_COOLDOWN_DAYS = getattr(settings, "ENRICHMENT_SPAWN_COOLDOWN_DA
 #                                  AI_TOOLBOX_* setting. POC escape hatch (Redmine #34464).
 ENRICHMENT_MAX_VIDEO_BYTES = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", 100 * 1024 * 1024)
 ENRICHMENT_VIDEO_TIMEOUT_S = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", 900)
+
+# Batch correction (contract A3 § 1). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_REVISE_BATCH_MAX   — most pending proposals one batch correction may cover (one paid completion each).
+# ENRICHMENT_REVISE_LOCK_SECONDS — how long a task's batch lock outlives a worker that died mid-batch.
+ENRICHMENT_REVISE_BATCH_MAX = getattr(settings, "ENRICHMENT_REVISE_BATCH_MAX", 200)
+ENRICHMENT_REVISE_LOCK_SECONDS = getattr(settings, "ENRICHMENT_REVISE_LOCK_SECONDS", 3600)

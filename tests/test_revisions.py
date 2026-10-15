@@ -8,6 +8,7 @@ import json
 
 import httpx
 import pytest
+from django.core.cache import cache
 from django_utils.toolbox.testing import CANNED_COMPLETION, mock_toolbox
 
 from django_enrichment.enums import ProposalStatus
@@ -355,6 +356,29 @@ class TestBatch:
             router["complete"].mock(return_value=_answer({"text": "Fixed."}))
             revise_batch_service.revise_pending(task.pk, {"instruction": "Fix."})
         assert len(calls) == 1
+
+    def test_a_running_batch_refuses_a_second_one(self, fake_adapter):
+        task = EnrichmentTask.objects.create(type="pim.writer")
+        _proposal({"text": "Copy."}, task=task)
+        key = f"enrichment:revise_task:{task.pk}"
+        cache.add(key, 1)
+        with pytest.raises(ValueError, match="already running"):
+            revise_batch_service.queue(task, {"instruction": "Fix."})
+        cache.delete(key)
+
+    def test_the_lock_is_released_when_the_batch_ends(self, fake_adapter):
+        task = EnrichmentTask.objects.create(type="pim.writer")
+        _proposal({"op": "odd"}, task=task)
+        assert revise_batch_service.queue(task, {"instruction": "Fix."}) == 1
+        assert revise_batch_service.queue(task, {"instruction": "Fix."}) == 1
+
+    def test_a_batch_above_the_cap_is_refused(self, fake_adapter, settings):
+        settings.ENRICHMENT_REVISE_BATCH_MAX = 1
+        task = EnrichmentTask.objects.create(type="pim.writer")
+        for i in (1, 2):
+            _proposal({"text": f"Copy {i}."}, task=task, subject_ref=f"SKU-{i}")
+        with pytest.raises(ValueError, match="at most 1"):
+            revise_batch_service.queue(task, {"instruction": "Fix."})
 
     def test_variants_cannot_be_batched(self, fake_adapter):
         task = EnrichmentTask.objects.create(type="pim.writer")
