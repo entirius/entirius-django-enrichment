@@ -190,6 +190,16 @@ class TestPromotion:
             }
         ]
 
+    def test_promotion_into_a_channel_overlay_keeps_the_instance_lists(self):
+        instance_fact = {"id": "warranty", "label": "Warranty", "value": "2 years"}
+        profile_service.save_profile(channel="", data={"facts": [instance_fact], "always_rules": ["Be kind."]})
+        memory_promotion.promote(_suggestion("fact_suggestion", title="Delivery", text="48 h", channel="shop"))
+        memory_promotion.promote(_suggestion(channel="shop"))
+        merged = profile_service.merged("shop")
+        assert [fact["id"] for fact in merged["facts"]][0] == "warranty"
+        assert len(merged["facts"]) == 2
+        assert merged["always_rules"] == ["Be kind.", "No emojis."]
+
     @pytest.mark.parametrize(
         ("kind", "target", "message"),
         [("answer", None, "cannot be promoted"), ("fact_suggestion", "always_rules", "promotes to facts")],

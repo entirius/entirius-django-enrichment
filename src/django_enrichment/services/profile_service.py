@@ -6,7 +6,8 @@
 
 The only writer of `Profile` / `ProfileVersion`: every save validates the data, bumps `version` and snapshots
 it; a restore saves an old snapshot as a new version. A channel's effective profile is the instance profile
-with the channel overlay's non-empty sections on top. Prompt rendering lives in `profile_context`, the CMS
+with the channel overlay's non-empty sections on top: a markdown section replaces the instance's, the list
+sections (`always_rules`, `rules`, `facts`) add to it. Prompt rendering lives in `profile_context`, the CMS
 health check in `profile_status`.
 """
 
@@ -21,6 +22,9 @@ from django_enrichment.schemas.profile import SCHEMA_VERSION, validation_errors
 from django_enrichment.services import profile_context, profile_status
 
 INSTANCE = ""
+# List sections an overlay adds to (the overlay wins on the same id); every other section is replaced whole.
+KEYED_SECTIONS = frozenset({"rules", "facts"})
+LINE_SECTIONS = frozenset({"always_rules"})
 
 
 class ProfileValidationError(ValueError):
@@ -70,11 +74,23 @@ def restore(channel: str, number: int, *, user: AbstractBaseUser | None = None) 
 
 
 def merged(channel: str = INSTANCE) -> dict:
-    """The effective profile: instance data, the channel overlay's non-empty sections on top."""
+    """The effective profile: instance data with the channel overlay's non-empty sections on top."""
     data = dict(get_profile(INSTANCE).data)
-    if channel != INSTANCE:
-        data.update({key: value for key, value in get_profile(channel).data.items() if value})
+    if channel == INSTANCE:
+        return data
+    for key, value in get_profile(channel).data.items():
+        if value:
+            data[key] = _merged_section(key, data.get(key), value)
     return data
+
+
+def _merged_section(key: str, base: object, overlay: object) -> object:
+    """List sections add the overlay to the instance (the overlay wins on the same id); the rest is replaced."""
+    if key in LINE_SECTIONS:
+        return list(dict.fromkeys([*(base or []), *overlay]))
+    if key in KEYED_SECTIONS:
+        return list({item["id"]: item for item in [*(base or []), *overlay]}.values())
+    return overlay
 
 
 def version_ids(channel: str = INSTANCE) -> list[int]:

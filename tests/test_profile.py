@@ -104,6 +104,17 @@ class TestOverlay:
         assert merged["brand"] == PROFILE["brand"]  # an empty overlay section does not blank the instance
         assert profile_service.merged("other") == PROFILE
 
+    def test_list_sections_add_to_the_instance_and_the_overlay_wins_on_an_id(self):
+        _save({"always_rules": ["A"], "facts": [{"id": "f1", "label": "L", "value": "1"}]})
+        overlay_fact = {"id": "f1", "label": "L", "value": "2"}
+        _save(
+            {"always_rules": ["A", "B"], "facts": [overlay_fact, {"id": "f2", "label": "M", "value": "3"}]},
+            channel="shop",
+        )
+        merged = profile_service.merged("shop")
+        assert merged["always_rules"] == ["A", "B"]
+        assert merged["facts"] == [overlay_fact, {"id": "f2", "label": "M", "value": "3"}]
+
 
 class TestContext:
     def test_default_routing_per_kind(self):

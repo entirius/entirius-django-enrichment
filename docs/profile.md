@@ -29,8 +29,10 @@ Rule `pattern`s must compile as regular expressions. Validation reports every pr
 as a `ProfileVersion` (`version`, `data`, `note`, `created_by`); restore = save an old snapshot as a new version.
 `update_profile(channel, change)` applies a change under the row lock (memory promotion uses it).
 
-**Effective profile.** `merged(channel)` = instance data with the overlay's non-empty sections on top (a whole
-section replaces the instance's).
+**Effective profile.** `merged(channel)` = instance data with the overlay's non-empty sections on top. A
+markdown section replaces the instance's; the list sections add to it — `always_rules` are concatenated
+(deduplicated), `rules` and `facts` are joined by `id` with the overlay winning on the same id. A memory
+promotion into a channel overlay therefore never hides the instance rules or facts.
 
 **QA checks.** `rules`, `language.spellings`, the `facts` registry and `checklists.text` also drive the QA
 warnings on every proposal revision — `docs/api.md` § QA checks.
