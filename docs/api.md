@@ -8,6 +8,12 @@ worker authenticates with an admin service account — no separate auth tor). Py
 v2 error envelope, standard pagination. Views are thin: parse → service → Response; all ORM lives
 in the services.
 
+Access areas: `enrichment.proposals` for tasks, proposals, corrections and templates; `enrichment.profile` for the
+company profile, memory and rule promotion; `enrichment.rules` for spawn rules. Templates stay in the proposals
+area by design (contract A3 § 4: operators maintain the presets they spawn from, and the list is read in the spawn
+dialog — an area is per route, so writes cannot be split from that read). Template `rules` / `params.prompt` reach
+only the tasks spawned from that template, never every prompt.
+
 ## Endpoints
 
 Error envelope `{error, message, debug_id, details}`, pagination `count/next/previous/results`.
@@ -40,8 +46,8 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `POST` | `proposals/{id}/facts/suggest/` | `memory_service.suggest_fact` | "Add to facts" `{value, label?}` → 201 memory `fact_suggestion` (promote it with `memory/{id}/promote/`) |
 | `POST` | `proposals/{id}/revisions/{n}/restore/` | `revision_service.restore` | → 201 `restore` revision copying `n` (404 unknown `n`) |
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
-| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker\|profile}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400); `profile` leaves a memory `rule_suggestion` (rules = the channel's active suggestions) |
-| `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`, `check_standard`, `fix_warnings`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled |
+| `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker\|profile}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400); `profile` leaves a memory `rule_suggestion` (rules = the channel's active suggestions). Area `enrichment.profile`: a worker or template rule enters every prompt of that worker / template, as strong as the profile's `always_rules` |
+| `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`, `check_standard`, `fix_warnings`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled. One batch per task at a time (400 while one runs; the lock ends with the batch or after `ENRICHMENT_REVISE_LOCK_SECONDS`, 3600); at most `ENRICHMENT_REVISE_BATCH_MAX` (200) pending proposals, else 400 |
 | `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Response `result_ref` = what the apply created |
 | `GET` | `workflows/` | `workflow_queries.list_definitions` | Active workflows — see `docs/workflows.md` |
 | `GET/POST` | `runs/` | `workflow_service.start` | Runs list / start `{definition, inputs, channel}` → 201. Throttled |

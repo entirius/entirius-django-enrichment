@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Review fixes: a channel overlay adds to the instance `always_rules`, `rules` and `facts` (joined by id, the overlay
+  wins on the same id) instead of replacing them — promoting a memory suggestion into a channel no longer hides the
+  instance rules and facts from prompts, the QA number check and `status`. Workflow steps pass `brief.language` to
+  augmentations (`seo_brief` researched the default market). `POST proposals/{id}/rules/promote/` moves to the area
+  `enrichment.profile` (a worker or template rule is an instance-wide instruction). `POST tasks/{id}/revise/` runs one
+  batch per task at a time and at most `ENRICHMENT_REVISE_BATCH_MAX` (200) proposals.
+
 - Augmentations (contract A4 § 5): registry `register_augmentation(key, fn)` → `AugmentResult{block, cost,
   memory_writes}`; enabled per task with `params.augment` (validated against the registry, unknown key → 400;
   templates may preset it, a template with an unknown key is refused); kinds `write`, `pick` and
