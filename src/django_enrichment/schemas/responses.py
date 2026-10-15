@@ -9,7 +9,7 @@ contract every field is always present (null when empty) — the field set never
 values do. Standard pagination shape (count/next/previous/results) for both resources (PO decision).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -414,3 +414,16 @@ class MemoryPromoteResponse(BaseModel):
 
     entry: MemoryEntryResponse
     profile: ProfileResponse
+
+
+class AIUsageMonthResponse(BaseModel):
+    """This month's AI usage of the instance's toolbox client (the CMS header counter)."""
+
+    period: str = Field(description="UTC month `YYYY-MM` (the toolbox tracker's month)")
+    tokens: int = Field(description="LLM tokens (input + output) of completion and token-billed translation calls")
+    cost_usd: Decimal | None = Field(
+        description="Billed amount (provider cost plus the toolbox markup), rounded to cents; "
+        "null while the toolbox has billing off for this client"
+    )
+    cost_since: date | None = Field(description="Billing started inside the month: the cost covers only from here")
+    currency: str

@@ -1,4 +1,4 @@
-"""The bus's only door to the AI toolbox — completion, translation, SEO data and video jobs.
+"""The bus's only door to the AI toolbox — completion, translation, SEO data, video jobs and the usage read.
 
 Completion, translation and SEO data go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
 errors) on the instance channel. Video jobs talk to the toolbox media API with plain httpx: the endpoint
@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 from django.conf import settings
-from django_utils.toolbox import CompletionRequest, Message, ToolboxClient, ToolboxError
+from django_utils.toolbox import CompletionRequest, Message, ToolboxClient, ToolboxError, ToolboxNotFoundError
 from django_utils.toolbox import settings as toolbox_settings
 
 from django_enrichment import settings as enrichment_settings
@@ -32,6 +32,8 @@ from django_enrichment.services import cost_service
 
 _TRANSLATOR_TOOL = "ai-translator"
 _SEO_TOOL = "ai-seo"
+_TRACKER_TOOL = "ai-tracker"
+_USAGE_READ_TIMEOUT_S = 5.0
 _VIDEO_POLL_INTERVAL_S = 10
 _VIDEO_HTTP_TIMEOUT_S = 60.0
 # Where each toolbox response carries its cost today (switch here for a unified cost endpoint).
@@ -155,6 +157,26 @@ def seo(endpoint: str, payload: dict, *, task: Any = None) -> Costed:
             body = client._post(client._url(_SEO_TOOL, endpoint), payload, retry=False)
     cost = _charge(task, "seo", body)
     return Costed(body.get("data"), cost)
+
+
+def tracker_month(year_month: str) -> tuple[dict, dict | None]:
+    """The instance client's toolbox usage for one UTC month `YYYY-MM`: `(usage, billing)`.
+
+    `usage/` = provider cost and units per tool and provider; `billing/client/` = what the client is billed
+    (provider cost plus the toolbox markup), `None` while billing is off for the client (404). Read-only: one
+    attempt each, short timeout — a header counter must not hang on a toolbox that is down."""
+    year, month = year_month.split("-")
+    with ToolboxClient(max_retries=1) as client:
+        usage = client._get(client._url(_TRACKER_TOOL, "usage/"), {"year": year, "month": month}, _USAGE_READ_TIMEOUT_S)
+        try:
+            billing = client._get(
+                client._url(_TRACKER_TOOL, "billing/client/"),
+                {"year_month": year_month, "granularity": "none"},
+                _USAGE_READ_TIMEOUT_S,
+            )
+        except ToolboxNotFoundError:
+            billing = None
+    return usage, billing
 
 
 def _default_model(client: ToolboxClient) -> str:

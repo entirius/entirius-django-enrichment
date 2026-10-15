@@ -51,12 +51,13 @@ src/django_enrichment/
 │                       # lane_service + run_service (run lanes, in-flight dedupe),
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
-│                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings
+│                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
+│                       # ai_usage_service (this month's toolbox usage, CMS header counter)
 ├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
-│                       # workflow, profile, memory), urls, throttling, pagination
+│                       # workflow, profile, memory, usage), urls, throttling, pagination
 ├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
 │                       # WorkflowDefinitionAdmin, WorkflowRunAdmin (read-only)
 ├── testing/            # adapter_conformance — shared adapter test kit other modules subclass

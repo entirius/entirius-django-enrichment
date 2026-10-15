@@ -14,6 +14,7 @@ from django_enrichment.api.admin.views.revision_views import RevisionViewSet, Ru
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
 from django_enrichment.api.admin.views.template_views import TemplateViewSet
+from django_enrichment.api.admin.views.usage_views import AIUsageViewSet
 from django_enrichment.api.admin.views.worker_views import WorkerViewSet
 from django_enrichment.api.admin.views.workflow_views import RunViewSet, WorkflowViewSet
 
@@ -26,6 +27,8 @@ urlpatterns = [
         name="admin-spawn-rules-detail",
     ),
     path("spawn-rules/<slug:key>/run/", SpawnRuleViewSet.as_view({"post": "run"}), name="admin-spawn-rules-run"),
+    # AI usage this month (CMS header counter)
+    path("usage/month/", AIUsageViewSet.as_view({"get": "month"}), name="admin-usage-month"),
     # Workers
     path("workers/", WorkerViewSet.as_view({"get": "list"}), name="admin-workers-list"),
     # Templates & field catalog (contract A3 § 2, § 4)

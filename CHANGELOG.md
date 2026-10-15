@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `GET usage/month/` (area `enrichment.proposals`): this month's AI usage of the instance's toolbox client for the CMS
+  header counter — `{period, tokens, cost_usd, cost_since, currency}`. Tokens from the toolbox tracker `usage/`,
+  cost = the billed amount with the toolbox markup from `billing/client/` (null while billing is off). Cached 60 s;
+  a toolbox that is down answers 503 `AI_USAGE_UNAVAILABLE`, never a 500. Needs toolbox ≥ 0.4.0 with
+  `django_ai_tracker` among the client's tools. `toolbox_calls.tracker_month`, `ai_usage_service`.
+
 - Run lanes (plan 22): `EnrichmentTask.lane` (`now` | `queue`, migration 0013). The internal runner goes to
   `ENRICHMENT_INTERACTIVE_QUEUE` (`enrichment_interactive`) or `ENRICHMENT_BULK_QUEUE` (`enrichment_bulk`) by lane
   instead of the default `celery` queue; workflow steps and batch corrections always use the interactive queue — a

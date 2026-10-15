@@ -20,6 +20,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 
 | Method | Endpoint | Service | Notes |
 |--------|----------|---------|-------|
+| `GET` | `usage/month/` | `ai_usage_service.current_month` | This month's AI usage of the instance's toolbox client (CMS header counter) — see § AI usage this month |
 | `GET` | `workers/?target_module=` | `worker_service.list_active` | Active workers, plain list `[{key, label, kind, target_module, mode, params_schema}]` |
 | `POST` | `tasks/` | `run_service.spawn` → `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). `template: <key>` instead of (or matching) `type` — see § Templates. `lane: now \| queue` (omitted = by size), subjects already in flight skipped — see § Run lanes. Throttled (`enrichment_spawn`, 120/min). → 201 task + `skipped_in_flight`; 409 `ALREADY_RUNNING` |
 | `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
@@ -304,6 +305,24 @@ Corrections and `variants` are charged to the proposal's task. `toolbox_calls.co
 mapping from today's toolbox fields (completion `cost`, translator `total_cost_usd`, media job `cost`, SEO
 `cost`, also on SEO cache hits = 0), normalised to 8 decimal places; NaN, negative or out-of-range values count as unknown. Completion calls send `tags: ["enrichment.<kind>[.<template>]", "task:<id>"]` — the selector
 first (the toolbox fake provider picks fixtures by it), then the task for usage attribution.
+
+## AI usage this month
+
+`GET usage/month/` → `{period, tokens, cost_usd, cost_since, currency}` for the current UTC month (the tracker's
+month), area `enrichment.proposals`, cached 60 s per month (`enrichment:ai-usage:<YYYY-MM>`; failures are not cached).
+`toolbox_calls.tracker_month` reads two toolbox tracker endpoints of the instance client (`AI_TOOLBOX_CHANNEL`), one
+attempt each with a 5 s timeout:
+
+- `usage/?year=&month=` → `tokens` = input + output of the rows counted in LLM tokens: tool `completion`, and
+  `translator` unless the provider is `deepl` (characters). SEO (requests) and media (seconds) are left out.
+- `billing/client/?year_month=&granularity=none` → `cost_usd` = `totals.amount_due_usd`: the billed amount, provider
+  cost plus the toolbox markup, rounded to cents by the toolbox. `null` while the toolbox has billing off for the
+  client (404). `cost_since` = the billing start when it falls inside the month (the cost covers only from then).
+
+Errors: `AI_TOOLBOX_DISABLED` / `AI_TOOLBOX_NOT_CONFIGURED` (503) as elsewhere; any other toolbox failure (down,
+timeout, auth, a body that does not match) → 503 `AI_USAGE_UNAVAILABLE`, logged with the error type and code. The
+toolbox client needs `django_ai_tracker` among its tools (`bind_client_tools`, toolbox ≥ 0.4.0) and, for the cost,
+billing enabled on its channel; a key restricted to scopes needs `tracker.usage.read` and `tracker.billing.read`.
 
 ## Accept / drift (D2)
 
