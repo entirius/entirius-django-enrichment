@@ -88,6 +88,7 @@ class TestTwoStepRun:
         )
         assert (draft.status, draft.target_kind, draft.target_locator) == ("pending", "artifact", {"step": "draft"})
         assert draft.proposed_value == {"text": "# Linen sofa care\n\nBrush it weekly."}
+        assert {task.lane for task in EnrichmentTask.objects.all()} == {"now"}  # steps run on the interactive lane
 
     def test_frozen_params_and_tags(self, two_steps, toolbox, run_steps, admin_user):
         run = _start(run_steps, admin_user)

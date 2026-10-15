@@ -24,8 +24,14 @@ from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import SpawnThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
 from django_enrichment.schemas.requests import TaskCSVImportRequest, TaskSpawnRequest, TaskUpdateRequest
-from django_enrichment.schemas.responses import CSVImportResponse, TargetsResponse, TaskListResponse, TaskResponse
-from django_enrichment.services import task_service
+from django_enrichment.schemas.responses import (
+    CSVImportResponse,
+    TargetsResponse,
+    TaskListResponse,
+    TaskResponse,
+    TaskSpawnResponse,
+)
+from django_enrichment.services import lane_service, run_service, task_service
 
 _TAGS = ["Enrichment Tasks"]
 
@@ -35,9 +41,15 @@ def _serialize(task) -> dict:
 
 
 def _serialize_with_proposals(tasks: list) -> list[dict]:
-    """Tasks plus the status counts of their proposals (what the operator still has to review)."""
+    """Tasks plus the status counts of their proposals (what the operator still has to review) and queue position."""
     counts = task_service.proposal_counts([t.pk for t in tasks])
-    return [{**_serialize(t), "proposal_counts": counts[t.pk]} for t in tasks]
+    ahead = lane_service.queued_ahead(tasks)
+    return [{**_serialize(t), "proposal_counts": counts[t.pk], "queued_ahead": ahead[t.pk]} for t in tasks]
+
+
+class AlreadyRunning(drf_exceptions.APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "already_running"
 
 
 def _get_task_or_404(task_id: int):
@@ -100,24 +112,25 @@ class TaskViewSet(viewsets.ViewSet):
     def retrieve(self, request: Request, pk: int) -> Response:
         return Response(_serialize_with_proposals([_get_task_or_404(pk)])[0])
 
-    @extend_schema(tags=_TAGS, summary="Spawn task", request=TaskSpawnRequest, responses={201: TaskResponse, 400: None})
+    @extend_schema(
+        tags=_TAGS,
+        summary="Spawn task",
+        request=TaskSpawnRequest,
+        responses={201: TaskSpawnResponse, 400: None, 409: None},
+    )
     def create(self, request: Request) -> Response:
         try:
             data = TaskSpawnRequest(**request.data)
         except ValidationError as exc:
             raise_pydantic_as_drf(exc)
         try:
-            task = task_service.spawn(
-                type=data.type,
-                scope_spec=data.scope_spec,
-                params=data.params,
-                requested_by=request.user,
-                batch_key=data.batch_key,
-                template=data.template,
-            )
+            result = run_service.spawn(data, requested_by=request.user)
+        except run_service.AlreadyRunningError as exc:
+            raise AlreadyRunning(str(exc)) from exc
         except ValueError as exc:
             raise_as_drf(exc)
-        return Response(_serialize(task), status=status.HTTP_201_CREATED)
+        body = {**_serialize_with_proposals([result.task])[0], "skipped_in_flight": result.skipped_in_flight}
+        return Response(TaskSpawnResponse.model_validate(body).model_dump(mode="json"), status=status.HTTP_201_CREATED)
 
     @extend_schema(
         tags=_TAGS,

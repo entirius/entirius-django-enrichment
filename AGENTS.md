@@ -48,6 +48,7 @@ src/django_enrichment/
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
+│                       # lane_service + run_service (run lanes, in-flight dedupe),
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings
@@ -115,7 +116,7 @@ bumps when `system_prompt`/`model`/`options` change and is stamped into every pr
 drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_file`). Base kinds
 `translate` / `field` / `video` register in `EnrichmentConfig.ready()`;
 other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
-the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit.
+the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit on the task's lane.
 Adapter extras `build_context` (field kind) and `main_picture` (video kind; absent → subject fails) are
 optional (`getattr`). Worker keys allow dots (`pim.translate`).
 
@@ -174,6 +175,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_ASYNC_APPLY_THRESHOLD` | `50` | bulk accept/undo above this size goes to Celery |
 | `ENRICHMENT_APPLY_BATCH_SIZE` | `500` | batch size of the async apply |
 | `ENRICHMENT_CELERY_QUEUE` | `"enrichment"` | queue of the bulk apply / undo canvas |
+| `ENRICHMENT_INTERACTIVE_QUEUE` | `"enrichment_interactive"` | runner queue of `lane=now` runs, workflow steps, batch corrections |
+| `ENRICHMENT_BULK_QUEUE` | `"enrichment_bulk"` | runner queue of `lane=queue` runs (worker concurrency 1) |
+| `ENRICHMENT_RUN_NOW_MAX_SUBJECTS` | `20` | most subjects of one `lane=now` run |
 | `ENRICHMENT_RETENTION_DAYS` | `30` | undo window = retention |
 | `ENRICHMENT_MAX_CSV_BYTES` | 10 MB | CSV import size cap |
 | `ENRICHMENT_SPAWN_DEFAULT_LIMIT` | `200` | gap-task budget when a rule sets no `limit` |
@@ -229,7 +233,12 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   GapDefinition hit. The scope_spec key stays `"check"` (cross-module contract, a dict key).
 - **The PIM adapter ignores `SpawnRule.params`** — PIM's rule parameters live on the
   `GapDefinition` row keyed by `check_key`; `params` is forwarded per the contract but reserved.
-- **The internal runner uses the default Celery queue** (`run_task.delay`), not `enrichment`; AI calls block it.
+- **The internal runner runs on two lanes** (`lane_service`): `task.lane` `now` → `enrichment_interactive`, `queue` →
+  `enrichment_bulk` (worker with concurrency 1); never the default `celery` queue or `enrichment` (apply canvas). A host
+  without a worker on both lanes leaves tasks `open` forever. Workflow steps and batch corrections are always `now`.
+- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` dedupes; internal spawns
+  (workflow steps, spawn rules, CSV import) and `batch_key` calls must keep spawning unchanged. Details: `docs/api.md`
+  § Run lanes.
 - **Runner paging:** gap tasks re-pull page 1 (work queue), others page++; a seen-set stops the loop
   when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
   string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;

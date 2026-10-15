@@ -5,7 +5,7 @@
 from django.db import models
 from django_utils.models.base_model import BaseModel
 
-from django_enrichment.enums import TaskStatus
+from django_enrichment.enums import TaskLane, TaskStatus
 
 
 class EnrichmentTask(BaseModel):
@@ -22,6 +22,8 @@ class EnrichmentTask(BaseModel):
     scope_spec = models.JSONField(default=dict, blank=True)
     batch_key = models.CharField(max_length=128, blank=True, default="", db_index=True)
     status = models.CharField(max_length=20, choices=TaskStatus.choices, default=TaskStatus.OPEN, db_index=True)
+    # Celery lane of an internal run (`lane_service`): `now` = interactive, `queue` = bulk.
+    lane = models.CharField(max_length=8, choices=TaskLane.choices, default=TaskLane.QUEUE)
     requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     counts = models.JSONField(default=dict, blank=True)
     # Why subjects failed: [{subject_ref, code, error_id}], capped (task_service.ERRORS_CAP). `code` is a stable

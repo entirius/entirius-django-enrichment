@@ -13,7 +13,7 @@ regeneration — the previous value and the operator's instruction.
 from decimal import Decimal
 
 from django_enrichment.adapters.artifact import KEY as ARTIFACT_MODULE
-from django_enrichment.enums import RunStatus, StepStatus
+from django_enrichment.enums import RunStatus, StepStatus, TaskLane
 from django_enrichment.models import ContentProposal, EnrichmentTask, WorkflowDefinition, WorkflowRun
 from django_enrichment.services import task_service
 from django_enrichment.workflow_spec import parse_steps
@@ -63,7 +63,12 @@ def spawn(run: WorkflowRun, step: dict, *, instruction: str = "", previous: dict
     }
     scope_spec = {"mode": "list", "module": ARTIFACT_MODULE, "refs": [subject_ref(run)]}
     task = task_service.spawn(
-        type="", template=step["template"], scope_spec=scope_spec, params=params, requested_by=run.created_by
+        type="",
+        template=step["template"],
+        scope_spec=scope_spec,
+        params=params,
+        requested_by=run.created_by,
+        lane=TaskLane.NOW.value,
     )
     step.update(status=StepStatus.RUNNING.value, task_id=task.pk, proposal_id=None)
 

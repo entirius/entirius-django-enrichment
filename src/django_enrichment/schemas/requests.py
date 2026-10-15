@@ -29,6 +29,12 @@ class TaskSpawnRequest(BaseModel):
     template: str = Field(
         "", max_length=64, description="Template key: sets `type`, presets params and rules", examples=["meta"]
     )
+    lane: Literal["now", "queue"] | None = Field(
+        None,
+        description="`now` = run now (interactive lane, capped), `queue` = the queue; omitted = by size "
+        "(one subject → now, more → queue)",
+        examples=["now"],
+    )
 
 
 class TaskCSVImportRequest(BaseModel):

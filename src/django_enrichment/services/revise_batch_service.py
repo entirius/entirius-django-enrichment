@@ -27,7 +27,14 @@ from django.db.models import QuerySet
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.enums import ProposalStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import catalog_service, revise_prompt, revise_service, task_service, toolbox_calls
+from django_enrichment.services import (
+    catalog_service,
+    lane_service,
+    revise_prompt,
+    revise_service,
+    task_service,
+    toolbox_calls,
+)
 from django_enrichment.services.revise_prompt import VARIANTS
 
 _logger = logging.getLogger("process")
@@ -52,7 +59,9 @@ def _dispatch(task: EnrichmentTask, correction: dict, user: AbstractBaseUser | N
     from django_enrichment.tasks.revise_tasks import revise_task
 
     try:
-        revise_task.delay(task.pk, correction, getattr(user, "pk", None))
+        revise_task.apply_async(
+            args=[task.pk, correction, getattr(user, "pk", None)], queue=lane_service.interactive_queue()
+        )
     except Exception:
         cache.delete(_lock_key(task.pk))
         raise

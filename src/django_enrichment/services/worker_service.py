@@ -20,6 +20,7 @@ from django_enrichment.enums import WorkerMode
 from django_enrichment.kinds import get_kind
 from django_enrichment.models import EnrichmentTask, Worker
 from django_enrichment.models.worker import VERSIONED_FIELDS
+from django_enrichment.services import lane_service
 
 _SOURCE_PATTERN = re.compile(r"^worker:(?P<key>[a-z0-9][a-z0-9_.-]*)@v\d+$")
 
@@ -70,13 +71,14 @@ def validate_params(task_type: str, params: dict) -> dict:
 
 
 def dispatch_if_internal(task: EnrichmentTask) -> None:
-    """Queue the internal runner for `task` once the spawning transaction commits."""
+    """Queue the internal runner for `task` on its lane's Celery queue once the spawning transaction commits."""
     worker = find_active(task.type)
     if worker is None or worker.mode != WorkerMode.INTERNAL.value:
         return
     from django_enrichment.tasks.worker_runner import run_task
 
-    transaction.on_commit(lambda: run_task.delay(task.pk))
+    queue = lane_service.celery_queue(task.lane)
+    transaction.on_commit(lambda: run_task.apply_async(args=[task.pk], queue=queue))
 
 
 def save_worker(worker: Worker) -> Worker:

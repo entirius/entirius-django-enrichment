@@ -33,7 +33,7 @@ from django_enrichment import augmentations
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import csv_import, template_service, worker_service
+from django_enrichment.services import csv_import, lane_service, template_service, worker_service
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
 ERRORS_CAP = 20
@@ -57,7 +57,7 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
     return task
 
 
-def _resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
+def resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
     """Validated `(type, params)`; `params.augment` / `seo_scope` and a template's key survive kind validation."""
     if template:
         task_type, params = template_service.merge_into_task(template, task_type=task_type, params=params)
@@ -76,15 +76,18 @@ def spawn(
     requested_by: AbstractBaseUser | None = None,
     batch_key: str = "",
     template: str = "",
+    lane: str = "",
 ) -> EnrichmentTask:
     """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
 
     When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
     to the internal runner after commit (`worker_service.dispatch_if_internal`). With `template`, the
-    template decides `type` and presets params/rules (`template_service.merge_into_task`).
+    template decides `type` and presets params/rules (`template_service.merge_into_task`). `lane` is
+    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`).
     """
     _validate_scope_spec(scope_spec)
-    type, params = _resolve_type_and_params(type, params or {}, template)
+    type, params = resolve_type_and_params(type, params or {}, template)
+    lane = lane_service.resolve(lane, scope_spec)
 
     if batch_key:
         open_task = EnrichmentTask.objects.filter(batch_key=batch_key, status=TaskStatus.OPEN.value).first()
@@ -94,7 +97,7 @@ def spawn(
             return open_task
 
     task = EnrichmentTask.objects.create(
-        type=type, scope_spec=scope_spec, params=params, requested_by=requested_by, batch_key=batch_key
+        type=type, scope_spec=scope_spec, params=params, requested_by=requested_by, batch_key=batch_key, lane=lane
     )
     worker_service.dispatch_if_internal(task)
     return task

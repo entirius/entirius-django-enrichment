@@ -21,6 +21,7 @@ the size of the catalogue.
 | `scope_spec` | JSON | Three modes: `{mode:"filter",…}`, `{mode:"csv",file:…}`, `{mode:"list",refs:[…]}`. |
 | `batch_key` | Char (indexed) | Find-or-append: the analyzer coalesces per run instead of one task per product. |
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
+| `lane` | Char | `now` (interactive Celery queue) \| `queue` (bulk queue, default); set at spawn by `lane_service.resolve` (migration `0013`). |
 | `requested_by` | FK User (SET_NULL) | Who spawned it. |
 | `counts` | JSON | Progress `{targets, proposed, applied, rejected}`. |
 | `cost_usd` / `cost_breakdown` / `cost_complete` | Decimal (null) / JSON / Bool | Cost ledger (contract A4 § 1), written only by `cost_service.charge`: sum of the costs the toolbox reported, per source `{completion, translate, seo, media}` (decimal strings); `cost_complete` turns false once a call reported no cost or failed after its request left; migration `0009` sets it false on tasks that ran before the ledger. Null = nothing known — an unknown cost is never counted as 0. |

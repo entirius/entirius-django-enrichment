@@ -21,9 +21,9 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | Method | Endpoint | Service | Notes |
 |--------|----------|---------|-------|
 | `GET` | `workers/?target_module=` | `worker_service.list_active` | Active workers, plain list `[{key, label, kind, target_module, mode, params_schema}]` |
-| `POST` | `tasks/` | `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). `template: <key>` instead of (or matching) `type` — see § Templates. Throttled (`enrichment_spawn`, 120/min). → 201 |
+| `POST` | `tasks/` | `run_service.spawn` → `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). `template: <key>` instead of (or matching) `type` — see § Templates. `lane: now \| queue` (omitted = by size), subjects already in flight skipped — see § Run lanes. Throttled (`enrichment_spawn`, 120/min). → 201 task + `skipped_in_flight`; 409 `ALREADY_RUNNING` |
 | `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
-| `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status` (one or a comma list)/`batch_key`/`target_module`/`subject_ref`, paginated |
+| `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status` (one or a comma list)/`batch_key`/`target_module`/`subject_ref`, paginated; every task carries `lane` and `queued_ahead` |
 | `GET` | `tasks/{id}/` | `task_service.get_task` | Retrieve |
 | `GET` | `tasks/{id}/targets/?page=` | `task_service.resolve_targets` | Lazy worker pull (adapter-resolved) |
 | `PATCH` | `tasks/{id}/` | `task_service.transition_status` | Drive the state machine (e.g. `in_progress`, `done`) |
@@ -183,6 +183,42 @@ wins), `rules` = template rules + request rules, `params.template` keeps the key
 template, or an inactive worker → 400. Corrections read the template's current rules (proposal → template
 → worker) and promotion with `target: "template"` appends to them.
 
+## Run lanes (plan 22)
+
+Two Celery lanes for the internal runner: `now` → `ENRICHMENT_INTERACTIVE_QUEUE` (`enrichment_interactive`), `queue`
+→ `ENRICHMENT_BULK_QUEUE` (`enrichment_bulk`; the host runs its worker with concurrency 1, so a bulk run never blocks
+a click). `worker_service.dispatch_if_internal` routes by `task.lane` (`lane_service.celery_queue`). Workflow steps
+always spawn on `now`; batch corrections (`tasks/{id}/revise/`) always run on the interactive queue. External workers
+ignore the lane.
+
+`POST tasks/` request field `lane`:
+
+| `lane` | Result |
+|---|---|
+| omitted / `null` | by size: a list scope with exactly 1 subject → `now`, anything else (more subjects, filter / gap / csv) → `queue` |
+| `"now"` | `now`; more than `ENRICHMENT_RUN_NOW_MAX_SUBJECTS` (20) subjects, or a scope that is not a list → 400 `Run now takes at most 20 items at a time. Add this run to the queue instead.` |
+| `"queue"` | `queue` |
+| anything else | 400 (schema) |
+
+**In-flight dedupe** (`run_service`, `POST tasks/` only — internal spawns, CSV import and calls with `batch_key` are
+not deduped): a subject of a list scope is skipped when an `open` / `in_progress` list-mode task of the same type and
+module carries it with the same fingerprint — `params.template`, channel (`params.channel`, else
+`scope_spec.channel`), fields (`fields`, else `field`) and languages (`languages`, else `target_languages`), lists
+compared as sets. The spawned task's `scope_spec.refs` hold only the rest; the response lists the skipped refs in
+`skipped_in_flight`. The cap counts the remaining subjects. Every subject skipped → nothing spawned, 409:
+
+```json
+{"error": "ALREADY_RUNNING", "message": "This run is already in progress for all 3 items. Wait for it to finish.", "debug_id": "…", "details": []}
+```
+
+(one subject: `This run is already in progress for this item. Wait for it to finish.`). Pending proposals keep
+their supersede behaviour.
+
+**Task responses** (`GET tasks/`, `GET tasks/{id}/`, `POST tasks/`) carry `lane` (`now` | `queue`) and
+`queued_ahead`: while the task is `open` and its worker is an active internal one, the number of open internal tasks of
+the same lane created before it (0 = next); `null` once it runs, after it finished, or for an external worker.
+`POST tasks/` adds `skipped_in_flight: [refs]` (empty when nothing was skipped).
+
 ## The n8n worker pull-loop
 
 The worker owns no selection logic — it pulls typed tasks, generates, and posts proposals back:
@@ -236,7 +272,7 @@ worker-facing path. The other endpoints (operator review) are not throttled.
 
 ## Review filters
 
-`GET /proposals/` filters server-side: `status` (default `pending`), `target_module`, `target_kind`,
+`GET /proposals/` filters server-side: `status` (default `pending`; `all` = every status), `target_module`, `target_kind`,
 `batch_id`, `source`, `confidence_min`, `search` (matches `subject_label`), `subject_ref` (exact). `ordering` is validated
 against an allowlist (`created_at`, `confidence`, `status`, `subject_ref`, each `±`) before reaching
 `order_by` — an unknown field is a 400, never an ORM error that leaks column names.
@@ -286,8 +322,8 @@ All errors use the v2 envelope from `django-utils`:
 ```
 
 `VALIDATION_ERROR` (400, Pydantic or service `ValueError`), `NOT_FOUND` (404, unknown id),
-`AUTHENTICATION_REQUIRED` (401), `PERMISSION_DENIED` (403, non-admin), `RATE_LIMITED` (429, intake
-throttle). Internal errors never leak `str(exc)` — the handler returns `INTERNAL_ERROR` + a logged
+`AUTHENTICATION_REQUIRED` (401), `PERMISSION_DENIED` (403, non-admin), `ALREADY_RUNNING` (409, `POST tasks/` when
+every subject is already in flight — § Run lanes), `RATE_LIMITED` (429, intake throttle). Internal errors never leak `str(exc)` — the handler returns `INTERNAL_ERROR` + a logged
 `debug_id`.
 
 ## OpenAPI

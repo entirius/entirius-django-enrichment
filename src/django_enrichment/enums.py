@@ -13,6 +13,13 @@ class TaskStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
+class TaskLane(models.TextChoices):
+    """Which Celery lane runs an internal task: `now` = the interactive lane, `queue` = the bulk lane."""
+
+    NOW = "now", "Run now"
+    QUEUE = "queue", "Queue"
+
+
 class ProposalStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPLIED = "applied", "Applied"

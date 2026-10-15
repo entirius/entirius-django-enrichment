@@ -72,3 +72,12 @@ ENRICHMENT_VIDEO_TIMEOUT_S = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", 900
 # ENRICHMENT_REVISE_LOCK_SECONDS — how long a task's batch lock outlives a worker that died mid-batch.
 ENRICHMENT_REVISE_BATCH_MAX = getattr(settings, "ENRICHMENT_REVISE_BATCH_MAX", 200)
 ENRICHMENT_REVISE_LOCK_SECONDS = getattr(settings, "ENRICHMENT_REVISE_LOCK_SECONDS", 3600)
+
+# Run lanes (plan 22). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_INTERACTIVE_QUEUE   — Celery queue of `lane=now` runs, workflow steps and corrections (a click waits on it).
+# ENRICHMENT_BULK_QUEUE          — Celery queue of `lane=queue` runs; the host wires a worker with concurrency 1 on it.
+# ENRICHMENT_RUN_NOW_MAX_SUBJECTS — most subjects one `lane=now` run may carry.
+ENRICHMENT_INTERACTIVE_QUEUE = getattr(settings, "ENRICHMENT_INTERACTIVE_QUEUE", "enrichment_interactive")
+ENRICHMENT_BULK_QUEUE = getattr(settings, "ENRICHMENT_BULK_QUEUE", "enrichment_bulk")
+ENRICHMENT_RUN_NOW_MAX_SUBJECTS = getattr(settings, "ENRICHMENT_RUN_NOW_MAX_SUBJECTS", 20)

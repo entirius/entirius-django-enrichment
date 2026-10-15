@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Run lanes (plan 22): `EnrichmentTask.lane` (`now` | `queue`, migration 0013). The internal runner goes to
+  `ENRICHMENT_INTERACTIVE_QUEUE` (`enrichment_interactive`) or `ENRICHMENT_BULK_QUEUE` (`enrichment_bulk`) by lane
+  instead of the default `celery` queue; workflow steps and batch corrections always use the interactive queue — a
+  host must now run workers on both queues (bulk with concurrency 1). `POST tasks/` takes `lane` (omitted = one
+  subject → `now`, more → `queue`); `now` above `ENRICHMENT_RUN_NOW_MAX_SUBJECTS` (20) → 400. Subjects that already
+  have the same run in flight (type, template, channel, fields, languages) are skipped and listed in
+  `skipped_in_flight`; all skipped → 409 `ALREADY_RUNNING`. Task responses carry `lane` and `queued_ahead`.
+
+- `GET proposals/?status=all` lists every status (the CMS Review "All" chip); no `status` keeps the default `pending`.
+
 - Review fixes: a channel overlay adds to the instance `always_rules`, `rules` and `facts` (joined by id, the overlay
   wins on the same id) instead of replacing them — promoting a memory suggestion into a channel no longer hides the
   instance rules and facts from prompts, the QA number check and `status`. Workflow steps pass `brief.language` to

@@ -35,11 +35,21 @@ class TaskResponse(BaseModel):
     )
     cost_complete: bool = Field(description="False once a toolbox call reported no cost", examples=[True])
     profile_versions: list[int] = Field(description="Profile version ids its prompts used", examples=[[4, 9]])
+    lane: str = Field(description="now = interactive lane, queue = bulk lane", examples=["now"])
+    queued_ahead: int | None = Field(
+        None, description="Open runs of its lane created before it; null once running or for an external worker"
+    )
     # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
     proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
     created_at: datetime
     modified_at: datetime
+
+
+class TaskSpawnResponse(TaskResponse):
+    """`POST /tasks/` — the spawned task plus the subjects left out because the same run is already in flight."""
+
+    skipped_in_flight: list[str] = Field(default_factory=list, examples=[["SKU-2"]])
 
 
 class TaskListResponse(BaseModel):
