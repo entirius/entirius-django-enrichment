@@ -9,8 +9,10 @@ import pytest
 pytest.importorskip("django_access")
 
 from django.apps import apps  # noqa: E402
+from django.urls import resolve  # noqa: E402
 from django_access.catalogue.areas import DEFAULT_AREAS, Area  # noqa: E402
 from django_access.catalogue.scopes import DEFAULT_SCOPES, TokenScope  # noqa: E402
+from django_access.services import route_map  # noqa: E402
 from django_access.testing import assert_routes_covered  # noqa: E402
 
 from django_enrichment.api.admin.views.memory_views import MemoryViewSet  # noqa: E402
@@ -36,3 +38,14 @@ def test_declarations_match_the_access_defaults():
 def test_profile_and_memory_need_the_profile_area():
     assert ProfileViewSet.access_area == MemoryViewSet.access_area == PROFILE_AREA
     assert PROFILE_AREA in {item["key"] for item in apps.get_app_config(LABEL).access_areas}
+
+
+def _needed(path: str, method: str) -> str | None:
+    match = resolve(path, urlconf="django_enrichment.urls")
+    return route_map.required_permission(route_map.classify(match.route, match.func), method)
+
+
+def test_rule_promotion_needs_the_profile_area_not_proposals():
+    """Promoting to a worker or template changes instance-wide instructions: proposals:write alone is refused."""
+    assert _needed("/api/enrichment/v2/admin/proposals/1/rules/promote/", "POST") == f"{PROFILE_AREA}:write"
+    assert _needed("/api/enrichment/v2/admin/proposals/1/rules/", "PUT") == "enrichment.proposals:write"

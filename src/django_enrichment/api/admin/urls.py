@@ -10,7 +10,7 @@ from django_enrichment.api.admin.views.catalog_views import CatalogViewSet
 from django_enrichment.api.admin.views.memory_views import MemoryViewSet
 from django_enrichment.api.admin.views.profile_views import ProfileViewSet
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
-from django_enrichment.api.admin.views.revision_views import RevisionViewSet
+from django_enrichment.api.admin.views.revision_views import RevisionViewSet, RulePromotionViewSet
 from django_enrichment.api.admin.views.spawn_rule_views import SpawnRuleViewSet
 from django_enrichment.api.admin.views.task_views import TaskViewSet
 from django_enrichment.api.admin.views.template_views import TemplateViewSet
@@ -114,7 +114,7 @@ urlpatterns = [
     ),
     path(
         "proposals/<int:pk>/rules/promote/",
-        RevisionViewSet.as_view({"post": "promote_rule"}),
+        RulePromotionViewSet.as_view({"post": "promote_rule"}),
         name="admin-proposals-rules-promote",
     ),
     path("proposals/<int:pk>/accept/", ProposalViewSet.as_view({"post": "accept"}), name="admin-proposals-accept"),

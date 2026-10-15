@@ -24,6 +24,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.api.admin.views.profile_views import PROFILE_AREA
 from django_enrichment.schemas.requests import (
     FactSuggestRequest,
     ReviseRequest,
@@ -195,21 +196,6 @@ class RevisionViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Promote a rule to the template or worker",
-        request=RulePromoteRequest,
-        responses={200: RulePromoteResponse},
-    )
-    def promote_rule(self, request: Request, pk: int) -> Response:
-        data = _parse(RulePromoteRequest, request.data)
-        proposal = _get_or_404(proposal_service.get_proposal, pk)
-        try:
-            rules = rules_service.promote(proposal, data.rule, target=data.target)
-        except ValueError as exc:
-            raise_as_drf(exc)
-        return Response(RulePromoteResponse(target=data.target, rules=rules).model_dump(mode="json"))
-
-    @extend_schema(
-        tags=_TAGS,
         summary="Correct all pending proposals of a task (async)",
         request=TaskReviseRequest,
         responses={202: TaskReviseResponse},
@@ -222,3 +208,28 @@ class RevisionViewSet(viewsets.ViewSet):
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(TaskReviseResponse(queued=queued).model_dump(), status=status.HTTP_202_ACCEPTED)
+
+
+class RulePromotionViewSet(viewsets.ViewSet):
+    """Rule promotion changes instructions beyond one proposal (the worker's or the template's prompt layer):
+    it needs the profile area, like editing the profile's `always_rules`."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminUser]
+    access_area = PROFILE_AREA
+    serializer_class = None
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Promote a rule to the template or worker",
+        request=RulePromoteRequest,
+        responses={200: RulePromoteResponse},
+    )
+    def promote_rule(self, request: Request, pk: int) -> Response:
+        data = _parse(RulePromoteRequest, request.data)
+        proposal = _get_or_404(proposal_service.get_proposal, pk)
+        try:
+            rules = rules_service.promote(proposal, data.rule, target=data.target)
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return Response(RulePromoteResponse(target=data.target, rules=rules).model_dump(mode="json"))
