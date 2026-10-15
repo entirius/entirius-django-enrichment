@@ -81,8 +81,12 @@ def intake(
     external_ref: str = "",
     staged_file: str = "",
     cost_usd: Decimal | None = None,
+    keep_edited: bool = False,
 ) -> ContentProposal:
-    """Ingest one worker proposal: idempotent on `external_ref`, snapshot live, supersede older."""
+    """Ingest one worker proposal: idempotent on `external_ref`, snapshot live, supersede older.
+
+    `keep_edited`: a pending proposal the operator already edited is never superseded — `KeptEdited` is raised
+    from inside the transaction (the check and the supersede see the same locked rows) and nothing is stored."""
     if external_ref:
         existing = ContentProposal.objects.filter(external_ref=external_ref).first()
         if existing is not None:
@@ -94,7 +98,7 @@ def intake(
     )
 
     with transaction.atomic():
-        _supersede_pending(target_module, subject_ref, target_kind, target_locator)
+        _supersede_pending(target_module, subject_ref, target_kind, target_locator, keep_edited)
         proposal = _create_with_revision(
             task=task,
             target_module=target_module,
@@ -199,6 +203,7 @@ def intake_media(
     external_ref: str = "",
     target_kind: str = "picture",
     cost_usd: Decimal | None = None,
+    keep_edited: bool = False,
 ) -> ContentProposal:
     """Intake a media proposal: validate + stage the binary, then create the proposal (etap-08).
 
@@ -225,6 +230,7 @@ def intake_media(
             external_ref=external_ref,
             staged_file=ref,
             cost_usd=cost_usd,
+            keep_edited=keep_edited,
         )
     except Exception:
         staging_store.delete(ref)
@@ -235,21 +241,46 @@ def intake_media(
     return proposal
 
 
-def _supersede_pending(target_module: str, subject_ref: str, target_kind: str, target_locator: dict) -> None:
+class KeptEdited(Exception):
+    """The target has a pending proposal the operator edited; intake with `keep_edited` leaves it alone."""
+
+
+def _supersede_pending(
+    target_module: str, subject_ref: str, target_kind: str, target_locator: dict, keep_edited: bool = False
+) -> None:
     """Mark older pending proposals on the same target as superseded.
 
     Single `.update()`, not per-row `transition_status`: superseding is a pure status flip with no
     audit, the filter guarantees the source is `pending`, and `pending → superseded` is always legal.
-    `locator_hash` computed explicitly (the model `save()` is bypassed by `.update()`).
+    `locator_hash` computed explicitly (the model `save()` is bypassed by `.update()`). With `keep_edited` the
+    pending rows are locked first and an operator-edited one aborts the intake (`KeptEdited`); the UPDATE itself
+    also excludes edited rows, so an edit saved in between is never superseded.
     """
-    locator_hash = compute_locator_hash(target_locator)
-    ContentProposal.objects.filter(
+    pending = ContentProposal.objects.filter(
         target_module=target_module,
         subject_ref=subject_ref,
         target_kind=target_kind,
-        locator_hash=locator_hash,
+        locator_hash=compute_locator_hash(target_locator),
         status=ProposalStatus.PENDING.value,
-    ).update(status=ProposalStatus.SUPERSEDED.value, modified_at=timezone.now())
+    )
+    if keep_edited:
+        list(pending.select_for_update().values_list("pk", flat=True))
+        if pending.filter(revisions__number__gt=1).exists():
+            raise KeptEdited
+        pending = pending.exclude(revisions__number__gt=1)
+    pending.update(status=ProposalStatus.SUPERSEDED.value, modified_at=timezone.now())
+
+
+def subject_has_operator_edits(target_module: str, subject_ref: str, source_prefix: str) -> bool:
+    """True when the subject has a pending proposal of this worker (`source` prefix) the operator already
+    edited — checked before the paid call, so a kept target costs nothing."""
+    return ContentProposal.objects.filter(
+        target_module=target_module,
+        subject_ref=subject_ref,
+        source__startswith=source_prefix,
+        status=ProposalStatus.PENDING.value,
+        revisions__number__gt=1,
+    ).exists()
 
 
 def has_operator_edits(target_module: str, subject_ref: str, target_kind: str, target_locator: dict) -> bool:

@@ -114,3 +114,12 @@ ENRICHMENT_NOTIFY_ROLE = "operator"
 ENRICHMENT_PLAN_BATCH = 200
 ENRICHMENT_EVENTS_CAP = 20
 ENRICHMENT_CONSUME_MAX_UNITS = 10
+
+# Guards on a run's size and cost (review E1). Read at call time through `queue_config.get`.
+#
+# ENRICHMENT_QUEUE_MAX_SUBJECTS — most subjects one run may carry (checked at spawn for a list scope, and
+#                                 enforced by the planner for every scope).
+# ENRICHMENT_TASK_MAX_COST_USD  — a task whose known cost reached this stops handing out units (queued ones are
+#                                 cancelled, the operator is notified once).
+ENRICHMENT_QUEUE_MAX_SUBJECTS = 500
+ENRICHMENT_TASK_MAX_COST_USD = "5.00"

@@ -8,7 +8,7 @@ import pytest
 
 from django_enrichment.enums import TaskStatus
 from django_enrichment.models import EnrichmentTask
-from django_enrichment.services import revise_batch_service, task_service, worker_service
+from django_enrichment.services import queue_dispatch, revise_batch_service, task_service
 from django_enrichment.tasks import revise_tasks, worker_runner
 
 TASKS = "/api/enrichment/v2/admin/tasks/"
@@ -25,8 +25,8 @@ def writer(make_worker, fake_adapter):
 def queues(monkeypatch):
     """Celery queues the runner was sent to (on-commit runs at once, dispatch captured, nothing runs)."""
     sent: list[str] = []
-    monkeypatch.setattr(worker_service.transaction, "on_commit", lambda callback: callback())
-    monkeypatch.setattr(worker_runner.run_task, "apply_async", lambda args, queue: sent.append(queue))
+    monkeypatch.setattr(queue_dispatch.transaction, "on_commit", lambda callback: callback())
+    monkeypatch.setattr(worker_runner.plan_task, "apply_async", lambda args, queue: sent.append(queue))
     return sent
 
 

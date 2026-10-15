@@ -16,6 +16,7 @@ from django.conf import settings
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.enums import TaskLane, TaskStatus, WorkerMode
 from django_enrichment.models import EnrichmentTask, Worker
+from django_enrichment.services import queue_config
 
 
 def interactive_queue() -> str:
@@ -34,6 +35,10 @@ def run_now_max() -> int:
     return getattr(settings, "ENRICHMENT_RUN_NOW_MAX_SUBJECTS", enrichment_settings.ENRICHMENT_RUN_NOW_MAX_SUBJECTS)
 
 
+def queue_max() -> int:
+    return queue_config.get("ENRICHMENT_QUEUE_MAX_SUBJECTS")
+
+
 def resolve(lane: str, scope_spec: dict) -> str:
     """The lane of a new task: the given one (`now` capped), or by size — one subject → `now`, more → `queue`.
 
@@ -42,11 +47,11 @@ def resolve(lane: str, scope_spec: dict) -> str:
     """
     refs = scope_spec.get("refs") if scope_spec.get("mode") == "list" else None
     if not lane:
-        return TaskLane.NOW.value if refs is not None and len(refs) == 1 else TaskLane.QUEUE.value
-    if lane == TaskLane.QUEUE.value:
-        return lane
-    if refs is None or len(refs) > run_now_max():
+        lane = TaskLane.NOW.value if refs is not None and len(refs) == 1 else TaskLane.QUEUE.value
+    elif lane == TaskLane.NOW.value and (refs is None or len(refs) > run_now_max()):
         raise ValueError(f"Run now takes at most {run_now_max()} items at a time. Add this run to the queue instead.")
+    if lane == TaskLane.QUEUE.value and refs is not None and len(refs) > queue_max():
+        raise ValueError(f"A run takes at most {queue_max()} items at a time. Split it into smaller runs.")
     return lane
 
 

@@ -2,25 +2,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Worker service — lookup, params validation, versioned save, internal-runner dispatch.
+"""Worker service — lookup, params validation, versioned save, work-queue dispatch.
 
-A `Worker` row configures the executor of one task type (`key == task.type`). When an active
-internal Worker exists, a freshly spawned task is handed to the runner after commit; external
-workers (n8n) keep pulling through the API exactly as before.
+A `Worker` row configures the executor of one task type (`key == task.type`). For an active
+Worker, a freshly spawned task is planned into work units after commit; internal and external workers
+pull units through the same `work_queue_service`.
 """
 
 import re
 from typing import Any
 
-from django.db import transaction
 from django.db.models import QuerySet
 from pydantic import ValidationError as PydanticValidationError
 
-from django_enrichment.enums import WorkerMode
 from django_enrichment.kinds import get_kind
 from django_enrichment.models import EnrichmentTask, Worker
 from django_enrichment.models.worker import VERSIONED_FIELDS
-from django_enrichment.services import lane_service
+from django_enrichment.services import queue_dispatch
 
 _SOURCE_PATTERN = re.compile(r"^worker:(?P<key>[a-z0-9][a-z0-9_.-]*)@v\d+$")
 
@@ -70,15 +68,13 @@ def validate_params(task_type: str, params: dict) -> dict:
         raise ValueError(f"params invalid for worker {task_type!r}: {details}") from exc
 
 
-def dispatch_if_internal(task: EnrichmentTask) -> None:
-    """Queue the internal runner for `task` on its lane's Celery queue once the spawning transaction commits."""
-    worker = find_active(task.type)
-    if worker is None or worker.mode != WorkerMode.INTERNAL.value:
-        return
-    from django_enrichment.tasks.worker_runner import run_task
+def dispatch(task: EnrichmentTask) -> None:
+    """Plan the task into work units (Celery, on its lane's queue, after commit) when an active Worker owns it.
 
-    queue = lane_service.celery_queue(task.lane)
-    transaction.on_commit(lambda: run_task.apply_async(args=[task.pk], queue=queue))
+    Internal workers get a consumer started by the planner; external ones pull the units through the worker API.
+    """
+    if find_active(task.type) is not None:
+        queue_dispatch.kick_plan(task)
 
 
 def save_worker(worker: Worker) -> Worker:

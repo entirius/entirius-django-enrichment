@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from django_enrichment.enums import RevisionAuthor, TaskStatus
 from django_enrichment.kinds import Kind, ProposalDraft, registry
 from django_enrichment.models import ContentProposal
-from django_enrichment.services import revision_service, runner_service, task_service, worker_service
+from django_enrichment.services import revision_service, task_service, worker_service
+from tests.queue_helpers import run_queue
 
 
 class EchoOptions(BaseModel):
@@ -74,7 +75,7 @@ class TestDispatch:
         with django_capture_on_commit_callbacks(execute=True) as callbacks:
             task = _spawn(["SKU-1", "SKU-2"])
         task.refresh_from_db()
-        assert len(callbacks) == 1
+        assert len(callbacks) == 2  # plan, then the consumer it starts
         assert task.status == TaskStatus.DONE.value
         assert task.counts == {"proposed": 2}
         proposal = ContentProposal.objects.get(subject_ref="SKU-1")
@@ -82,12 +83,20 @@ class TestDispatch:
         assert proposal.task_id == task.pk
         assert proposal.subject_label == "SKU-1"
 
-    @pytest.mark.parametrize("over", [{"mode": "external"}, {"active": False}])
-    def test_external_or_inactive_worker_is_not_dispatched(self, echo_worker, over, django_capture_on_commit_callbacks):
-        echo_worker(**over)
+    def test_inactive_worker_is_not_dispatched(self, echo_worker, django_capture_on_commit_callbacks):
+        echo_worker(active=False)
         with django_capture_on_commit_callbacks(execute=True) as callbacks:
             task = _spawn(["SKU-1"])
         assert callbacks == []
+        task.refresh_from_db()
+        assert task.status == TaskStatus.OPEN.value
+
+    def test_external_worker_gets_units_but_no_consumer(self, echo_worker, django_capture_on_commit_callbacks):
+        echo_worker(mode="external")
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            task = _spawn(["SKU-1"])
+        assert len(callbacks) == 1  # plan only
+        assert task.units.filter(status="queued").count() == 1
         task.refresh_from_db()
         assert task.status == TaskStatus.OPEN.value
 
@@ -101,7 +110,7 @@ class TestDispatch:
 class TestRun:
     def _run(self, refs, mode="list", **params):
         task = _spawn(refs, mode=mode, **params)  # on_commit is not executed inside the test transaction
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         return task
 
@@ -136,7 +145,7 @@ class TestRun:
             scope_spec={"mode": "gap", "module": "pim", "check": "c", "scope": {"candidates": candidates}},
             params={"fail_on": ["SKU-2"]},
         )
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         assert task.status == TaskStatus.DONE.value
         assert task.counts == {"proposed": 1, "failed": 1}
@@ -146,7 +155,7 @@ class TestRun:
         task = _spawn(["SKU-1"])
         task.scope_spec = {"mode": "list", "module": "unknown", "refs": ["SKU-1"]}
         task.save()
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         assert task.status == TaskStatus.FAILED.value
 
@@ -154,7 +163,8 @@ class TestRun:
         echo_worker()
         task = self._run(["SKU-1", "SKU-2", "SKU-3"], cancel_on=["SKU-1"])
         assert task.status == TaskStatus.CANCELLED.value
-        assert list(ContentProposal.objects.values_list("subject_ref", flat=True)) == ["SKU-1"]
+        assert not ContentProposal.objects.exists()  # cancelled before submit → the unit's results are discarded
+        assert set(task.units.values_list("status", flat=True)) == {"cancelled"}
 
     def test_rerun_supersedes_an_untouched_pending_proposal(self, echo_worker):
         echo_worker()
@@ -193,7 +203,7 @@ class TestRun:
         echo_worker()
         task = _spawn(["SKU-1"])
         task_service.mark_in_progress(task)
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         assert task.status == TaskStatus.IN_PROGRESS.value
         assert not ContentProposal.objects.exists()
@@ -203,7 +213,7 @@ class TestRun:
 class TestFailureReasons:
     def _run(self, refs, **params):
         task = _spawn(refs, **params)
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         return task
 
@@ -228,6 +238,6 @@ class TestFailureReasons:
         task = _spawn(["SKU-1"])
         task.scope_spec = {"mode": "list", "module": "unknown", "refs": ["SKU-1"]}
         task.save()
-        runner_service.run_task(task.pk)
+        run_queue(task)
         task.refresh_from_db()
         assert [(e["subject_ref"], e["code"]) for e in task.errors] == [("", "INTERNAL_ERROR")]

@@ -15,7 +15,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django_enrichment.enums import TaskStatus
 from django_enrichment.kinds.video import VideoKind
 from django_enrichment.models import ContentProposal
-from django_enrichment.services import proposal_service, runner_service, staging_store, task_service, toolbox_calls
+from django_enrichment.services import proposal_service, staging_store, task_service, toolbox_calls
+from tests.queue_helpers import run_queue
 
 _MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 64
 _PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
@@ -186,7 +187,7 @@ class TestVideoKind:
         task = task_service.spawn(type="pim.social_video", scope_spec=scope, params={"channel": "default"})
         with respx.mock() as router:
             _mock_job(router, "done")
-            runner_service.run_task(task.pk)
+            run_queue(task)
         task.refresh_from_db()
         proposal = ContentProposal.objects.get(task=task)
         assert task.status == TaskStatus.DONE.value

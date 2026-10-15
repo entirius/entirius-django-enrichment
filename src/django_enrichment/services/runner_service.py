@@ -2,97 +2,45 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Internal runner — executes a task with its Worker's kind, one subject at a time.
+"""Subject execution and intake for the work queue — what runs ONE subject and hands its drafts to intake.
 
-open → in_progress → done. Targets are pulled page by page through `task_service.resolve_targets`;
-a target is a SKU string or a dict carrying `subject_ref`. A failing subject is logged with an
-error id, counted in `counts.failed` and recorded in `task.errors` (stable code + error id); the task goes on. Every subject failed → `failed`.
-The status is re-read before each subject: a task cancelled mid-run stops and stays `cancelled`.
-POC: no retry, no beat, no budget logic.
+`run_subject` is the internal consumer's step (kind → drafts, failures turned into a `SubjectResult` with a
+stable code and an error id); `intake_subject` is shared by every worker's `complete` (internal or external):
+supersede and keep-edited rules live in `proposal_service`, unchanged.
 """
 
 import logging
 import uuid
-from collections.abc import Iterator
-from typing import Any
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.enums import TaskStatus, WorkerMode
-from django_enrichment.kinds import Kind, ProposalDraft, extras, get_kind
+from django_enrichment.kinds import Kind, ProposalDraft, extras
 from django_enrichment.models import EnrichmentTask, Worker
-from django_enrichment.services import proposal_service, task_service, toolbox_calls, worker_service, workflow_service
+from django_enrichment.services import proposal_service, task_service, toolbox_calls
+from django_enrichment.services.queue_types import SubjectResult
 
 _logger = logging.getLogger("process")
 
 
-def run_task(task_id: int) -> None:
-    task = task_service.get_task(task_id)
-    worker = worker_service.find_active(task.type)
-    if worker is None or worker.mode != WorkerMode.INTERNAL.value or task.status != TaskStatus.OPEN.value:
-        _logger.info("runner skipped task %s (no active internal worker or not open)", task_id)
-        return
-    task_service.mark_in_progress(task)
-    extras.clear_cache()
+def run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> SubjectResult:
+    """Run the kind on one subject — unless the operator already edited a proposal of this worker on it: then
+    nothing is generated (no paid call) and the subject counts in `counts.kept_edited`. A failure is logged with an error id and returned, never raised."""
+    prefix = f"worker:{worker.key}@"
+    if proposal_service.subject_has_operator_edits(worker.target_module, subject_ref, prefix):
+        task_service.increment_count(task, "kept_edited")
+        return SubjectResult(subject_ref)
     try:
-        succeeded, failed = _run_subjects(worker, task)
-    except Exception as exc:  # noqa: BLE001 — resolve/kind setup failure must not leave the task in_progress
-        _record_failure(task, "", exc)
-        succeeded, failed = 0, 1
-    finally:
-        extras.clear_cache()
-    status = TaskStatus.FAILED if failed and not succeeded else TaskStatus.DONE
-    _finish(task, status.value)
-    _notify_workflow(task)
+        return SubjectResult(subject_ref, drafts=kind.run(worker, task, subject_ref))
+    except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the unit
+        error_id = uuid.uuid4().hex[:12]
+        _logger.exception("runner failed on subject %r of task %s [%s]", subject_ref, task.pk, error_id)
+        return SubjectResult(subject_ref, error_code=toolbox_calls.failure_code(exc), error_id=error_id)
 
 
-def _notify_workflow(task: EnrichmentTask) -> None:
-    """A workflow step's task finished → its run moves on (`workflow_service`). Never fails the runner."""
-    try:
-        workflow_service.on_task_finished(task)
-    except Exception:  # noqa: BLE001 — the task itself is finished; a run hook must not undo that
-        _logger.exception("workflow hook failed for task %s", task.pk)
-
-
-def _finish(task: EnrichmentTask, status: str) -> None:
-    """Close the task — unless someone else (an operator cancel) already moved it on."""
-    try:
-        task_service.transition_status(task, status)
-    except ValueError:
-        _logger.info("runner left task %s as %s (changed while running)", task.pk, task.status)
-
-
-def _run_subjects(worker: Worker, task: EnrichmentTask) -> tuple[int, int]:
-    kind = get_kind(worker.kind)()
-    succeeded = failed = 0
-    for subject_ref in _subjects(task):
-        if not _still_in_progress(task):
-            break
-        if _run_subject(worker, kind, task, subject_ref):
-            succeeded += 1
-        else:
-            failed += 1
-    return succeeded, failed
-
-
-def _run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> bool:
-    try:
-        drafts = kind.run(worker, task, subject_ref)
-        label = _subject_label(worker, task, subject_ref) if any(not d.subject_label for d in drafts) else ""
-        for draft in drafts:
-            _intake(worker, task, subject_ref, draft, label)
-    except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the task
-        _record_failure(task, subject_ref, exc)
-        task_service.increment_count(task, "failed")
-        return False
-    return True
-
-
-def _record_failure(task: EnrichmentTask, subject_ref: str, exc: Exception) -> None:
-    """Log the trace under an error id; the task keeps only the id and a stable code (no exception text)."""
-    error_id = _error_id()
-    _logger.exception("runner failed on subject %r of task %s [%s]", subject_ref, task.pk, error_id)
-    code = toolbox_calls.failure_code(exc)
-    task_service.record_error(task, subject_ref=subject_ref, code=code, error_id=error_id)
+def intake_subject(worker: Worker, task: EnrichmentTask, subject_ref: str, drafts: list[ProposalDraft]) -> None:
+    """Hand a subject's drafts to intake (a missing display label is looked up once per subject)."""
+    label = _subject_label(worker, task, subject_ref) if any(not d.subject_label for d in drafts) else ""
+    for draft in drafts:
+        _intake(worker, task, subject_ref, draft, label)
 
 
 def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> str:
@@ -103,7 +51,8 @@ def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> st
 
 def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: ProposalDraft, label: str) -> None:
     """Hand one draft to intake — `intake_media` (staged binary) when it carries a media file. A target whose
-    pending proposal the operator already edited keeps it: the draft is dropped and counted in `counts.kept_edited`."""
+    pending proposal the operator edited keeps it (also when the edit lands while intake runs): the draft is
+    dropped and counted in `counts.kept_edited`."""
     target = (worker.target_module, subject_ref, draft.target_kind, draft.target_locator)
     if proposal_service.has_operator_edits(*target):
         task_service.increment_count(task, "kept_edited")
@@ -118,35 +67,12 @@ def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: Propo
         "subject_label": draft.subject_label or label,
         "source": f"worker:{worker.key}@v{worker.version}",
         "cost_usd": draft.cost_usd,
+        "keep_edited": True,
     }
-    if draft.media_file is None:
-        proposal_service.intake(**fields)
-    else:
-        proposal_service.intake_media(file=draft.media_file, **fields)
-
-
-def _subjects(task: EnrichmentTask) -> Iterator[str]:
-    """Distinct subject refs, page by page. Gap mode is a work queue (always page 1); the seen-set
-    ends the loop when a page brings nothing new (failed gap subjects stay in the queue)."""
-    seen: set[str] = set()
-    page = 1
-    while fresh := _fresh_refs(task_service.resolve_targets(task, page=page), seen):
-        seen.update(fresh)
-        yield from fresh
-        if task.scope_spec.get("mode") != "gap":
-            page += 1
-
-
-def _fresh_refs(targets: list[Any], seen: set[str]) -> list[str]:
-    refs = [target["subject_ref"] if isinstance(target, dict) else str(target) for target in targets]
-    return list(dict.fromkeys(ref for ref in refs if ref not in seen))
-
-
-def _still_in_progress(task: EnrichmentTask) -> bool:
-    """Re-read the status before each subject — a cancelled task stops spending toolbox calls."""
-    task.refresh_from_db(fields=["status"])
-    return task.status == TaskStatus.IN_PROGRESS.value
-
-
-def _error_id() -> str:
-    return uuid.uuid4().hex[:12]
+    try:
+        if draft.media_file is None:
+            proposal_service.intake(**fields)
+        else:
+            proposal_service.intake_media(file=draft.media_file, **fields)
+    except proposal_service.KeptEdited:
+        task_service.increment_count(task, "kept_edited")

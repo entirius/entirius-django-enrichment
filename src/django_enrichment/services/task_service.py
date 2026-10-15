@@ -54,6 +54,7 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
     merged = list(dict.fromkeys([*task.scope_spec.get("refs", []), *new_refs]))
     task.scope_spec["refs"] = merged
     task.save(update_fields=["scope_spec", "modified_at"])
+    worker_service.dispatch(task)  # plans the new refs into units (a no-op when none are new)
     return task
 
 
@@ -81,7 +82,7 @@ def spawn(
     """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
 
     When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
-    to the internal runner after commit (`worker_service.dispatch_if_internal`). With `template`, the
+    to the internal runner after commit (`worker_service.dispatch`). With `template`, the
     template decides `type` and presets params/rules (`template_service.merge_into_task`). `lane` is
     `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`).
     """
@@ -99,7 +100,7 @@ def spawn(
     task = EnrichmentTask.objects.create(
         type=type, scope_spec=scope_spec, params=params, requested_by=requested_by, batch_key=batch_key, lane=lane
     )
-    worker_service.dispatch_if_internal(task)
+    worker_service.dispatch(task)
     return task
 
 
@@ -305,6 +306,10 @@ def transition_status(
     if not updated:
         raise ValueError(f"task {task.pk} is no longer {task.status} (changed concurrently)")
     task.status, task.modified_at = new_status, now
+    if new_status in (TaskStatus.CANCELLED.value, TaskStatus.DONE.value, TaskStatus.FAILED.value):
+        from django_enrichment.services import task_progress_service
+
+        task_progress_service.cancel_units(task)
     return task
 
 
@@ -335,11 +340,15 @@ def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTa
     return task
 
 
-def record_error(task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str) -> EnrichmentTask:
-    """Remember why a subject failed (the first `ERRORS_CAP` failures; the counter keeps the total)."""
+def record_error(
+    task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str, message: str = ""
+) -> EnrichmentTask:
+    """Remember why a subject failed (the first `ERRORS_CAP` failures; the counter keeps the total).
+    A run-level stop carries a plain `message` too."""
     task.refresh_from_db(fields=["errors"])
     if len(task.errors) < ERRORS_CAP:
-        task.errors.append({"subject_ref": subject_ref, "code": code, "error_id": error_id})
+        entry = {"subject_ref": subject_ref, "code": code, "error_id": error_id}
+        task.errors.append({**entry, "message": message} if message else entry)
         task.save(update_fields=["errors", "modified_at"])
     return task
 
