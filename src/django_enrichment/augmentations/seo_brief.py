@@ -41,6 +41,7 @@ from django_enrichment.augmentations.seo_prompts import (
     DATA_NOTE,
     EVALUATE_SCHEMA,
     EVALUATE_SYSTEM,
+    SEED_MAX_CHARS,
     SEEDS_SCHEMA,
     SEEDS_SYSTEM,
 )
@@ -147,7 +148,7 @@ def _items(data: Any) -> list[KeywordItem]:
 
 def _seeds(answer: SeedsAnswer) -> list[str]:
     seeds = list(dict.fromkeys(_phrase(seed) for seed in answer.seeds))
-    if not (seeds := [seed for seed in seeds if seed]):
+    if not (seeds := [seed for seed in seeds if 0 < len(seed) <= SEED_MAX_CHARS]):
         raise SubjectError("SEO_BRIEF_NO_SEEDS", "no seed phrases proposed")
     return seeds[:SEEDS_MAX]
 

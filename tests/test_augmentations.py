@@ -409,3 +409,7 @@ class TestErrors:
         with pytest.raises(SubjectError) as exc:
             seo_brief._seeds(SeedsAnswer(seeds=["  ", ""]))
         assert exc.value.code == "SEO_BRIEF_NO_SEEDS"
+
+    def test_seeds_longer_than_the_toolbox_limit_are_dropped(self, writer):
+        long_seed = "word " * 30
+        assert seo_brief._seeds(SeedsAnswer(seeds=[long_seed, "sofa", "modular sofa"])) == ["sofa", "modular sofa"]

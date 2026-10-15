@@ -10,10 +10,17 @@ to find exactly this item or page. Write them in the language of the context. Pr
 descriptive phrases over single generic words; no brand names unless the context is about that brand;
 no invented features."""
 
+SEED_MAX_CHARS = 80  # the toolbox SEO app refuses longer keywords (400)
+
 SEEDS_SCHEMA = {
     "type": "object",
     "properties": {
-        "seeds": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 3, "maxItems": 5}
+        "seeds": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": SEED_MAX_CHARS},
+            "minItems": 3,
+            "maxItems": 5,
+        }
     },
     "required": ["seeds"],
     "additionalProperties": False,
