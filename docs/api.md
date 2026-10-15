@@ -32,6 +32,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `GET/PATCH/DELETE` | `templates/{key}/` | `template_service` | `key` immutable; DELETE → 204 |
 | `GET` | `fields/?target_module=&channel=&language=` | `catalog_service.describe_fields` | Adapter field catalog `[{key, label, type, max_length, translatable, options?, options_truncated?}]`; 404 `NOT_SUPPORTED` without `describe_fields` |
 | `GET` | `languages/?target_module=&channel=` | `catalog_service.channel_languages` | `["pl", "en", …]` (main first); 404 `NOT_SUPPORTED` without `channel_languages` |
+| `POST` | `subjects/resolve/` | `catalog_service.resolve_subjects` | `{module, channel, refs}` (1–500 refs, each ≤ 128 chars) → `{known: [{ref, label}], unknown: [ref]}`: refs trimmed, blanks dropped, deduped, request order kept; the CMS validates pasted SKUs with it. 404 `NOT_SUPPORTED` without the adapter extra `subject_labels`, 404 for an unknown channel. Throttled (`enrichment_lookup`, 60/min) |
 | `GET/POST` | `spawn-rules/` | `spawn_rule_service.list_rules`/`create_rule` | SpawnRule CRUD. Filters: `active`, `search`. → 200/201 |
 | `GET/PATCH/DELETE` | `spawn-rules/{key}/` | `spawn_rule_service` | `key` immutable (schema drops it) |
 | `POST` | `spawn-rules/{key}/run/` | `spawn_rule_service.run_rule` | Throttled (`enrichment_spawn`). → 201 `spawned` / 200 `already_running` / 200 `no_candidates` |

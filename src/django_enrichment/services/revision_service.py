@@ -7,7 +7,8 @@
 Invariant: `proposal.proposed_value == value of the latest revision`. Intake records revision 1;
 every later revision (AI correction, manual edit, restore) goes through `add_revision`, which writes
 the revision and the proposal in one transaction. Only `pending` / `drifted` proposals are revisable.
-Every revision carries the QA warnings of its value (`qa_service.check`), copied onto the proposal.
+Every revision carries the QA warnings of its value (`qa_service.check`), copied onto the proposal, and clears
+the proposal's `standard_checked_at` (the checklist check read the previous value).
 """
 
 from decimal import Decimal
@@ -89,7 +90,8 @@ def add_revision(
             warnings=warnings,
         )
         locked.proposed_value, locked.warnings = value, warnings
-        locked.save(update_fields=["proposed_value", "warnings", "modified_at"])
+        locked.standard_checked_at = None  # a checklist check speaks for the value it read, never a new one
+        locked.save(update_fields=["proposed_value", "warnings", "standard_checked_at", "modified_at"])
     proposal.refresh_from_db()
     return revision
 

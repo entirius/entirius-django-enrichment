@@ -20,6 +20,7 @@ import re
 from collections.abc import Iterator
 
 from django.db import transaction
+from django.utils import timezone
 
 from django_enrichment.enums import REVISABLE_STATUSES
 from django_enrichment.models import ContentProposal, EnrichmentTask
@@ -58,8 +59,11 @@ def recheck(proposal: ContentProposal) -> ContentProposal:
     return store(proposal, check(proposal, value), base_value=value)
 
 
-def store(proposal: ContentProposal, warnings: list[dict], *, base_value: dict) -> ContentProposal:
+def store(
+    proposal: ContentProposal, warnings: list[dict], *, base_value: dict, checked: bool = False
+) -> ContentProposal:
     """Save `warnings` (computed on `base_value`) on the proposal and its latest revision (they always agree).
+    `checked` = they include the checklist check (`standard_checked_at` = now); otherwise it is cleared.
 
     Row-locked like `revision_service.add_revision`: raises `ValueError` unless the proposal is still
     revisable, `RevisionNotApplicableError` when its value is no longer `base_value`."""
@@ -70,7 +74,8 @@ def store(proposal: ContentProposal, warnings: list[dict], *, base_value: dict) 
         if locked.proposed_value != base_value:
             raise RevisionNotApplicableError("the value changed while the check was running")
         locked.warnings = warnings
-        locked.save(update_fields=["warnings", "modified_at"])
+        locked.standard_checked_at = timezone.now() if checked else None
+        locked.save(update_fields=["warnings", "standard_checked_at", "modified_at"])
         if latest := locked.revisions.order_by("-number").first():
             latest.warnings = warnings
             latest.save(update_fields=["warnings", "modified_at"])

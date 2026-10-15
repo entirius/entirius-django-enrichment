@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Video job calls report the toolbox's own error code and message (e.g. `PRESET_NOT_FOUND`) instead of an
+  unexpected error.
+- `POST subjects/resolve/` (area `enrichment.proposals`, throttle `enrichment_lookup` 60/min): `{module, channel, refs}`
+  (≤ 500) → `{known: [{ref, label}], unknown: [ref]}` — the CMS checks pasted SKUs before a run. Backed by the new
+  optional adapter extra `subject_labels(*, refs, channel)` (absent → 404 `NOT_SUPPORTED`); the test fake adapter
+  serves it from `set_subjects`.
 - Completions send `max_tokens` (`ENRICHMENT_COMPLETION_MAX_TOKENS`, default 8192): the toolbox default of 1024
   truncated article drafts, answered as 502 `PROVIDER_ERROR`.
 - `seo_brief`: a failed SERP call leaves that phrase out (cost marked unknown) instead of failing the subject.

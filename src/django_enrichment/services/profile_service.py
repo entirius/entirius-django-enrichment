@@ -116,6 +116,19 @@ def record_use(*, task: EnrichmentTask, channel: str) -> None:
     EnrichmentTask.objects.filter(pk=task.pk).update(profile_versions=task.profile_versions)
 
 
+def qa_check_default() -> bool:
+    """Whether new AI text proposals are checked against the checklists when a run does not say (instance row)."""
+    return bool(Profile.objects.filter(channel=INSTANCE).values_list("qa_check", flat=True).first())
+
+
+def set_qa_check_default(enabled: bool) -> bool:
+    """Store the instance default of the automatic checklist check (no profile version: a setting, not content)."""
+    profile, _ = Profile.objects.get_or_create(channel=INSTANCE)
+    profile.qa_check = enabled
+    profile.save(update_fields=["qa_check", "modified_at"])
+    return profile.qa_check
+
+
 def status(channel: str = INSTANCE) -> dict:
     """Completeness of the channel's effective profile, per section (CMS health)."""
     sections = profile_status.sections(merged(channel))

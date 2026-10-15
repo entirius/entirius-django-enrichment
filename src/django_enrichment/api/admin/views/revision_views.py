@@ -99,7 +99,9 @@ def _check_standard(proposal) -> Response:
         return handle_toolbox_error(exc)
     except ValueError as exc:
         raise_as_drf(exc)
-    return Response(WarningsResponse(warnings=warnings).model_dump(mode="json"))
+    # `check_standard` stored the warnings and refreshed `proposal`: its check time is the one just recorded.
+    body = WarningsResponse(warnings=warnings, standard_checked_at=proposal.standard_checked_at)
+    return Response(body.model_dump(mode="json"))
 
 
 class RevisionViewSet(viewsets.ViewSet):

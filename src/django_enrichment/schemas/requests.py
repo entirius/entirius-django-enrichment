@@ -12,9 +12,9 @@ OpenAPI schema via drf-spectacular.
 import json
 import uuid
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 
 class TaskSpawnRequest(BaseModel):
@@ -310,6 +310,16 @@ class CatalogQuery(BaseModel):
     language: str = Field("", max_length=8, description="Label language (fields only)", examples=["pl"])
 
 
+class SubjectResolveRequest(BaseModel):
+    """`POST subjects/resolve/` — which of the pasted refs (SKUs) exist in a module's channel."""
+
+    module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    refs: list[Annotated[str, Field(max_length=128)]] = Field(
+        min_length=1, max_length=500, examples=[["SKU-1", "SKU-2"]]
+    )
+
+
 class RunStartRequest(BaseModel):
     """`POST runs/` — start a workflow; `inputs` (the brief) is validated against the definition's `inputs_schema`."""
 
@@ -329,6 +339,14 @@ class ProfileUpdateRequest(BaseModel):
 
     data: dict = Field(examples=[{"brand": {"differentiators": ["Made to order"]}, "always_rules": ["No prices."]}])
     note: str = Field("", max_length=255, examples=["Added the warranty fact"])
+
+
+class ProfileSettingsRequest(BaseModel):
+    """`PUT profile/settings/` — the instance's AI settings that are not profile content."""
+
+    qa_check: StrictBool = Field(
+        description="Check every new AI text proposal against the checklists (a run may override it)", examples=[True]
+    )
 
 
 class MemoryUpdateRequest(BaseModel):

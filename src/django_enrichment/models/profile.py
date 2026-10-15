@@ -19,6 +19,9 @@ class Profile(BaseModel):
     schema_version = models.PositiveIntegerField(default=1)
     version = models.PositiveIntegerField(default=0)
     updated_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # Instance row only: check every new AI text proposal against the checklists (a run may override it,
+    # `params.qa_check`). A setting, not profile content — not versioned, never in a prompt.
+    qa_check = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         return f"Profile(channel={self.channel or '*'}, v{self.version})"

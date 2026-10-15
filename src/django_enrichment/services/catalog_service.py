@@ -3,7 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 """Field catalog passthrough (contract A3 § 2) — the adapter's optional `describe_fields` /
-`channel_languages`, for the CMS run dialog. An adapter without the extra → `NotSupportedError`."""
+`channel_languages` / `subject_labels`, for the CMS run dialog. An adapter without the extra → `NotSupportedError`."""
 
 from django.core.exceptions import ObjectDoesNotExist
 
@@ -21,6 +21,18 @@ def describe_fields(*, target_module: str, channel: str, language: str = "") -> 
 
 def channel_languages(*, target_module: str, channel: str) -> list[str]:
     return _call(_extra(target_module, "channel_languages"), channel=channel)
+
+
+def resolve_subjects(*, target_module: str, channel: str, refs: list[str]) -> dict:
+    """`{known: [{ref, label}], unknown: [ref]}` — the refs (trimmed, blanks dropped, deduped, order kept) split by
+    whether the subject exists in the channel (adapter `subject_labels`: `{ref: label}` of the existing ones)."""
+    refs = list(dict.fromkeys(ref.strip() for ref in refs if ref.strip()))
+    subject_labels = _extra(target_module, "subject_labels")
+    labels = _call(subject_labels, channel=channel, refs=refs) if refs else {}
+    return {
+        "known": [{"ref": ref, "label": labels[ref]} for ref in refs if ref in labels],
+        "unknown": [ref for ref in refs if ref not in labels],
+    }
 
 
 def _extra(target_module: str, name: str):

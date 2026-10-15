@@ -78,3 +78,17 @@ class WorkerQueueThrottle(UserRateThrottle):
             return super().get_rate()
         except Exception:  # noqa: BLE001 — DRF raises ImproperlyConfigured when the scope is unset
             return self.rate
+
+
+class LookupThrottle(UserRateThrottle):
+    """Caps `POST subjects/resolve/` — each call looks up to 500 refs in the source module. A pasting operator
+    stays far below it. Service override: `DEFAULT_THROTTLE_RATES["enrichment_lookup"]`."""
+
+    scope = "enrichment_lookup"
+    rate = "60/min"
+
+    def get_rate(self) -> str:
+        try:
+            return super().get_rate()
+        except Exception:  # noqa: BLE001 — DRF raises ImproperlyConfigured when the scope is unset
+            return self.rate

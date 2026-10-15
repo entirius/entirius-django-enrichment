@@ -27,7 +27,7 @@ class TestWorkers:
         assert response.status_code == 200
         body = response.json()
         assert [w["key"] for w in body] == ["pim.description", "pim.translate"]
-        assert set(body[0]) == {"key", "label", "kind", "target_module", "mode", "params_schema"}
+        assert set(body[0]) == {"key", "label", "kind", "target_module", "mode", "model", "params_schema"}
         assert "languages" in body[0]["params_schema"]["properties"]
 
     def test_without_filter_lists_every_module(self, admin_client, make_worker):

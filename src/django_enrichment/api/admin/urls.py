@@ -48,6 +48,11 @@ urlpatterns = [
     ),
     path("fields/", CatalogViewSet.as_view({"get": "fields"}), name="admin-fields"),
     path("languages/", CatalogViewSet.as_view({"get": "languages"}), name="admin-languages"),
+    path(
+        "subjects/resolve/",
+        CatalogViewSet.as_view({"post": "resolve_subjects"}),
+        name="admin-subjects-resolve",
+    ),
     # Workflows (contract A4 § 6)
     path("workflows/", WorkflowViewSet.as_view({"get": "list"}), name="admin-workflows-list"),
     path("runs/", RunViewSet.as_view({"get": "list", "post": "create"}), name="admin-runs-list"),
@@ -68,6 +73,11 @@ urlpatterns = [
     ),
     path("profile/status/", ProfileViewSet.as_view({"get": "completeness"}), name="admin-profile-status"),
     path("profile/schema/", ProfileViewSet.as_view({"get": "json_schema"}), name="admin-profile-schema"),
+    path(
+        "profile/settings/",
+        ProfileViewSet.as_view({"get": "ai_settings", "put": "update_ai_settings"}),
+        name="admin-profile-settings",
+    ),
     # Memory (contract A4 § 3)
     path("memory/", MemoryViewSet.as_view({"get": "list"}), name="admin-memory-list"),
     path(

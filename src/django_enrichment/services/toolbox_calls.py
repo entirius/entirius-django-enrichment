@@ -245,15 +245,32 @@ def generate_video(*, image: bytes, mime: str, form: dict[str, str], task: Any =
     """
     with _video_client() as client:
         response = client.post("videos/", data=form, files={"image": ("image", image, mime)})
-        job_id = response.raise_for_status().json()["job_id"]
+        job_id = _checked(response).json()["job_id"]
         with _unknown_cost_on_error(task, "media"):
             job = _wait_for_video(client, job_id)
         cost = _charge(task, "media", job)
         if job["status"] == "failed":
             code = (job.get("error") or {}).get("error", "UNKNOWN")
             raise ValueError(f"toolbox video job {job_id} failed: {code}")
-        video = client.get(f"videos/{job_id}/download/").raise_for_status().content
+        video = _checked(client.get(f"videos/{job_id}/download/")).content
     return Costed(video, cost)
+
+
+def _checked(response: httpx.Response) -> httpx.Response:
+    """The response, or a `ToolboxError` carrying the toolbox's own error code and message (plain httpx calls)."""
+    if response.is_success:
+        return response
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    raise ToolboxError(
+        response.status_code,
+        response.reason_phrase,
+        str(body.get("error") or ""),
+        upstream_message=str(body.get("message") or ""),
+    )
 
 
 def _wait_for_video(client: httpx.Client, job_id: str) -> dict:
@@ -261,7 +278,7 @@ def _wait_for_video(client: httpx.Client, job_id: str) -> dict:
     timeout_s = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", enrichment_settings.ENRICHMENT_VIDEO_TIMEOUT_S)
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        job = client.get(f"videos/{job_id}/").raise_for_status().json()
+        job = _checked(client.get(f"videos/{job_id}/")).json()
         if job["status"] in ("done", "failed"):
             return job
         time.sleep(_VIDEO_POLL_INTERVAL_S)

@@ -14,8 +14,15 @@ import uuid
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import Kind, ProposalDraft, extras
-from django_enrichment.models import EnrichmentTask, Worker
-from django_enrichment.services import proposal_service, queue_config, queue_log, task_service, toolbox_calls
+from django_enrichment.models import ContentProposal, EnrichmentTask, Worker
+from django_enrichment.services import (
+    proposal_service,
+    qa_auto_check,
+    queue_config,
+    queue_log,
+    task_service,
+    toolbox_calls,
+)
 from django_enrichment.services.queue_types import SubjectResult
 
 _logger = logging.getLogger("process")
@@ -52,10 +59,11 @@ def _attempt(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str)
 
 
 def intake_subject(worker: Worker, task: EnrichmentTask, subject_ref: str, drafts: list[ProposalDraft]) -> None:
-    """Hand a subject's drafts to intake (a missing display label is looked up once per subject)."""
+    """Hand a subject's drafts to intake (a missing display label is looked up once per subject), then queue the
+    automatic checklist check of the new proposals when the run asks for it (`qa_auto_check`)."""
     label = _subject_label(worker, task, subject_ref) if any(not d.subject_label for d in drafts) else ""
-    for draft in drafts:
-        _intake(worker, task, subject_ref, draft, label)
+    proposals = [_intake(worker, task, subject_ref, draft, label) for draft in drafts]
+    qa_auto_check.schedule(task, [p for p in proposals if p is not None])
 
 
 def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> str:
@@ -64,14 +72,16 @@ def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> st
     return extras.subject_name(adapter, subject_ref=subject_ref, channel=task.params.get("channel", ""))
 
 
-def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: ProposalDraft, label: str) -> None:
+def _intake(
+    worker: Worker, task: EnrichmentTask, subject_ref: str, draft: ProposalDraft, label: str
+) -> ContentProposal | None:
     """Hand one draft to intake — `intake_media` (staged binary) when it carries a media file. A target whose
     pending proposal the operator edited keeps it (also when the edit lands while intake runs): the draft is
     dropped and counted in `counts.kept_edited`."""
     target = (worker.target_module, subject_ref, draft.target_kind, draft.target_locator)
     if proposal_service.has_operator_edits(*target):
         task_service.increment_count(task, "kept_edited")
-        return
+        return None
     fields = {
         "target_module": worker.target_module,
         "subject_ref": subject_ref,
@@ -86,8 +96,8 @@ def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: Propo
     }
     try:
         if draft.media_file is None:
-            proposal_service.intake(**fields)
-        else:
-            proposal_service.intake_media(file=draft.media_file, **fields)
+            return proposal_service.intake(**fields)
+        return proposal_service.intake_media(file=draft.media_file, **fields)
     except proposal_service.KeptEdited:
         task_service.increment_count(task, "kept_edited")
+        return None

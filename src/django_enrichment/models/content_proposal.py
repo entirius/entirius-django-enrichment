@@ -79,6 +79,9 @@ class ContentProposal(BaseModel):
     result_ref = models.CharField(max_length=255, blank=True, default="")
     # QA warnings of the current value `[{code, message, span}]` (`qa_service`) — equal to the latest revision's.
     warnings = models.JSONField(default=list, blank=True)
+    # When the AI last checked the current value against the profile's checklists (`qa_checklist`); null = not
+    # checked. Any new revision clears it, so it always speaks for the current value.
+    standard_checked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [

@@ -63,7 +63,7 @@ def check_standard(proposal: ContentProposal) -> list[dict]:
     )
     found = [_warning(problem, text) for problem in answer.value.get("problems", []) if problem.get("message")]
     warnings = [*qa_service.check(proposal, base_value), *found][: qa_service.MAX_WARNINGS]
-    return qa_service.store(proposal, warnings, base_value=base_value).warnings
+    return qa_service.store(proposal, warnings, base_value=base_value, checked=True).warnings
 
 
 def _checklists(proposal: ContentProposal) -> str:

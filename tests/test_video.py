@@ -11,6 +11,7 @@ import httpx
 import pytest
 import respx
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django_utils.toolbox import ToolboxError
 
 from django_enrichment.enums import TaskStatus
 from django_enrichment.kinds.video import VideoKind
@@ -127,6 +128,16 @@ class TestGenerateVideo:
             _mock_job(router, "failed", error={"error": "VIDEO_BLOCKED", "message": "blocked"})
             with pytest.raises(ValueError, match="VIDEO_BLOCKED"):
                 _generate()
+
+    def test_a_refused_submit_carries_the_toolbox_reason(self):
+        with respx.mock() as router:
+            router.post(MEDIA).mock(
+                return_value=httpx.Response(404, json={"error": "PRESET_NOT_FOUND", "message": "Unknown preset."})
+            )
+            with pytest.raises(ToolboxError) as caught:
+                _generate()
+        assert toolbox_calls.failure_code(caught.value) == "PRESET_NOT_FOUND"
+        assert toolbox_calls.failure_detail(caught.value) == "HTTP 404 PRESET_NOT_FOUND: Unknown preset."
 
     def test_timeout_raises(self, settings):
         settings.ENRICHMENT_VIDEO_TIMEOUT_S = 0

@@ -14,6 +14,8 @@ round-trip without touching any database table outside enrichment's own.
 
 from typing import Any
 
+from django.core.exceptions import ObjectDoesNotExist
+
 from django_enrichment.models import compute_locator_hash
 
 _STORE: dict[tuple[str, str, str], dict] = {}
@@ -29,6 +31,9 @@ _CONTEXT: dict = {}
 # tests that expect "no catalog" keep that behaviour — seed it with `set_catalog`.
 _CATALOG: list[dict] = []
 _LANGUAGES = ["pl", "en", "de"]
+
+# Subjects `subject_labels` knows in channel "default" (`{ref: label}`; any other channel is unknown) — `set_subjects`.
+_SUBJECTS: dict[str, str] = {}
 
 # Documents created by `apply` of a `target_kind="document"` proposal, keyed by the returned subject ref.
 DOCUMENT_KIND = "document"
@@ -112,6 +117,12 @@ def field_key(*, locator: dict) -> str | None:
     return locator.get("feature_idx")
 
 
+def subject_labels(*, refs: list[str], channel: str) -> dict[str, str]:
+    if channel != "default":
+        raise ObjectDoesNotExist(channel)
+    return {ref: _SUBJECTS[ref] for ref in refs if ref in _SUBJECTS}
+
+
 def build_context(*, subject_ref: str, channel: str, language: str) -> dict:
     return {"sku": subject_ref, "channel": channel, "language": language, **_CONTEXT}
 
@@ -125,6 +136,11 @@ def set_current(subject_ref: str, target_kind: str, target_locator: dict, value:
 
 def set_catalog(fields: list[dict]) -> None:
     _CATALOG[:] = [dict(field) for field in fields]
+
+
+def set_subjects(labels: dict[str, str]) -> None:
+    _SUBJECTS.clear()
+    _SUBJECTS.update(labels)
 
 
 def set_context(extra: dict) -> None:
@@ -150,6 +166,7 @@ def reset() -> None:
     _STORE.clear()
     _CATALOG.clear()
     _CONTEXT.clear()
+    _SUBJECTS.clear()
     _DOCUMENTS.clear()
     _RELEASED.clear()
     _REJECTED.clear()

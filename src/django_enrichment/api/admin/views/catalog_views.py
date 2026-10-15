@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Admin API — field catalog passthrough (contract A3 § 2): `GET fields/`, `GET languages/`.
+"""Admin API — field catalog passthrough (contract A3 § 2): `GET fields/`, `GET languages/`, `POST subjects/resolve/`.
 
 Thin layer over `catalog_service`. An adapter without the extra → 404 `NOT_SUPPORTED` (v2 error shape).
 """
@@ -18,9 +18,10 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from django_enrichment.api.admin.permissions import IsAdminUser
+from django_enrichment.api.admin.throttling import LookupThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
-from django_enrichment.schemas.requests import CatalogQuery
-from django_enrichment.schemas.responses import FieldResponse
+from django_enrichment.schemas.requests import CatalogQuery, SubjectResolveRequest
+from django_enrichment.schemas.responses import FieldResponse, SubjectResolveResponse
 from django_enrichment.services import catalog_service
 from django_enrichment.services.catalog_service import NotSupportedError
 
@@ -36,10 +37,10 @@ def _query(request: Request) -> CatalogQuery:
         raise_pydantic_as_drf(exc)
 
 
-def _not_supported() -> Response:
+def _not_supported(message: str = "This module does not describe its fields.") -> Response:
     body = ErrorResponse(
         error="NOT_SUPPORTED",
-        message="This module does not describe its fields.",
+        message=message,
         debug_id=uuid.uuid4().hex[:8],
         details=[],
     )
@@ -51,6 +52,9 @@ class CatalogViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
     access_area = "enrichment.proposals"
     serializer_class = None
+
+    def get_throttles(self):
+        return [LookupThrottle()] if self.action == "resolve_subjects" else []
 
     @extend_schema(
         tags=_TAGS,
@@ -83,3 +87,22 @@ class CatalogViewSet(viewsets.ViewSet):
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(languages)
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Which refs (SKUs) exist in a module's channel",
+        request=SubjectResolveRequest,
+        responses={200: SubjectResolveResponse, 400: None, 404: None},
+    )
+    def resolve_subjects(self, request: Request) -> Response:
+        try:
+            data = SubjectResolveRequest(**request.data)
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
+        try:
+            result = catalog_service.resolve_subjects(target_module=data.module, channel=data.channel, refs=data.refs)
+        except NotSupportedError:
+            return _not_supported("This module cannot look up its items.")
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return Response(SubjectResolveResponse(**result).model_dump(mode="json"))

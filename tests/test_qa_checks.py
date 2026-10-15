@@ -281,7 +281,7 @@ class TestApi:
                 f"{BASE}/proposals/{proposal.pk}/revise/", {"quick_action": "check_standard"}, format="json"
             )
         assert resp.status_code == 200
-        assert resp.json() == {"warnings": [{"code": "checklist", "message": "No benefit.", "span": None}]}
+        assert resp.json()["warnings"] == [{"code": "checklist", "message": "No benefit.", "span": None}]
 
     def test_check_standard_without_checklists_is_400(self, admin_client, fake_adapter):
         proposal = _proposal("A chair.")

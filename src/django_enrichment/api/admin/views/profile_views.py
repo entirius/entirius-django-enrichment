@@ -19,10 +19,11 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.views._helpers import raise_as_drf
 from django_enrichment.schemas.profile import PROFILE_SCHEMA, SCHEMA_VERSION
-from django_enrichment.schemas.requests import ProfileUpdateRequest
+from django_enrichment.schemas.requests import ProfileSettingsRequest, ProfileUpdateRequest
 from django_enrichment.schemas.responses import (
     ProfileResponse,
     ProfileSchemaResponse,
+    ProfileSettingsResponse,
     ProfileStatusResponse,
     ProfileVersionResponse,
 )
@@ -114,6 +115,24 @@ class ProfileViewSet(viewsets.ViewSet):
     )
     def completeness(self, request: Request) -> Response:
         return Response(ProfileStatusResponse(**profile_service.status(_channel(request))).model_dump())
+
+    @extend_schema(tags=_TAGS, summary="The instance's AI settings", responses={200: ProfileSettingsResponse})
+    def ai_settings(self, request: Request) -> Response:
+        return Response(ProfileSettingsResponse(qa_check=profile_service.qa_check_default()).model_dump())
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Change the instance's AI settings",
+        request=ProfileSettingsRequest,
+        responses={200: ProfileSettingsResponse, 400: None},
+    )
+    def update_ai_settings(self, request: Request) -> Response:
+        try:
+            data = ProfileSettingsRequest(**request.data)
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
+        enabled = profile_service.set_qa_check_default(data.qa_check)
+        return Response(ProfileSettingsResponse(qa_check=enabled).model_dump())
 
     @extend_schema(tags=_TAGS, summary="The profile's JSON Schema", responses={200: ProfileSchemaResponse})
     def json_schema(self, request: Request) -> Response:

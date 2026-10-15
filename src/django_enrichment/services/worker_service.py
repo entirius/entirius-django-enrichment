@@ -49,6 +49,7 @@ def describe(worker: Worker) -> dict[str, Any]:
         "kind": worker.kind,
         "target_module": worker.target_module,
         "mode": worker.mode,
+        "model": worker.model,
         "params_schema": get_kind(worker.kind).Params.model_json_schema(),
     }
 

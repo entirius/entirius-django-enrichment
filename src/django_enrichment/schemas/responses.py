@@ -102,6 +102,7 @@ class WarningsResponse(BaseModel):
     """`POST proposals/{id}/revise/` with `check_standard` — the proposal's warnings, no revision saved."""
 
     warnings: list[QaWarning]
+    standard_checked_at: datetime | None = Field(description="When the value was checked against the checklists")
 
 
 class ProposalResponse(BaseModel):
@@ -136,6 +137,9 @@ class ProposalResponse(BaseModel):
     )
     result_ref: str = Field(description="What applying it created (a document ref); blank otherwise", examples=[""])
     warnings: list[QaWarning] = Field(description="QA warnings of the current value")
+    standard_checked_at: datetime | None = Field(
+        None, description="When the current value was checked against the checklists; null = not checked"
+    )
     created_at: datetime
     modified_at: datetime
 
@@ -215,6 +219,7 @@ class WorkerResponse(BaseModel):
     kind: str = Field(description="Kind of work", examples=["translate"])
     target_module: str = Field(description="Adapter key", examples=["pim"])
     mode: str = Field(description="internal | external", examples=["internal"])
+    model: str = Field(description="AI model of its calls; blank = the toolbox default", examples=[""])
     params_schema: dict = Field(description="JSON schema of the task params", examples=[{"type": "object"}])
 
 
@@ -286,6 +291,18 @@ class FieldResponse(BaseModel):
     options_truncated: bool | None = None
 
 
+class KnownSubjectResponse(BaseModel):
+    ref: str = Field(examples=["SKU-1"])
+    label: str = Field(description="The subject's name; blank when it has none", examples=["Linen sofa"])
+
+
+class SubjectResolveResponse(BaseModel):
+    """`POST subjects/resolve/` — the refs split into known (with a label) and unknown, request order kept."""
+
+    known: list[KnownSubjectResponse]
+    unknown: list[str] = Field(examples=[["SKU-404"]])
+
+
 class WorkflowStepResponse(BaseModel):
     """One step of a workflow definition."""
 
@@ -339,6 +356,15 @@ class RunListResponse(BaseModel):
     next: str | None
     previous: str | None
     results: list[RunResponse]
+
+
+class ProfileSettingsResponse(BaseModel):
+    """`GET/PUT profile/settings/` — the instance's AI settings that are not profile content."""
+
+    qa_check: bool = Field(
+        description="New AI text proposals are checked against the checklists unless a run says otherwise",
+        examples=[False],
+    )
 
 
 class ProfileResponse(BaseModel):
