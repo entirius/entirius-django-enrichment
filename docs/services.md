@@ -85,7 +85,7 @@ routing is proven at this stage.
 |---|---|
 | `intake(*, target_module, subject_ref, target_kind, target_locator, proposed_value, task=None, ...)` | Idempotent on `external_ref`. Snapshots the live value via `adapter.read_current` (never the worker's "before"). Supersedes older `pending` proposals on the same `(target_module, subject_ref, target_kind, locator_hash)` — `locator_hash` computed explicitly (the model `save()` is bypassed by bulk paths). Bumps `task.counts["proposed"]`. |
 | `transition_status(proposal, new_status, *, user=None, reason="")` | Enforce `PROPOSAL_STATUS_TRANSITIONS`. Stamps `applied_at`/audit on `applied`, audit + `reject_reason` on `rejected`. |
-| `list_for_review(*, status=pending, module=None, target_kind=None, batch_id=None, source=None, confidence_min=None, search=None, ordering="-created_at")` | Server-side filtered/ordered queue (`search` → `subject_label__icontains`). |
+| `list_for_review(*, status=pending, module=None, target_kind=None, batch_id=None, source=None, confidence_min=None, search=None, ordering="-created_at")` | Server-side filtered/ordered queue (`search` → `subject_label` or `subject_ref`, icontains). |
 | `accept(proposal, *, user=None)` | Delegate to `apply_service.apply` (drift-aware write). |
 | `reject(proposal, reason, *, user=None)` | `→ rejected` + reason + audit. |
 | `apply_many(proposal_ids, *, user_id=None)` | Sync core: per-row apply, returns `{applied, drifted, failed}`. Called by the Celery task and directly by tests. |

@@ -14,10 +14,10 @@ import pytest
 from django_utils.toolbox import ToolboxError
 from pydantic import BaseModel
 
-from django_enrichment.enums import TaskStatus
+from django_enrichment.enums import RevisionAuthor, TaskStatus
 from django_enrichment.kinds import Kind, ProposalDraft, registry
 from django_enrichment.models import ContentProposal
-from django_enrichment.services import runner_service, task_service, worker_service
+from django_enrichment.services import revision_service, runner_service, task_service, worker_service
 
 
 class EchoOptions(BaseModel):
@@ -45,6 +45,11 @@ class EchoKind(Kind):
             task_service.transition_status(task_service.get_task(task.pk), TaskStatus.CANCELLED.value)
         locator = {"channel": params.channel, "language": "pl", "feature_idx": "description"}
         return [ProposalDraft("attribute_value", locator, {"text": f"new {subject_ref}"}, subject_label=subject_ref)]
+
+
+def _nameless_run(self, worker, task, subject_ref):
+    """A kind run whose draft names no subject (the write and pick kinds)."""
+    return [ProposalDraft("attribute_value", {"language": "pl"}, {"text": subject_ref})]
 
 
 @pytest.fixture
@@ -150,6 +155,39 @@ class TestRun:
         task = self._run(["SKU-1", "SKU-2", "SKU-3"], cancel_on=["SKU-1"])
         assert task.status == TaskStatus.CANCELLED.value
         assert list(ContentProposal.objects.values_list("subject_ref", flat=True)) == ["SKU-1"]
+
+    def test_rerun_supersedes_an_untouched_pending_proposal(self, echo_worker):
+        echo_worker()
+        self._run(["SKU-1"])
+        task = self._run(["SKU-1"])
+        statuses = sorted(ContentProposal.objects.values_list("status", flat=True))
+        assert statuses == ["pending", "superseded"]
+        assert task.counts == {"proposed": 1}
+
+    def test_rerun_keeps_a_pending_proposal_the_operator_edited(self, echo_worker):
+        echo_worker()
+        self._run(["SKU-1", "SKU-2"])
+        edited = ContentProposal.objects.get(subject_ref="SKU-1")
+        revision_service.add_revision(edited, {"text": "mine"}, author_kind=RevisionAuthor.USER.value)
+        task = self._run(["SKU-1", "SKU-2"])
+        edited.refresh_from_db()
+        assert (edited.status, edited.proposed_value) == ("pending", {"text": "mine"})
+        assert ContentProposal.objects.filter(subject_ref="SKU-1").count() == 1
+        assert task.counts == {"proposed": 1, "kept_edited": 1}
+
+    def test_a_nameless_draft_gets_the_subject_name(self, echo_worker, fake_adapter, monkeypatch):
+        echo_worker()
+        fake_adapter.set_context({"name": "Orion lamp"})
+        monkeypatch.setattr(EchoKind, "run", _nameless_run)
+        self._run(["SKU-1"])
+        assert ContentProposal.objects.get().subject_label == "Orion lamp"
+
+    def test_a_failing_name_lookup_leaves_the_label_empty(self, echo_worker, fake_adapter, monkeypatch):
+        echo_worker()
+        monkeypatch.setattr(fake_adapter, "build_context", lambda **_: 1 / 0)
+        monkeypatch.setattr(EchoKind, "run", _nameless_run)
+        task = self._run(["SKU-1"])
+        assert (task.status, ContentProposal.objects.get().subject_label) == (TaskStatus.DONE.value, "")
 
     def test_task_not_open_is_skipped(self, echo_worker):
         echo_worker()

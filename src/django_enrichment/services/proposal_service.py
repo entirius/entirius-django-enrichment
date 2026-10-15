@@ -20,7 +20,7 @@ from typing import Any
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 
 from django_enrichment import settings as enrichment_settings
@@ -252,6 +252,19 @@ def _supersede_pending(target_module: str, subject_ref: str, target_kind: str, t
     ).update(status=ProposalStatus.SUPERSEDED.value, modified_at=timezone.now())
 
 
+def has_operator_edits(target_module: str, subject_ref: str, target_kind: str, target_locator: dict) -> bool:
+    """True when the target has a pending proposal the operator already worked on (any revision after the first:
+    an edit, an AI correction they asked for, a restore). The runner keeps such a proposal instead of superseding it."""
+    return ContentProposal.objects.filter(
+        target_module=target_module,
+        subject_ref=subject_ref,
+        target_kind=target_kind,
+        locator_hash=compute_locator_hash(target_locator),
+        status=ProposalStatus.PENDING.value,
+        revisions__number__gt=1,
+    ).exists()
+
+
 def list_for_review(
     *,
     status: str = ProposalStatus.PENDING.value,
@@ -280,7 +293,7 @@ def list_for_review(
     if confidence_min is not None:
         qs = qs.filter(confidence__gte=confidence_min)
     if search:
-        qs = qs.filter(subject_label__icontains=search)
+        qs = qs.filter(Q(subject_label__icontains=search) | Q(subject_ref__icontains=search))
     if subject_ref:
         qs = qs.filter(subject_ref=subject_ref)
     if task_id is not None:

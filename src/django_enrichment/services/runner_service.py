@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
+from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TaskStatus, WorkerMode
 from django_enrichment.kinds import Kind, ProposalDraft, extras, get_kind
 from django_enrichment.models import EnrichmentTask, Worker
@@ -75,8 +76,10 @@ def _run_subjects(worker: Worker, task: EnrichmentTask) -> tuple[int, int]:
 
 def _run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> bool:
     try:
-        for draft in kind.run(worker, task, subject_ref):
-            _intake(worker, task, subject_ref, draft)
+        drafts = kind.run(worker, task, subject_ref)
+        label = _subject_label(worker, task, subject_ref) if any(not d.subject_label for d in drafts) else ""
+        for draft in drafts:
+            _intake(worker, task, subject_ref, draft, label)
     except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the task
         _record_failure(task, subject_ref, exc)
         task_service.increment_count(task, "failed")
@@ -92,8 +95,19 @@ def _record_failure(task: EnrichmentTask, subject_ref: str, exc: Exception) -> N
     task_service.record_error(task, subject_ref=subject_ref, code=code, error_id=error_id)
 
 
-def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: ProposalDraft) -> None:
-    """Hand one draft to intake — `intake_media` (staged binary) when it carries a media file."""
+def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> str:
+    """The name review shows for a subject whose drafts carry none (a product's name next to its SKU)."""
+    adapter = get_adapter(worker.target_module)
+    return extras.subject_name(adapter, subject_ref=subject_ref, channel=task.params.get("channel", ""))
+
+
+def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: ProposalDraft, label: str) -> None:
+    """Hand one draft to intake — `intake_media` (staged binary) when it carries a media file. A target whose
+    pending proposal the operator already edited keeps it: the draft is dropped and counted in `counts.kept_edited`."""
+    target = (worker.target_module, subject_ref, draft.target_kind, draft.target_locator)
+    if proposal_service.has_operator_edits(*target):
+        task_service.increment_count(task, "kept_edited")
+        return
     fields = {
         "target_module": worker.target_module,
         "subject_ref": subject_ref,
@@ -101,7 +115,7 @@ def _intake(worker: Worker, task: EnrichmentTask, subject_ref: str, draft: Propo
         "target_locator": draft.target_locator,
         "proposed_value": draft.proposed_value,
         "task": task,
-        "subject_label": draft.subject_label,
+        "subject_label": draft.subject_label or label,
         "source": f"worker:{worker.key}@v{worker.version}",
         "cost_usd": draft.cost_usd,
     }

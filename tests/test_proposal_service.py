@@ -273,3 +273,12 @@ def test_list_for_review_applies_filters(fake_adapter):
     result = proposal_service.list_for_review(module="pim", confidence_min=Decimal("0.50"))
 
     assert list(result) == [keep]  # default status=pending excludes the rejected one; low-conf filtered out
+
+
+@pytest.mark.django_db
+def test_search_matches_the_product_name_or_its_sku(fake_adapter):
+    orion = _intake(fake_adapter, subject_ref="ENT-S001", subject_label="Orion lamp")
+    _intake(fake_adapter, subject_ref="ENT-S002", subject_label="Vega chair")
+
+    assert list(proposal_service.list_for_review(search="orion")) == [orion]
+    assert list(proposal_service.list_for_review(search="s001")) == [orion]

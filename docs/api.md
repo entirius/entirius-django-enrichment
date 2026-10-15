@@ -267,6 +267,8 @@ came back empty). `GET /tasks/?batch_key=` supports the CMS running indicator.
 `external_ref` returns the existing proposal instead of creating a duplicate. Intake also snapshots
 the live value via `adapter.read_current` (never the worker's "before") and supersedes any older
 `pending` proposal on the same `(target_module, subject_ref, target_kind, locator_hash)` target.
+The internal runner never supersedes a pending proposal the operator already worked on (a revision after the
+first: edit, correction, restore): it drops its own draft for that target and counts it in `counts.kept_edited`.
 
 Intake is throttled (`enrichment_intake` scope, `100/min` fallback) — it's the high-volume,
 worker-facing path. The other endpoints (operator review) are not throttled.
@@ -274,7 +276,7 @@ worker-facing path. The other endpoints (operator review) are not throttled.
 ## Review filters
 
 `GET /proposals/` filters server-side: `status` (default `pending`; `all` = every status), `target_module`, `target_kind`,
-`batch_id`, `source`, `confidence_min`, `search` (matches `subject_label`), `subject_ref` (exact). `ordering` is validated
+`batch_id`, `source`, `confidence_min`, `search` (part of `subject_label` or `subject_ref`), `subject_ref` (exact). `ordering` is validated
 against an allowlist (`created_at`, `confidence`, `status`, `subject_ref`, each `±`) before reaching
 `order_by` — an unknown field is a 400, never an ORM error that leaks column names.
 
