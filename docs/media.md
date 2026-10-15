@@ -52,6 +52,17 @@ runner calls it today: the `video` kind returns a draft carrying `media_file` an
 through `intake_media` (locator `{channel}`, `proposed_value` `{preset, duration_s, aspect}`). The staged
 ref keeps the `.mp4` suffix, so `staged-file/` streams it as `video/mp4`.
 
+### Image processing (kind `image`, plan 25)
+
+The `image` kind sends one of the subject's pictures (`params.picture_ref`, blank = the one `list_pictures` marks
+main; read through the adapter extras `list_pictures` / `picture`) to the toolbox image job
+(`POST images/` with `operation` packshot | lifestyle | enhance | instruct, optional `preset`, `prompt`, `n` 1–4;
+poll `images/{id}/`, download `images/{id}/outputs/{k}/download/`). Each output is one picture proposal staged
+through `intake_media`: locator `{channel, source_picture_ref, operation, variant}`, value
+`{op: "derived", operation, preset, variant, of}`. The job's cost is split over its outputs. On accept the operator
+picks `add` (next to the original, the default and the only bulk mode) or `replace` (in place of the original,
+whose file stays the undo anchor) — see `docs/api.md` § Accept / drift.
+
 ## Review (CMS)
 
 `DiffRenderer` maps `target_kind=image|picture` to `ImageDiff` (before/after thumbnails, opening the

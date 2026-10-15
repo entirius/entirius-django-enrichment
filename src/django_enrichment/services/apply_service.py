@@ -23,7 +23,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.enums import ProposalStatus
+from django_enrichment.enums import ApplyMode, ProposalStatus
 from django_enrichment.models import ContentProposal
 from django_enrichment.services import staging_store
 
@@ -50,16 +50,51 @@ def _target_missing_error(proposal: ContentProposal) -> ValueError:
 
 
 def _result_ref(outcome: object) -> str:
-    """`adapter.apply` may return `{"subject_ref"}` — the subject it created (contract A4 § 6)."""
-    return str(outcome.get("subject_ref") or "") if isinstance(outcome, dict) else ""
+    """`adapter.apply` may return `{"subject_ref"}` — the subject it created (contract A4 § 6) — or `{"ref"}`, another
+    object it created (the gallery link of an added picture)."""
+    if not isinstance(outcome, dict):
+        return ""
+    return str(outcome.get("subject_ref") or outcome.get("ref") or "")
 
 
-def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) -> ContentProposal:
-    """Drift-check then write `proposed_value` through the target module's adapter."""
+def apply_modes(proposal: ContentProposal) -> list[str]:
+    """The ways the target module can apply this proposal (`["add", "replace"]`), from the adapter's optional
+    `apply_modes(*, target_kind, target_locator)`; `[]` = no choice (one fixed way)."""
+    try:
+        offered = getattr(get_adapter(proposal.target_module), "apply_modes", None)
+    except ValueError:
+        return []
+    if offered is None:
+        return []
+    modes = offered(target_kind=proposal.target_kind, target_locator=proposal.target_locator)
+    return [mode for mode in modes if mode in ApplyMode.values]
+
+
+def _chosen_mode(proposal: ContentProposal, mode: str | None) -> str:
+    """The mode stored on the proposal: the request's (default `add`) when the adapter offers a choice, else blank.
+
+    Raises `ValueError` for a mode the adapter does not offer — `replace` is never silently turned into `add`."""
+    modes = apply_modes(proposal)
+    chosen = mode or ApplyMode.ADD.value
+    if not modes and chosen == ApplyMode.ADD.value:
+        return ""
+    if chosen not in modes:
+        raise ValueError(f"this proposal cannot be applied as {chosen!r} (offered: {modes or ['add']})")
+    return chosen
+
+
+def apply(
+    proposal: ContentProposal, *, user: AbstractBaseUser | None = None, mode: str | None = None
+) -> ContentProposal:
+    """Drift-check then write `proposed_value` through the target module's adapter.
+
+    `mode` (`add` | `replace`, default `add`) matters only for a proposal whose adapter offers `apply_modes`;
+    bulk callers never pass it, so a bulk accept always adds."""
     from django_enrichment.services import proposal_service, workflow_service  # local: avoids import cycles
 
     if proposal.status not in _APPLYABLE_STATUSES:
         raise ValueError(f"cannot apply proposal in status {proposal.status!r}")
+    chosen_mode = _chosen_mode(proposal, mode)
 
     adapter = get_adapter(proposal.target_module)
     try:
@@ -87,6 +122,7 @@ def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) ->
     with transaction.atomic():
         # A workflow step's output: lock the run first and refuse a cancelled run / superseded output.
         workflow_service.guard_apply(proposal)
+        proposal.apply_mode = chosen_mode
         try:
             outcome = adapter.apply(proposal)
         except ObjectDoesNotExist as exc:
@@ -100,7 +136,7 @@ def apply(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) ->
         proposal.applied_snapshot = adapter.read_current(
             subject_ref=proposal.subject_ref, target_kind=proposal.target_kind, target_locator=proposal.target_locator
         )
-        proposal.save(update_fields=["applied_snapshot", "result_ref", "modified_at"])
+        proposal.save(update_fields=["applied_snapshot", "result_ref", "apply_mode", "modified_at"])
         result = proposal_service.transition_status(proposal, ProposalStatus.APPLIED.value, user=user)
         # A workflow step's output was approved → advance its run (same transaction: a failing next step
         # rolls the approval back).

@@ -349,9 +349,12 @@ def update_value(
     return proposal
 
 
-def accept(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) -> ContentProposal:
-    """Accept a single proposal — drift-aware write via the adapter."""
-    return apply_service.apply(proposal, user=user)
+def accept(
+    proposal: ContentProposal, *, user: AbstractBaseUser | None = None, mode: str | None = None
+) -> ContentProposal:
+    """Accept a single proposal — drift-aware write via the adapter; `mode` = add / replace (media, see
+    `apply_service.apply_modes`)."""
+    return apply_service.apply(proposal, user=user, mode=mode)
 
 
 def reject(proposal: ContentProposal, reason: str, *, user: AbstractBaseUser | None = None) -> ContentProposal:

@@ -77,6 +77,13 @@ PROPOSAL_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
+class ApplyMode(models.TextChoices):
+    """How an accepted media proposal lands next to its source (plan 25): beside it, or in its place."""
+
+    ADD = "add", "Add"
+    REPLACE = "replace", "Replace"
+
+
 class WorkerMode(models.TextChoices):
     INTERNAL = "internal", "Internal (our runner)"
     EXTERNAL = "external", "External (n8n etc. via the API)"

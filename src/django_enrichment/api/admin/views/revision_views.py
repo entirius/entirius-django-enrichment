@@ -23,7 +23,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle
-from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.api.admin.views._helpers import raise_as_drf, serialize_proposal
 from django_enrichment.api.admin.views.profile_views import PROFILE_AREA
 from django_enrichment.schemas.requests import (
     FactSuggestRequest,
@@ -160,7 +160,7 @@ class RevisionViewSet(viewsets.ViewSet):
             return _not_applicable()
         except ValueError as exc:
             raise_as_drf(exc)
-        return Response(ProposalResponse.model_validate(proposal).model_dump(mode="json"))
+        return Response(serialize_proposal(proposal))
 
     @extend_schema(
         tags=_TAGS,
@@ -194,7 +194,7 @@ class RevisionViewSet(viewsets.ViewSet):
             proposal = rules_service.set_rules(proposal, data.rules)
         except ValueError as exc:
             raise_as_drf(exc)
-        return Response(ProposalResponse.model_validate(proposal).model_dump(mode="json"))
+        return Response(serialize_proposal(proposal))
 
     @extend_schema(
         tags=_TAGS,

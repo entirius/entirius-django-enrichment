@@ -1,7 +1,7 @@
-"""The bus's only door to the AI toolbox — completion, translation, SEO data, video jobs and the usage read.
+"""The bus's only door to the AI toolbox — completion, translation, SEO data, video/image jobs and the usage read.
 
 Completion, translation and SEO data go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
-errors) on the instance channel. Video jobs talk to the toolbox media API with plain httpx: the endpoint
+errors) on the instance channel. Video and image jobs talk to the toolbox media API with plain httpx: the endpoint
 may differ from the text toolbox (`ENRICHMENT_VIDEO_TOOLBOX_*`, POC escape hatch, Redmine #34464).
 Prompts live in the kinds. Toolbox errors propagate: the runner counts the subject as failed.
 
@@ -39,6 +39,7 @@ _SEO_TOOL = "ai-seo"
 _TRACKER_TOOL = "ai-tracker"
 _USAGE_READ_TIMEOUT_S = 5.0
 _VIDEO_POLL_INTERVAL_S = 10
+_IMAGE_POLL_INTERVAL_S = 3
 _VIDEO_HTTP_TIMEOUT_S = 60.0
 # Where each toolbox response carries its cost today (switch here for a unified cost endpoint).
 _COST_FIELDS = {"completion": "cost", "translate": "total_cost_usd", "media": "cost", "seo": "cost"}
@@ -243,17 +244,52 @@ def generate_video(*, image: bytes, mime: str, form: dict[str, str], task: Any =
     task) up to `ENRICHMENT_VIDEO_TIMEOUT_S`; a failed job or the timeout raises. The finished job's cost is
     charged before the download (a failed job's too); polling that breaks off charges an unknown cost.
     """
-    with _video_client() as client:
-        response = client.post("videos/", data=form, files={"image": ("image", image, mime)})
-        job_id = _checked(response).json()["job_id"]
-        with _unknown_cost_on_error(task, "media"):
-            job = _wait_for_video(client, job_id)
-        cost = _charge(task, "media", job)
-        if job["status"] == "failed":
-            code = (job.get("error") or {}).get("error", "UNKNOWN")
-            raise ValueError(f"toolbox video job {job_id} failed: {code}")
+    with _media_client() as client:
+        job_id, job, cost = _run_media_job(client, _VIDEO_JOB, image=(image, mime), form=form, task=task)
         video = _checked(client.get(f"videos/{job_id}/download/")).content
     return Costed(video, cost)
+
+
+def generate_image(*, image: bytes, mime: str, form: dict[str, str], task: Any = None) -> Costed:
+    """Image processing on the toolbox media API: submit → poll → download every output (`value` = list of PNG bytes).
+
+    `form` carries `operation`, `preset` (optional), `prompt`, `n`. Same job flow and error/cost rules as
+    `generate_video`; polls up to `ENRICHMENT_IMAGE_TIMEOUT_S`. The job's cost covers all its outputs.
+    """
+    with _media_client() as client:
+        job_id, job, cost = _run_media_job(client, _IMAGE_JOB, image=(image, mime), form=form, task=task)
+        outputs = sorted(output["index"] for output in job.get("outputs") or [])
+        images = [_checked(client.get(f"images/{job_id}/outputs/{k}/download/")).content for k in outputs]
+    if not images:
+        raise ValueError(f"toolbox image job {job_id} finished without outputs")
+    return Costed(images, cost)
+
+
+@dataclass(frozen=True)
+class _MediaJob:
+    path: str  # collection under the media API: `videos` | `images`
+    timeout_setting: str
+    poll_interval_s: int
+
+
+_VIDEO_JOB = _MediaJob("videos", "ENRICHMENT_VIDEO_TIMEOUT_S", _VIDEO_POLL_INTERVAL_S)
+_IMAGE_JOB = _MediaJob("images", "ENRICHMENT_IMAGE_TIMEOUT_S", _IMAGE_POLL_INTERVAL_S)
+
+
+def _run_media_job(
+    client: httpx.Client, spec: _MediaJob, *, image: tuple[bytes, str], form: dict[str, str], task: Any
+) -> tuple[str, dict, Decimal | None]:
+    """Submit one media job and wait for it: `(job_id, finished job, charged cost)`; a failed job raises."""
+    data, mime = image
+    response = client.post(f"{spec.path}/", data=form, files={"image": ("image", data, mime)})
+    job_id = _checked(response).json()["job_id"]
+    with _unknown_cost_on_error(task, "media"):
+        job = _wait_for_job(client, spec, job_id)
+    cost = _charge(task, "media", job)
+    if job["status"] == "failed":
+        code = (job.get("error") or {}).get("error", "UNKNOWN")
+        raise ValueError(f"toolbox {spec.path[:-1]} job {job_id} failed: {code}")
+    return job_id, job, cost
 
 
 def _checked(response: httpx.Response) -> httpx.Response:
@@ -273,19 +309,19 @@ def _checked(response: httpx.Response) -> httpx.Response:
     )
 
 
-def _wait_for_video(client: httpx.Client, job_id: str) -> dict:
+def _wait_for_job(client: httpx.Client, spec: _MediaJob, job_id: str) -> dict:
     """Poll until the job is `done` or `failed` (returned either way); the timeout raises."""
-    timeout_s = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", enrichment_settings.ENRICHMENT_VIDEO_TIMEOUT_S)
+    timeout_s = getattr(settings, spec.timeout_setting, getattr(enrichment_settings, spec.timeout_setting))
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        job = _checked(client.get(f"videos/{job_id}/")).json()
+        job = _checked(client.get(f"{spec.path}/{job_id}/")).json()
         if job["status"] in ("done", "failed"):
             return job
-        time.sleep(_VIDEO_POLL_INTERVAL_S)
-    raise TimeoutError(f"toolbox video job {job_id} not done after {timeout_s}s")
+        time.sleep(spec.poll_interval_s)
+    raise TimeoutError(f"toolbox {spec.path[:-1]} job {job_id} not done after {timeout_s}s")
 
 
-def _video_client() -> httpx.Client:
+def _media_client() -> httpx.Client:
     base_url = _video_setting("URL", "AI_TOOLBOX_BASE_URL").rstrip("/")
     api_key = _video_setting("API_KEY", "AI_TOOLBOX_API_KEY")
     channel = _video_setting("CHANNEL", "AI_TOOLBOX_CHANNEL")

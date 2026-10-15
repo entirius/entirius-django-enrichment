@@ -65,6 +65,8 @@ ENRICHMENT_SPAWN_COOLDOWN_DAYS = getattr(settings, "ENRICHMENT_SPAWN_COOLDOWN_DA
 #                                  AI_TOOLBOX_* setting. POC escape hatch (Redmine #34464).
 ENRICHMENT_MAX_VIDEO_BYTES = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", 100 * 1024 * 1024)
 ENRICHMENT_VIDEO_TIMEOUT_S = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", 900)
+# ENRICHMENT_IMAGE_TIMEOUT_S     — how long the `image` kind polls a toolbox image job (same media endpoint).
+ENRICHMENT_IMAGE_TIMEOUT_S = getattr(settings, "ENRICHMENT_IMAGE_TIMEOUT_S", 300)
 
 # Batch correction (contract A3 § 1). Read at call time (host/test override wins), same pattern as above.
 #

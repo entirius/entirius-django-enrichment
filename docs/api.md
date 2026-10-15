@@ -51,7 +51,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `PUT` | `proposals/{id}/rules/` | `rules_service.set_rules` | `{rules: [str]}` ≤ 20 × ≤ 200 chars → 200 proposal |
 | `POST` | `proposals/{id}/rules/promote/` | `rules_service.promote` | `{rule, target: template\|worker\|profile}` → 200 `{target, rules}`; template = the task's `params.template` (none → 400); `profile` leaves a memory `rule_suggestion` (rules = the channel's active suggestions). Area `enrichment.profile`: a worker or template rule enters every prompt of that worker / template, as strong as the profile's `always_rules` |
 | `POST` | `tasks/{id}/revise/` | `revise_batch_service.queue` | `{instruction?, quick_action?}` (no `variants`, `check_standard`, `fix_warnings`) → 202 `{queued}`; Celery `enrichment.revise_task`. Throttled. One batch per task at a time (400 while one runs; the lock ends with the batch or after `ENRICHMENT_REVISE_LOCK_SECONDS`, 3600); at most `ENRICHMENT_REVISE_BATCH_MAX` (200) pending proposals, else 400 |
-| `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Response `result_ref` = what the apply created |
+| `POST` | `proposals/{id}/accept/` | `proposal_service.accept` | Drift-aware apply via the adapter; approves a workflow step (400 `ANSWERS_MISSING` for unanswered questions). Body `{mode?}` (`add` \| `replace`, one of the proposal's `apply_modes`; default `add`). Response `result_ref` = what the apply created |
 | `GET` | `workflows/` | `workflow_queries.list_definitions` | Active workflows — see `docs/workflows.md` |
 | `GET/POST` | `runs/` | `workflow_service.start` | Runs list / start `{definition, inputs, channel}` → 201. Throttled |
 | `GET` | `runs/{uid}/` | `workflow_queries.get_run` | Run with steps state and cost |
@@ -353,6 +353,13 @@ if it diverged from the snapshot, flips the proposal to `drifted` (no write) for
 re-confirm. No drift → the adapter writes and the proposal becomes `applied`. `bulk-accept/` does the
 same over a filtered `pending` set asynchronously (Celery); `bulk-reject/` is a synchronous
 `.update()`.
+
+**Apply mode (plan 25).** A proposal lists `apply_modes` — the ways its adapter can write it (optional adapter
+extra `apply_modes(*, target_kind, target_locator)`); `[]` = one fixed way. For a picture made from a product
+picture PIM offers `["add", "replace"]`. The accept body takes an optional `mode` (`add` | `replace`, default
+`add`); a mode the proposal does not offer → 400 and nothing is written. The choice is stored in `apply_mode`
+(blank when no choice was offered) before the adapter's `apply`, and `revert` reads it. `bulk-accept/` never
+passes a mode, so a bulk accept always adds — replacing an original needs a single, conscious accept.
 
 ## Errors
 

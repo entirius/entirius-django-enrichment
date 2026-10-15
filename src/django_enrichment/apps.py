@@ -37,6 +37,7 @@ class EnrichmentConfig(AppConfig):
         from django_enrichment.kinds.compose import ComposeKind
         from django_enrichment.kinds.field import FieldKind
         from django_enrichment.kinds.generate import GenerateKind
+        from django_enrichment.kinds.image import ImageKind
         from django_enrichment.kinds.pick import PickKind
         from django_enrichment.kinds.questions import QuestionsKind
         from django_enrichment.kinds.translate import TranslateKind
@@ -46,6 +47,7 @@ class EnrichmentConfig(AppConfig):
         register_kind("translate", TranslateKind)
         register_kind("field", FieldKind)
         register_kind("video", VideoKind)
+        register_kind("image", ImageKind)
         register_kind("write", WriteKind)
         register_kind("pick", PickKind)
         register_kind("generate", GenerateKind)

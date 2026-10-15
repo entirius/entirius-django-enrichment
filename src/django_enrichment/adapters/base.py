@@ -74,6 +74,18 @@ class EnrichmentAdapter(Protocol):
         `current_snapshot = {"sha1", "role", "position", "alt_t9n", "url"}` of the displaced main
         (empty `{}` when none). The bus drops the staged file after apply; the displaced source
         object (e.g. the old PIM `Picture`) is the undo anchor for `revert`.
+
+        Apply mode (plan 25, optional): when the adapter offers `apply_modes` for a target, the bus stores the
+        operator's choice in `proposal.apply_mode` (`"add"` | `"replace"`) before calling `apply`; `revert`
+        reads it too. Blank = no choice was offered — an adapter without `apply_modes` never sees a mode.
+        """
+        ...
+
+    def apply_modes(self, *, target_kind: str, target_locator: dict) -> list[str]:
+        """The ways `apply` can write this target — `["add", "replace"]` — or `[]` for one fixed way (OPTIONAL).
+
+        Looked up with `getattr`. The CMS asks "add next to the original / replace the original" only for a
+        target that offers `replace`; accept without a mode = `add`; bulk accept always adds.
         """
         ...
 

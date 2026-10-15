@@ -135,7 +135,15 @@ class ProposalResponse(BaseModel):
     cost_usd: Decimal | None = Field(
         description="Share of the producing call's cost; null = unknown", examples=["0.0014"]
     )
-    result_ref: str = Field(description="What applying it created (a document ref); blank otherwise", examples=[""])
+    result_ref: str = Field(
+        description="What applying it created (a document ref, an added gallery link); blank otherwise", examples=[""]
+    )
+    apply_mode: str = Field(description="How it was applied (`add` | `replace`); blank = no choice", examples=[""])
+    apply_modes: list[str] = Field(
+        default_factory=list,
+        description="Ways it can be applied (`add`, `replace`); empty = one fixed way, accept takes no mode",
+        examples=[["add", "replace"]],
+    )
     warnings: list[QaWarning] = Field(description="QA warnings of the current value")
     standard_checked_at: datetime | None = Field(
         None, description="When the current value was checked against the checklists; null = not checked"

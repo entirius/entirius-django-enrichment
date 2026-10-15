@@ -151,6 +151,17 @@ class ProposalMediaIntakeRequest(BaseModel):
         return v
 
 
+class ProposalAcceptRequest(BaseModel):
+    """`POST /proposals/{id}/accept/` — the body is optional."""
+
+    mode: Literal["add", "replace"] | None = Field(
+        None,
+        description="Media: add next to the original or replace it; only a mode in the proposal's `apply_modes` "
+        "is accepted. Blank = add",
+        examples=["add"],
+    )
+
+
 class RejectRequest(BaseModel):
     """`POST /proposals/{id}/reject/`."""
 

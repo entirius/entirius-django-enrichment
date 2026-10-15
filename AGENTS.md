@@ -37,7 +37,7 @@ src/django_enrichment/
 │                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / questions / compose, extras.py, step.py (step params), seams.py
+│                       # generate / questions / compose / image, extras.py, step.py (step params), seams.py
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
@@ -118,7 +118,8 @@ drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_
 `translate` / `field` / `video` register in `EnrichmentConfig.ready()`;
 other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
 the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit on the task's lane.
-Adapter extras `build_context` (field kind) and `main_picture` / `picture` (video kind, the latter for `params.picture_ref`; absent → subject fails) are
+Adapter extras `build_context` (field kind), `main_picture` / `picture` (video kind, the latter for `params.picture_ref`; absent → subject fails),
+`list_pictures` + `picture` (image kind) and `apply_modes` (add / replace on accept, `docs/api.md` § Accept / drift) are
 optional (`getattr`). Worker keys allow dots (`pim.translate`).
 
 **Revisions & corrections:** `proposed_value` always equals the latest `ProposalRevision`; only
@@ -172,6 +173,7 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_ALLOWED_IMAGE_MIME` | jpeg, png, webp, gif, avif | media intake MIME allowlist |
 | `ENRICHMENT_MAX_VIDEO_BYTES` | 100 MB | video intake size cap (mp4 only) |
 | `ENRICHMENT_VIDEO_TIMEOUT_S` | `900` | how long the `video` kind polls a toolbox media job |
+| `ENRICHMENT_IMAGE_TIMEOUT_S` | `300` | how long the `image` kind polls a toolbox image job |
 | `ENRICHMENT_VIDEO_TOOLBOX_URL` / `_API_KEY` / `_CHANNEL` | the `AI_TOOLBOX_*` value | toolbox media job endpoint (POC) |
 | `ENRICHMENT_ASYNC_APPLY_THRESHOLD` | `50` | bulk accept/undo above this size goes to Celery |
 | `ENRICHMENT_APPLY_BATCH_SIZE` | `500` | batch size of the async apply |
@@ -271,6 +273,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   (Redmine #34464). Video calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`).
 - **The `video` kind blocks a Celery worker** — it polls the media job (10 s interval) up to
   `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
+- **Accept mode is stored, not passed** — `apply_service` sets `proposal.apply_mode` (`add` | `replace`, blank = no
+  choice offered) before `adapter.apply`; `revert` reads the same field. Bulk accept never passes a mode → add.
 - **`tasks/?subject_ref=` sees list-mode tasks only** — a text match of `"<ref>"` in `scope_spec.refs`
   (SQLite-safe, no JSON containment); filter/gap/csv tasks carry no refs. Full note: `docs/api.md` § Per-product view.
 - **Never write `proposed_value` directly** — go through `revision_service.add_revision`, or the

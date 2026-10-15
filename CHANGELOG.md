@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Image processing (plan 25): kind `image` — params `operation` (packshot | lifestyle | enhance | instruct), `preset`,
+  `prompt` (≤ 1000, required for a run of `instruct`; a template may leave it to the run), `picture_ref` (blank = the
+  main picture from `list_pictures`), `n` 1–4. `toolbox_calls.generate_image` runs the toolbox image job (submit,
+  poll up to `ENRICHMENT_IMAGE_TIMEOUT_S` = 300, download every output; costed like video); each output becomes one
+  picture proposal with locator `{channel, source_picture_ref, operation, variant}`.
+- Accept mode: `POST proposals/{id}/accept/` takes an optional `mode` (`add` | `replace`, default `add`); proposals
+  carry `apply_modes` (from the optional adapter extra `apply_modes`) and `apply_mode` (migration `0006`). A mode
+  that is not offered → 400. Bulk accept always adds. The adapter reads `proposal.apply_mode` in `apply` / `revert`
+  and may return `{"ref"}` (kept in `result_ref`) for an object the apply created.
 - Video from a chosen picture (plan 24): `GET subjects/pictures/?module=&channel=&ref=` (area `enrichment.proposals`,
   throttle `enrichment_lookup`) → `[{ref, label, url, is_main}]`, backed by the optional adapter extra
   `list_pictures(*, subject_ref, channel)` (absent → 404 `NOT_SUPPORTED`). The `video` kind takes an optional

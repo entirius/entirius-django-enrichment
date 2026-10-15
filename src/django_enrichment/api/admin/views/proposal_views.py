@@ -25,13 +25,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.pagination import AdminPageNumberPagination
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle, IntakeThrottle
-from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.api.admin.views._helpers import raise_as_drf, serialize_proposal
 from django_enrichment.enums import ProposalStatus
 from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.schemas.requests import (
     BulkAcceptRequest,
     BulkRejectRequest,
     BulkUndoRequest,
+    ProposalAcceptRequest,
     ProposalIntakeRequest,
     ProposalMediaIntakeRequest,
     ProposalUpdateRequest,
@@ -56,7 +57,7 @@ _ALLOWED_ORDERING = frozenset(
 
 
 def _serialize(proposal) -> dict:
-    return ProposalResponse.model_validate(proposal).model_dump(mode="json")
+    return serialize_proposal(proposal)
 
 
 def _get_proposal_or_404(proposal_id: int):
@@ -283,13 +284,18 @@ class ProposalViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Accept proposal (drift-aware apply; approves a workflow step)",
+        summary="Accept proposal (drift-aware apply; approves a workflow step; `mode` add / replace for media)",
+        request=ProposalAcceptRequest,
         responses={200: ProposalResponse, 400: ErrorResponse},
     )
     def accept(self, request: Request, pk: int) -> Response:
+        try:
+            data = ProposalAcceptRequest(**(request.data or {}))
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
         proposal = _get_proposal_or_404(pk)
         try:
-            proposal = proposal_service.accept(proposal, user=request.user)
+            proposal = proposal_service.accept(proposal, user=request.user, mode=data.mode)
         except AnswersMissingError as exc:
             return _answers_missing(exc)
         except ValueError as exc:
