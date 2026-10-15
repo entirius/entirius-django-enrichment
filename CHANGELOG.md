@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Provider-portable completion schema: `toolbox_calls.complete` sends the schema without value limits (`minLength`,
+  `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`) and format keywords (`pattern`, `format`, `uniqueItems`, ...);
+  limits stay as `(max N chars)` hints in `description`. A model answer that broke a limit made the toolbox answer 502
+  on real models (Haiku). Failed toolbox calls now put `HTTP <status> <code>: <message>` in the task error `message`
+  and the log.
 - Work queue (plan 23): tasks are split into small `WorkUnit`s (migration 0014; `WorkerInstance`, `Worker.paused_reason`
   / `paused_at`) that internal and external workers pull the same way — `POST workers/claim|heartbeat|complete|fail/`
   with leases, retries with backoff, idempotent complete and 409 `LEASE_LOST`; `GET workers/status/`,

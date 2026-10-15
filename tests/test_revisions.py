@@ -154,7 +154,7 @@ class TestShapesAndScope:
         revision, route = _revise(proposal, {"text": "New title"}, quick_action="formal")
         assert revision.value == {"text": "New title"}
         schema = _sent(route)["json_schema"]
-        assert schema["properties"]["text"] == {"type": "string", "maxLength": 60}
+        assert schema["properties"]["text"] == {"type": "string", "description": "(max 60 chars)"}
         assert '"label": "Meta title"' in _sent(route)["messages"][-1]["content"]
 
     def test_option_enum_from_catalog(self, catalog):
@@ -217,7 +217,7 @@ class TestShapesAndScope:
         result, route = _revise(proposal, {"candidates": ["A", "B", "C", "D"]}, quick_action="variants")
         assert result == [{"text": "A"}, {"text": "B"}, {"text": "C"}]
         assert proposal.revisions.count() == 1
-        assert _sent(route)["json_schema"]["properties"]["candidates"]["maxItems"] == 3
+        assert _sent(route)["json_schema"]["properties"]["candidates"]["description"] == "(max 3 items)"
 
 
 class TestConcurrentChange:

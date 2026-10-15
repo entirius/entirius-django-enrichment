@@ -5,6 +5,10 @@ errors) on the instance channel. Video jobs talk to the toolbox media API with p
 may differ from the text toolbox (`ENRICHMENT_VIDEO_TOOLBOX_*`, POC escape hatch, Redmine #34464).
 Prompts live in the kinds. Toolbox errors propagate: the runner counts the subject as failed.
 
+The schema sent to the provider is the "portable" subset (`provider_schema`): the provider cannot enforce value
+limits (length, item count, range) and the toolbox answers 502 when a model answer breaks one, so the limits
+travel as description hints and the schema keeps only structure.
+
 Every call returns `Costed(value, cost)` and charges its task (`cost_service.charge`); `cost_of` is the one
 place that knows which response field carries the cost today. Completion tags: the selector
 `enrichment.<kind>[.<template>]` first (the toolbox fake provider picks fixtures by it), then `task:<id>` and,
@@ -40,6 +44,16 @@ _VIDEO_HTTP_TIMEOUT_S = 60.0
 _COST_FIELDS = {"completion": "cost", "translate": "total_cost_usd", "media": "cost", "seo": "cost"}
 _TAG_INVALID = re.compile(r"[^a-z0-9_.:-]")
 _TAG_MAX = 64
+_LIMIT_HINTS = {
+    "minLength": "min {} chars",
+    "maxLength": "max {} chars",
+    "minItems": "min {} items",
+    "maxItems": "max {} items",
+    "minimum": "min {}",
+    "maximum": "max {}",
+}
+_DROPPED_KEYWORDS = frozenset({"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern", "format", "uniqueItems"})
+_DETAIL_MAX = 300
 _COST_STEP = Decimal("0.00000001")  # the ledger columns: decimal_places=8
 _COST_LIMIT = Decimal(10) ** 6  # the ledger columns: max_digits=14 → below 10**6
 
@@ -86,7 +100,7 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     messages.append(Message(role="user", content=user))
     with ToolboxClient() as client:
         request = CompletionRequest(
-            model=model or _default_model(client), messages=messages, json_schema=json_schema, tags=_tags(kind, task)
+            model=model or _default_model(client), messages=messages, json_schema=provider_schema(json_schema), tags=_tags(kind, task)
         )
         with _unknown_cost_on_error(task, "completion"):
             response = client.complete(request)
@@ -94,6 +108,31 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     if response.parsed is None:
         raise ValueError("toolbox completion returned no structured answer")
     return Costed(response.parsed, cost)
+
+
+def provider_schema(schema: Any) -> Any:
+    """`schema` without value limits and format keywords; each limit is kept as a hint in `description`."""
+    if isinstance(schema, list):
+        return [provider_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    hints = [text.format(schema[key]) for key, text in _LIMIT_HINTS.items() if key in schema]
+    result = {key: _portable_value(key, value) for key, value in schema.items() if _keeps(key)}
+    if hints:
+        description = result.get("description")
+        result["description"] = f"{description} ({', '.join(hints)})" if description else f"({', '.join(hints)})"
+    return result
+
+
+def _keeps(key: str) -> bool:
+    return key not in _LIMIT_HINTS and key not in _DROPPED_KEYWORDS
+
+
+def _portable_value(key: str, value: Any) -> Any:
+    """`properties` / `$defs` map names to schemas — a property called `format` must survive."""
+    if key in ("properties", "$defs", "definitions", "patternProperties") and isinstance(value, dict):
+        return {name: provider_schema(sub) for name, sub in value.items()}
+    return value if key in ("enum", "const", "required", "examples", "default") else provider_schema(value)
 
 
 def _tags(kind: str, task: Any) -> list[str]:
@@ -234,6 +273,17 @@ def _video_client() -> httpx.Client:
 def _video_setting(suffix: str, fallback: str) -> str:
     """`ENRICHMENT_VIDEO_TOOLBOX_<suffix>`, blank or unset → the matching `AI_TOOLBOX_*` setting."""
     return getattr(settings, f"ENRICHMENT_VIDEO_TOOLBOX_{suffix}", "") or getattr(toolbox_settings, fallback)
+
+
+def failure_detail(exc: BaseException) -> str:
+    """What the toolbox said about a failed call — `HTTP <status> <code>: <message>` (capped), `""` for other errors.
+
+    The toolbox message is its own provider-error text (no keys, no request body); a gateway page that is not
+    JSON leaves it blank, which the detail says instead of dropping it."""
+    if not isinstance(exc, ToolboxError):
+        return ""
+    message = " ".join(exc.upstream_message.split()) or "no message (non-JSON or empty response body)"
+    return f"HTTP {exc.status_code} {exc.code or '-'}: {message}"[:_DETAIL_MAX]
 
 
 def failure_code(exc: BaseException) -> str:

@@ -112,7 +112,7 @@ class TestField:
         assert user.startswith("Mention the warranty.")
         assert '{"sku": "SKU-1"}' in user
         assert "meta_description" in user and "160" in user
-        assert body["json_schema"]["properties"]["value"] == {"type": "string", "maxLength": 160}
+        assert body["json_schema"]["properties"]["value"] == {"type": "string", "description": "(max 160 chars)"}
 
     def test_html_is_sanitised(self, fake_adapter):
         with mock_toolbox() as router:

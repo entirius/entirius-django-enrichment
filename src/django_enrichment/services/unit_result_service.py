@@ -105,5 +105,7 @@ def _intake_one(worker: Worker, task: EnrichmentTask, result: SubjectResult) -> 
                 "queue intake failed for subject %r of task %s [%s]", result.subject_ref, task.pk, error_id
             )
     task_service.increment_count(task, "failed")
-    task_service.record_error(task, subject_ref=result.subject_ref, code=code, error_id=error_id or "-")
+    task_service.record_error(
+        task, subject_ref=result.subject_ref, code=code, error_id=error_id or "-", message=result.error_message
+    )
     return False

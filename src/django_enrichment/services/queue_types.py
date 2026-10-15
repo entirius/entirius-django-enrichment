@@ -23,3 +23,4 @@ class SubjectResult:
     drafts: list[ProposalDraft] = field(default_factory=list)
     error_code: str = ""
     error_id: str = ""
+    error_message: str = ""

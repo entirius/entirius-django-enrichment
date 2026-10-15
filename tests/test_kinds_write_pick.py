@@ -82,7 +82,7 @@ class TestWrite:
         assert route.call_count == 1
         assert schema["required"] == ["meta_title", "description"]
         assert schema["properties"] == {
-            "meta_title": {"type": "string", "maxLength": 60},
+            "meta_title": {"type": "string", "description": "(max 60 chars)"},
             "description": {"type": "string"},
         }
         assert [d.target_locator["feature_idx"] for d in drafts] == ["meta_title", "description"]

@@ -32,8 +32,11 @@ def run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: s
         return SubjectResult(subject_ref, drafts=kind.run(worker, task, subject_ref))
     except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the unit
         error_id = uuid.uuid4().hex[:12]
-        _logger.exception("runner failed on subject %r of task %s [%s]", subject_ref, task.pk, error_id)
-        return SubjectResult(subject_ref, error_code=toolbox_calls.failure_code(exc), error_id=error_id)
+        detail = toolbox_calls.failure_detail(exc)
+        _logger.exception("runner failed on subject %r of task %s [%s] %s", subject_ref, task.pk, error_id, detail)
+        return SubjectResult(
+            subject_ref, error_code=toolbox_calls.failure_code(exc), error_id=error_id, error_message=detail
+        )
 
 
 def intake_subject(worker: Worker, task: EnrichmentTask, subject_ref: str, drafts: list[ProposalDraft]) -> None:
