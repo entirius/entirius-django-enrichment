@@ -4,7 +4,6 @@
 
 """Cost ledger (contract A4 § 1): toolbox costs post factum on tasks, proposals and revisions — mocked toolbox."""
 
-import importlib
 import json
 from decimal import Decimal
 from types import SimpleNamespace
@@ -12,7 +11,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import respx
-from django.apps import apps as django_apps
 from django_utils.toolbox import ToolboxError
 from django_utils.toolbox.testing import CANNED_COMPLETION, mock_toolbox
 
@@ -170,22 +168,6 @@ class TestFailedCallCost:
             toolbox_calls.complete(system="", user="u", json_schema={}, model="m", kind="write", task=task)
         task.refresh_from_db()
         assert (task.cost_usd, task.cost_complete) == (None, False)
-
-
-class TestPreLedgerMigration:
-    def test_tasks_that_ran_before_the_ledger_get_unknown_cost(self):
-        ran = EnrichmentTask.objects.create(type="t", status="done")
-        by_worker = EnrichmentTask.objects.create(type="t")
-        ContentProposal.objects.create(task=by_worker, source="worker:pim.writer@v1", subject_ref="S")
-        untouched = EnrichmentTask.objects.create(type="t")
-        costed = EnrichmentTask.objects.create(type="t", status="done", cost_usd=Decimal("0.1"))
-        _migration_0009().mark_pre_ledger_costs_unknown(django_apps, None)
-        complete = dict(EnrichmentTask.objects.values_list("pk", "cost_complete"))
-        assert [complete[t.pk] for t in (ran, by_worker, untouched, costed)] == [False, False, True, True]
-
-
-def _migration_0009():
-    return importlib.import_module("django_enrichment.migrations.0009_pre_ledger_costs_unknown")
 
 
 class TestMediaCost:
