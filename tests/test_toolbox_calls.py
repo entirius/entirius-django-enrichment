@@ -94,3 +94,40 @@ class TestFailureDetail:
         task = EnrichmentTask.objects.create(type="t")
         result = runner_service.run_subject(worker, Boom(), task, "run:1")
         assert (result.error_code, result.error_message) == ("PROVIDER_ERROR", "HTTP 502 PROVIDER_ERROR: rejected")
+
+
+class Flaky:
+    """Fails with an edge 502 (no toolbox code) `failures` times, then returns no drafts."""
+
+    def __init__(self, failures: int):
+        self.calls, self.failures = 0, failures
+
+    def run(self, *_args):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ToolboxError(502, "Bad Gateway", "")
+        return []
+
+
+@pytest.mark.django_db
+class TestTransientRetry:
+    def _run(self, kind):
+        worker = type("W", (), {"key": "k", "target_module": "enrichment"})()
+        task = EnrichmentTask.objects.create(type="t")
+        return runner_service.run_subject(worker, kind, task, "run:1")
+
+    def test_an_edge_502_is_retried_once(self):
+        kind = Flaky(failures=1)
+        result = self._run(kind)
+        assert (kind.calls, result.error_code) == (2, "")
+
+    def test_a_second_502_counts_as_failed(self):
+        kind = Flaky(failures=5)
+        result = self._run(kind)
+        assert (kind.calls, result.error_code) == (2, "TOOLBOX_HTTP_502")
+
+    def test_retries_off(self, settings):
+        settings.ENRICHMENT_TRANSIENT_RETRIES = 0
+        kind = Flaky(failures=1)
+        assert self._run(kind).error_code == "TOOLBOX_HTTP_502"
+        assert kind.calls == 1

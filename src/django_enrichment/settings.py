@@ -123,3 +123,10 @@ ENRICHMENT_CONSUME_MAX_UNITS = 10
 #                                 cancelled, the operator is notified once).
 ENRICHMENT_QUEUE_MAX_SUBJECTS = 500
 ENRICHMENT_TASK_MAX_COST_USD = "5.00"
+
+# Transient toolbox failures (an edge 502, a timeout) retried in place for one subject before it counts as failed.
+#
+# ENRICHMENT_TRANSIENT_RETRIES     — extra attempts per subject (0 = none).
+# ENRICHMENT_TRANSIENT_ERROR_CODES — failure codes treated as transient.
+ENRICHMENT_TRANSIENT_RETRIES = 1
+ENRICHMENT_TRANSIENT_ERROR_CODES = ("TOOLBOX_HTTP_502", "TOOLBOX_HTTP_503", "TOOLBOX_HTTP_504", "TIMEOUT")

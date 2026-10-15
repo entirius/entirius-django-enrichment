@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Transient toolbox failures (`TOOLBOX_HTTP_502/503/504`, `TIMEOUT`) are retried in place once per subject
+  (`ENRICHMENT_TRANSIENT_RETRIES`, `ENRICHMENT_TRANSIENT_ERROR_CODES`) before the subject counts as failed.
 - Provider-portable completion schema: `toolbox_calls.complete` sends the schema without value limits (`minLength`,
   `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`) and format keywords (`pattern`, `format`, `uniqueItems`, ...);
   limits stay as `(max N chars)` hints in `description`. A model answer that broke a limit made the toolbox answer 502

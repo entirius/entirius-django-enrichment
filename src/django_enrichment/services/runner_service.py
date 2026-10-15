@@ -15,7 +15,7 @@ import uuid
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import Kind, ProposalDraft, extras
 from django_enrichment.models import EnrichmentTask, Worker
-from django_enrichment.services import proposal_service, task_service, toolbox_calls
+from django_enrichment.services import proposal_service, queue_config, queue_log, task_service, toolbox_calls
 from django_enrichment.services.queue_types import SubjectResult
 
 _logger = logging.getLogger("process")
@@ -23,11 +23,23 @@ _logger = logging.getLogger("process")
 
 def run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> SubjectResult:
     """Run the kind on one subject — unless the operator already edited a proposal of this worker on it: then
-    nothing is generated (no paid call) and the subject counts in `counts.kept_edited`. A failure is logged with an error id and returned, never raised."""
+    nothing is generated (no paid call) and the subject counts in `counts.kept_edited`. A transient failure
+    (`ENRICHMENT_TRANSIENT_ERROR_CODES`) is retried `ENRICHMENT_TRANSIENT_RETRIES` times; a failure is logged with
+    an error id and returned, never raised."""
     prefix = f"worker:{worker.key}@"
     if proposal_service.subject_has_operator_edits(worker.target_module, subject_ref, prefix):
         task_service.increment_count(task, "kept_edited")
         return SubjectResult(subject_ref)
+    retries = queue_config.get("ENRICHMENT_TRANSIENT_RETRIES")
+    result = _attempt(worker, kind, task, subject_ref)
+    while retries > 0 and result.error_code in queue_config.get("ENRICHMENT_TRANSIENT_ERROR_CODES"):
+        queue_log.log("subject_retry", task=task.pk, worker=worker.key, code=result.error_code)
+        retries -= 1
+        result = _attempt(worker, kind, task, subject_ref)
+    return result
+
+
+def _attempt(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> SubjectResult:
     try:
         return SubjectResult(subject_ref, drafts=kind.run(worker, task, subject_ref))
     except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the unit

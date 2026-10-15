@@ -124,7 +124,7 @@ class TestTemplateRulesInCorrections:
             body = route.calls[0].request.read().decode()
         assert "- Brand first.\\n- W." in body
         assert '\\"label\\": \\"Meta title\\"' in body
-        assert '(max 60 chars)' in body
+        assert "(max 60 chars)" in body
 
 
 class TestTemplateApi:

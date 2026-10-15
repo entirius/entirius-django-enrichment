@@ -52,7 +52,9 @@ _LIMIT_HINTS = {
     "minimum": "min {}",
     "maximum": "max {}",
 }
-_DROPPED_KEYWORDS = frozenset({"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern", "format", "uniqueItems"})
+_DROPPED_KEYWORDS = frozenset(
+    {"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern", "format", "uniqueItems"}
+)
 _DETAIL_MAX = 300
 _COST_STEP = Decimal("0.00000001")  # the ledger columns: decimal_places=8
 _COST_LIMIT = Decimal(10) ** 6  # the ledger columns: max_digits=14 → below 10**6
@@ -100,7 +102,10 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     messages.append(Message(role="user", content=user))
     with ToolboxClient() as client:
         request = CompletionRequest(
-            model=model or _default_model(client), messages=messages, json_schema=provider_schema(json_schema), tags=_tags(kind, task)
+            model=model or _default_model(client),
+            messages=messages,
+            json_schema=provider_schema(json_schema),
+            tags=_tags(kind, task),
         )
         with _unknown_cost_on_error(task, "completion"):
             response = client.complete(request)
