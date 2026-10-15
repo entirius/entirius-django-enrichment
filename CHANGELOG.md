@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Proposal status changes lock the row and refuse a status that moved meanwhile: a concurrent apply and reject
+  can no longer both win (the loser gets a 400 and its write rolls back).
 - SEO brief: when every proposed seed phrase is over the toolbox keyword limit (80 characters), the phrases are cut
   at the last word break within it instead of failing the subject with `SEO_BRIEF_NO_SEEDS`; seeds within the limit
   still win and the overlong ones are dropped next to them.

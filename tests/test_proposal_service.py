@@ -74,6 +74,19 @@ def test_transition_forbidden_from_terminal():
 
 
 @pytest.mark.django_db
+def test_a_concurrent_reject_stops_a_stale_accept(fake_adapter, admin_user):
+    proposal = _intake(fake_adapter, proposed={"text": "fresh"})
+    stale = ContentProposal.objects.get(pk=proposal.pk)
+    proposal_service.reject(proposal, "no")
+
+    with pytest.raises(ValueError, match="changed meanwhile"):
+        proposal_service.accept(stale, user=admin_user)
+
+    stale.refresh_from_db()
+    assert stale.status == ProposalStatus.REJECTED.value
+
+
+@pytest.mark.django_db
 def test_accept_writes_through_adapter_and_marks_applied(fake_adapter, admin_user):
     proposal = _intake(fake_adapter, proposed={"text": "fresh"})
 

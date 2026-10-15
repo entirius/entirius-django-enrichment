@@ -39,7 +39,22 @@ def transition_status(
     allowed = PROPOSAL_STATUS_TRANSITIONS.get(proposal.status)
     if allowed is None or new_status not in allowed:
         raise ValueError(f"invalid proposal transition: {proposal.status} -> {new_status}")
+    with transaction.atomic():
+        _lock_unchanged(proposal)
+        return _write_transition(proposal, new_status, user=user, reason=reason)
 
+
+def _lock_unchanged(proposal: ContentProposal) -> None:
+    """Row-lock the proposal and refuse when its stored status moved since it was read (a concurrent apply and
+    reject must not both win); held until the caller's transaction ends."""
+    stored = ContentProposal.objects.select_for_update().values_list("status", flat=True).get(pk=proposal.pk)
+    if stored != proposal.status:
+        raise ValueError(f"proposal changed meanwhile: it is {stored} now")
+
+
+def _write_transition(
+    proposal: ContentProposal, new_status: str, *, user: AbstractBaseUser | None, reason: str
+) -> ContentProposal:
     update_fields = ["status", "modified_at"]
     proposal.status = new_status
 
