@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+## 2.3.0rc1 — 2026-10-16
 - Proposal status changes lock the row and refuse a status that moved meanwhile: a concurrent apply and reject
   can no longer both win (the loser gets a 400 and its write rolls back).
 - SEO brief: when every proposed seed phrase is over the toolbox keyword limit (80 characters), the phrases are cut
