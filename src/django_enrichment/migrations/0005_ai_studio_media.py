@@ -6,6 +6,11 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    replaces = [
+        ("django_enrichment", "0005_qa_check"),
+        ("django_enrichment", "0006_apply_mode"),
+    ]
+
     dependencies = [
         ("django_enrichment", "0004_ai_studio"),
     ]
@@ -20,5 +25,12 @@ class Migration(migrations.Migration):
             model_name="profile",
             name="qa_check",
             field=models.BooleanField(default=False),
+        ),
+        migrations.AddField(
+            model_name="contentproposal",
+            name="apply_mode",
+            field=models.CharField(
+                blank=True, choices=[("add", "Add"), ("replace", "Replace")], default="", max_length=16
+            ),
         ),
     ]
