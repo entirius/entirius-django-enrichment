@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2.3.0rc3 — 2026-10-17
+- A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
+  with the toolbox's code instead of `INTERNAL_ERROR`, so the CMS names the reason (e.g. the provider's safety filter).
+
 ## 2.3.0rc2 — 2026-10-17
 - A task from a template whose run picks another image `operation` drops the template's `preset`: the toolbox
   refused a preset of another operation with `PRESET_NOT_FOUND` (e.g. "Enhance photo" run as a packshot); without a
