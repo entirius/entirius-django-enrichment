@@ -286,9 +286,9 @@ def _run_media_job(
     with _unknown_cost_on_error(task, "media"):
         job = _wait_for_job(client, spec, job_id)
     cost = _charge(task, "media", job)
-    if job["status"] == "failed":
+    if job["status"] == "failed":  # the toolbox's code (IMAGE_BLOCKED, PROVIDER_ERROR) is the subject's error code
         code = (job.get("error") or {}).get("error", "UNKNOWN")
-        raise ValueError(f"toolbox {spec.path[:-1]} job {job_id} failed: {code}")
+        raise SubjectError(code, f"toolbox {spec.path[:-1]} job {job_id} failed: {code}")
     return job_id, job, cost
 
 

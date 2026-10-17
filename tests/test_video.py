@@ -141,8 +141,9 @@ class TestGenerateVideo:
     def test_failed_job_raises(self):
         with respx.mock(assert_all_called=False) as router:
             _mock_job(router, "failed", error={"error": "VIDEO_BLOCKED", "message": "blocked"})
-            with pytest.raises(ValueError, match="VIDEO_BLOCKED"):
+            with pytest.raises(SubjectError) as caught:
                 _generate()
+        assert toolbox_calls.failure_code(caught.value) == "VIDEO_BLOCKED"
 
     def test_a_refused_submit_carries_the_toolbox_reason(self):
         with respx.mock() as router:

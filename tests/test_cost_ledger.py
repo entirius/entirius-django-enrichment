@@ -14,7 +14,7 @@ import respx
 from django_utils.toolbox import ToolboxError
 from django_utils.toolbox.testing import CANNED_COMPLETION, mock_toolbox
 
-from django_enrichment.kinds.base import ProposalDraft, with_cost
+from django_enrichment.kinds.base import ProposalDraft, SubjectError, with_cost
 from django_enrichment.kinds.translate import TranslateKind
 from django_enrichment.models import ContentProposal, EnrichmentTask
 from django_enrichment.services import cost_service, proposal_service, task_service, toolbox_calls
@@ -186,7 +186,7 @@ class TestMediaCost:
         task = self._video_task(monkeypatch, {"status": "running"}, raises=TimeoutError)
         assert task.cost_complete is False
 
-    def _video_task(self, monkeypatch, job: dict, raises: type[Exception] = ValueError) -> EnrichmentTask:
+    def _video_task(self, monkeypatch, job: dict, raises: type[Exception] = SubjectError) -> EnrichmentTask:
         monkeypatch.setattr(toolbox_calls.time, "sleep", lambda _s: None)
         task = EnrichmentTask.objects.create(type="t")
         with respx.mock(assert_all_called=False) as router, pytest.raises(raises):
