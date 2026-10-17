@@ -302,7 +302,7 @@ wheels = [
 
 [[package]]
 name = "entirius-django-enrichment"
-version = "2.3.0rc1"
+version = "2.3.0rc2"
 source = { editable = "." }
 dependencies = [
     { name = "celery" },
