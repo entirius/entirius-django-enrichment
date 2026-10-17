@@ -57,6 +57,18 @@ class TestTemplateService:
         assert params["prompt"] == "Mine." and params["languages"] == ["*"]
         assert params["rules"] == ["Brand first.", "Mine."]
 
+    @pytest.mark.parametrize(
+        ("run_params", "preset"),
+        [({"operation": "packshot"}, None), ({"operation": "enhance"}, "enhance-photo"), ({}, "enhance-photo")],
+    )
+    def test_merge_drops_the_preset_of_another_operation(self, make_worker, run_params, preset):
+        make_worker(key="pim.image", label="Image", kind="image", mode="internal")
+        _template(key="enhance", worker_key="pim.image", params={"operation": "enhance", "preset": "enhance-photo"})
+        _, params = template_service.merge_into_task(
+            "enhance", task_type="", params={"channel": "default", **run_params}
+        )
+        assert params.get("preset") == preset
+
     @pytest.mark.parametrize("problem", ["inactive", "unknown", "worker_inactive", "type_mismatch"])
     def test_merge_refuses(self, writer, problem):
         template = _template()

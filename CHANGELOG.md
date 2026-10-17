@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.3.0rc2 — 2026-10-17
+- A task from a template whose run picks another image `operation` drops the template's `preset`: the toolbox
+  refused a preset of another operation with `PRESET_NOT_FOUND` (e.g. "Enhance photo" run as a packshot); without a
+  preset it takes the default of the chosen operation.
+
 ## 2.3.0rc1 — 2026-10-16
 - Proposal status changes lock the row and refuse a status that moved meanwhile: a concurrent apply and reject
   can no longer both win (the loser gets a 400 and its write rolls back).
