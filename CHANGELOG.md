@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- `seo_brief` keeps its search evidence (seed volumes, keyword ideas, SERP with people also ask) in the remembered
+  brief; `params.seo_detail: full` adds it to the prompt block (the short brief stays the default and the memory
+  text). Steps of one run reuse the research at cost 0.
+- `seo_brief` seeds of a workflow step (an article) come from a topic prompt: 2-4 word head terms instead of
+  question-like phrases, which have no search volume and left `keyword-ideas/` nothing to expand. Items keep the
+  item prompt.
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
