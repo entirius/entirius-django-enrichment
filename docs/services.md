@@ -123,6 +123,7 @@ read-merge-write + inheritance-override path is tested in django-pim `tests/test
 | `queue_escalation` | pause + notifications through `django_notifications` (soft: absent / missing channel → log only) |
 | `cost_guard_service` | stops a task at `ENRICHMENT_TASK_MAX_COST_USD` |
 | `consumer_service` | internal consumer (`enrichment.consume`): same claim/complete path as an external worker |
+| `lease_keepalive` | `kept_alive(heartbeat)` around a unit's subjects (consumer), `beat()` before every toolbox call (`toolbox_calls`): a long subject heartbeats at most once per 60 s; a lost lease raises `LeaseLost` through the runner and stops the consumer before the next paid call |
 | `queue_status`, `unit_payload`, `queue_log`, `queue_config`, `queue_dispatch` | CMS status + resume, claim payload, `enrichment.queue` key=value log + capped `WorkUnit.events`, settings reader, Celery hand-off |
 
 Logger `enrichment.queue`: one line per event, `event=… unit=… task=… worker=… instance=… attempt=… lane=…

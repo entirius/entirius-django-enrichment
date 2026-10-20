@@ -32,7 +32,7 @@ from django_utils.toolbox import settings as toolbox_settings
 
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.kinds.base import SubjectError
-from django_enrichment.services import cost_service
+from django_enrichment.services import cost_service, lease_keepalive
 
 _TRANSLATOR_TOOL = "ai-translator"
 _SEO_TOOL = "ai-seo"
@@ -99,6 +99,7 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     """One structured completion for `task` (tags + cost); `value` is the parsed answer.
 
     Blank `model` = the channel's first catalogue model. `kind` names the selector tag."""
+    lease_keepalive.beat()
     messages = [Message(role="system", content=system)] if system else []
     messages.append(Message(role="user", content=user))
     with ToolboxClient() as client:
@@ -203,6 +204,7 @@ def seo(endpoint: str, payload: dict, *, task: Any = None) -> Costed:
     when missing — the caller validates it).
 
     Posted like translate (paid, `retry=False`); a toolbox cache hit comes back with cost 0."""
+    lease_keepalive.beat()
     with ToolboxClient() as client:
         with _unknown_cost_on_error(task, "seo"):
             body = client._post(client._url(_SEO_TOOL, endpoint), payload, retry=False)

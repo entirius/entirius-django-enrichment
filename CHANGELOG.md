@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Lease keepalive: every toolbox call heartbeats the running unit (at most once per 60 s), so a subject with many
+  paid calls no longer outlives its lease and gets paid twice; a lease lost inside a subject stops the consumer
+  instead of counting as a failed subject.
 - `seo_brief` keeps its search evidence (seed volumes, keyword ideas, SERP with people also ask) in the remembered
   brief; `params.seo_detail: full` adds it to the prompt block (the short brief stays the default and the memory
   text). Steps of one run reuse the research at cost 0.

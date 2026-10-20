@@ -23,7 +23,7 @@ from django_enrichment.services import (
     task_service,
     toolbox_calls,
 )
-from django_enrichment.services.queue_types import SubjectResult
+from django_enrichment.services.queue_types import LeaseLost, SubjectResult
 
 _logger = logging.getLogger("process")
 
@@ -49,6 +49,8 @@ def run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: s
 def _attempt(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str) -> SubjectResult:
     try:
         return SubjectResult(subject_ref, drafts=kind.run(worker, task, subject_ref))
+    except LeaseLost:  # the unit is someone else's now: stop, no subject failure (`lease_keepalive`)
+        raise
     except Exception as exc:  # noqa: BLE001 — per-subject isolation: one failing subject must not stop the unit
         error_id = uuid.uuid4().hex[:12]
         detail = toolbox_calls.failure_detail(exc)

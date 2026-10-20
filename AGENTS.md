@@ -289,6 +289,9 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.
 - **Step params ride on `StepParams`** — kind `Params` drop unknown keys, so `run` / `step` / `inputs` survive
   only on the three step kinds; a definition step must use one of them (`clean()` enforces it).
+- **A long subject keeps its lease through `lease_keepalive`** — every toolbox call beats first; `runner_service`
+  lets `LeaseLost` through (never a subject failure). A kind that waits without toolbox calls must call
+  `lease_keepalive.beat()` itself.
 - **Never move a run by hand** — `steps_state` and `status` change only in `workflow_service`, under the run's
   row lock; an approved step cannot be regenerated or undone (artifact `revert` refuses).
 - **The profile is written only by `profile_service`** (validate → version bump → `ProfileVersion` snapshot);
