@@ -46,7 +46,7 @@ class TestDefinitionValidation:
             ([wf.step("draft"), wf.step("draft")], "duplicate key"),
             ([wf.step("ask", output="questions", gate="auto")], "needs the review gate"),
             ([wf.step("x", template="missing")], "unknown template"),
-            ([wf.step("ask", output="artifact")], "needs a 'generate' worker"),
+            ([wf.step("ask", output="artifact")], "needs a 'generate' or 'sections' worker"),
             ([wf.step("Bad Key", template="draft")], "key"),
             ([{"key": "a", "label": "A", "template": "draft", "extra": 1}], "extra"),
             ("not a list", "list"),
@@ -77,6 +77,20 @@ class TestDefinitionValidation:
         saved = worker_service.save_worker(Worker(key="wf.odd", label="Odd", system_prompt="Sys.", **worker))
         template_service.save_template(TaskTemplate(key="odd", label="Odd", worker=saved, params={"prompt": "P."}))
         assert message in " ".join(_errors([wf.step("odd", output=output)])["steps"])
+
+    def _odd_template(self, kind: str) -> None:
+        saved = worker_service.save_worker(
+            Worker(key="wf.odd", label="Odd", system_prompt="Sys.", kind=kind, target_module="enrichment")
+        )
+        template_service.save_template(TaskTemplate(key="odd", label="Odd", worker=saved, params={"prompt": "P."}))
+
+    def test_an_artifact_step_may_be_written_section_by_section(self):
+        self._odd_template("sections")
+        WorkflowDefinition(key="d", label="D", target_module=wf.DOC_MODULE, steps=[wf.step("odd")]).full_clean()
+
+    def test_an_artifact_step_refuses_a_questions_worker(self):
+        self._odd_template("questions")
+        assert "needs a 'generate' or 'sections' worker" in " ".join(_errors([wf.step("odd")])["steps"])
 
     @pytest.mark.parametrize(
         ("schema", "message"),

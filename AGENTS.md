@@ -37,7 +37,7 @@ src/django_enrichment/
 │                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / questions / compose / image, extras.py, step.py (step params), seams.py
+│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
@@ -137,7 +137,7 @@ values, one call per subject) read the optional adapter extras through `kinds/ex
 `WorkflowRun` freezes them in `steps_state`. Each step is a task on the subject `run:<uid>`; its output is a
 proposal — an artifact of the built-in `"enrichment"` adapter, or a document for the target module.
 Approving = accepting that proposal (`apply_service` → `workflow_service.on_proposal_applied` spawns the next
-steps); the runner hands finished step tasks to `on_task_finished`. Kinds `generate` / `questions` /
+steps); the runner hands finished step tasks to `on_task_finished`. Kinds `generate` / `sections` / `questions` /
 `compose`; profile, memory and augmentations reach prompts through `kinds/seams.py`. `adapter.apply` may
 return `{"subject_ref"}` → `ContentProposal.result_ref`. Full flow: `docs/workflows.md`.
 
@@ -151,7 +151,7 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Endpoint table, worker pull-loop, idempotency, filters, drift, errors | `docs/api.md` |
 | Per-service contract, `scope_spec` shape, the `filter ⇄ gap` decision | `docs/services.md` |
 | Writing an adapter | `docs/adapter-guide.md` |
-| Workflows, artifacts, kinds generate / questions / compose, seams | `docs/workflows.md` |
+| Workflows, artifacts, kinds generate / sections / questions / compose, seams | `docs/workflows.md` |
 | Augmentations (`params.augment`), `seo_brief` | `docs/api.md` § Augmentations |
 | Company profile (schema, versions, prompt context, status) and memory (recall, writers, promotion) | `docs/profile.md` |
 | Media staging flow | `docs/media.md` |
@@ -288,7 +288,7 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   (`augmentations.carried_params`, validated against the registry). `seo_brief` SEO calls go through
   `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.
 - **Step params ride on `StepParams`** — kind `Params` drop unknown keys, so `run` / `step` / `inputs` survive
-  only on the three step kinds; a definition step must use one of them (`clean()` enforces it).
+  only on the four step kinds; a definition step must use one of them (`clean()` enforces it).
 - **A long subject keeps its lease through `lease_keepalive`** — every toolbox call beats first; `runner_service`
   lets `LeaseLost` through (never a subject failure). A kind that waits without toolbox calls must call
   `lease_keepalive.beat()` itself.

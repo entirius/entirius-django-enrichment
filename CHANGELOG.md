@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- Kind `sections`: a long artifact written section by section from the approved outline (`outline_step`, default
+  `outline`): one completion per numbered outline heading, each seeing every section written before it, then one
+  for the lead and the closing; every section starts with `## <its outline title>`; a regeneration hands each
+  section only its own part of the previous version and the operator instruction (never a trailing "write a new
+  version" that would invite a whole article); an outline without numbered headings is written in one call (logged).
+  An `artifact` step may run a `generate` or a `sections` worker (`STEP_OUTPUT_KINDS` maps an output to a tuple of
+  kinds).
 - Lease keepalive: every toolbox call heartbeats the running unit (at most once per 60 s), so a subject with many
   paid calls no longer outlives its lease and gets paid twice; a lease lost inside a subject stops the consumer
   instead of counting as a failed subject.

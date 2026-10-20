@@ -20,7 +20,7 @@ document goes to), `inputs_schema` (JSON Schema of the brief, `"type": "object"`
 
 `clean()` (`workflow_spec.definition_errors`) refuses: no steps, a malformed step, a duplicate key, `needs`
 naming a step that is not earlier (so a definition is acyclic), a `questions` step without the `review`
-gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate`,
+gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate` or `sections`,
 `questions` → `questions`, `document` → `compose`), a `document` step whose worker writes to another module
 than `target_module`, an `artifact`/`questions` step whose worker does not write to the built-in
 `enrichment` adapter, and an invalid inputs schema.
@@ -66,12 +66,13 @@ conformance kit's `DocumentCreateConformance` checks the shape.
 
 ## Kinds
 
-All three take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
+All four take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
 instruction, previous`); templates preset `prompt` / `rules` and the kind's own keys.
 
 | Kind | Own params | Call | Value |
 |---|---|---|---|
 | `generate` | `format: markdown \| text \| json`, `json_schema` (an object; json only) | one completion | `{"text"}`, or `{"data"}` shaped by the schema |
+| `sections` | `outline_step` (`outline`) | one completion per numbered outline heading (`### N. <title>` + the lines under it), each with its outline block and every section written before it (`sections_so_far`), then one for the lead and the closing (`article_body` → `{lead, closing}`); a regeneration hands each section only its own part of the previous version (matched by `## ` title) and the operator instruction before its task, the lead/closing call the whole previous version; an outline without numbered headings → one completion (logged); the calls keep the unit's lease alive | `{"text"}` = lead, sections (each under `## <its outline title>`, whatever heading the model wrote), closing; cost = the sum of the calls |
 | `questions` | `min_answers` (1; 0 = off) | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}, "min_answers": n}` (ids made unique, `choice` without choices → `text`) |
 | `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq |
 

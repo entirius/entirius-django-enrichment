@@ -125,17 +125,17 @@ class StepGate(models.TextChoices):
 
 
 class StepOutput(models.TextChoices):
-    """What a step produces; each output is made by one kind (`STEP_OUTPUT_KINDS`)."""
+    """What a step produces; each output is made by the kinds in `STEP_OUTPUT_KINDS`."""
 
     ARTIFACT = "artifact", "Artifact (text or data)"
     QUESTIONS = "questions", "Questions for the operator"
     DOCUMENT = "document", "Document in the target module"
 
 
-STEP_OUTPUT_KINDS: dict[str, str] = {
-    StepOutput.ARTIFACT.value: "generate",
-    StepOutput.QUESTIONS.value: "questions",
-    StepOutput.DOCUMENT.value: "compose",
+STEP_OUTPUT_KINDS: dict[str, tuple[str, ...]] = {
+    StepOutput.ARTIFACT.value: ("generate", "sections"),
+    StepOutput.QUESTIONS.value: ("questions",),
+    StepOutput.DOCUMENT.value: ("compose",),
 }
 
 
