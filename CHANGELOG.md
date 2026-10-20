@@ -7,6 +7,10 @@
 - `seo_brief` seeds of a workflow step (an article) come from a topic prompt: 2-4 word head terms instead of
   question-like phrases, which have no search volume and left `keyword-ideas/` nothing to expand. Items keep the
   item prompt.
+- Questions step: `min_answers` (default 1, 0 = off) — approval needs at least that many answers, optional
+  questions included (capped at the number of questions); 400 `ANSWERS_MISSING` names the minimum in `message`
+  and lists the unanswered questions as `details[].issue` `MIN_ANSWERS` (a missing required answer stays `REQUIRED`).
+- Workflow step prompts carry the brief's language as an explicit instruction.
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject

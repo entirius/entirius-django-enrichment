@@ -72,17 +72,20 @@ instruction, previous`); templates preset `prompt` / `rules` and the kind's own 
 | Kind | Own params | Call | Value |
 |---|---|---|---|
 | `generate` | `format: markdown \| text \| json`, `json_schema` (an object; json only) | one completion | `{"text"}`, or `{"data"}` shaped by the schema |
-| `questions` | — | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}}` (ids made unique, `choice` without choices → `text`) |
+| `questions` | `min_answers` (1; 0 = off) | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}, "min_answers": n}` (ids made unique, `choice` without choices → `text`) |
 | `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq |
 
 **Answers.** The operator fills `answers` (`{question id: text}`) with a manual edit (`PATCH proposals/{id}/`)
 and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING` (`details[].field` = the
-question ids), a `choice` answer outside its choices → 400.
+question ids, `issue` `REQUIRED`); fewer answers than `min_answers` (capped at the number of questions, optional ones
+count) → the same 400 with every unanswered question in `details` as `issue` `MIN_ANSWERS` and the minimum in
+`message`; a `choice` answer outside its choices → 400.
+An artifact without `min_answers` (made before it existed) keeps the old rule.
 
 **Prompt.** System = worker system prompt + profile instructions. User = rules, the template prompt, a
 data note, fenced data blocks (`brief`, `inputs`, `company_profile`, `memory` about `run:<uid>`, augmentation
-blocks), the kind's task,
-then for a regeneration the fenced `previous_version` and the operator instruction.
+blocks), the kind's task, the brief's `language` as an explicit instruction ("write all text in …"; none
+without a language), then for a regeneration the fenced `previous_version` and the operator instruction.
 
 ## Seams for profile, memory and augmentations (`kinds/seams.py`)
 

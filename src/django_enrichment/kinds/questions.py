@@ -6,8 +6,9 @@
 
 One completion turns the brief into questions `{id, question, why, type: text|choice, choices, optional}`;
 it sees the profile facts and remembered answers (memory `answer`) so it does not ask again. The artifact
-value is `{"questions": [...], "answers": {}}`; the operator fills `answers` (`{question id: text}`) by a
-manual edit and approves. Approval needs every non-optional answer (`validate_answers` → `ANSWERS_MISSING`).
+value is `{"questions": [...], "answers": {}, "min_answers": n}`; the operator fills `answers` (`{question id: text}`)
+by a manual edit and approves. Approval needs every non-optional answer and at least `min_answers` answers (params,
+default 1 — an article never stands on research alone; 0 switches it off) → `ANSWERS_MISSING`.
 """
 
 from typing import Any
@@ -48,23 +49,30 @@ _TASK = (
 
 
 class AnswersMissingError(ValueError):
-    """Approval of a questions artifact without its required answers (API: 400 `ANSWERS_MISSING`)."""
+    """Approval of a questions artifact without its required answers (API: 400 `ANSWERS_MISSING`).
 
-    def __init__(self, missing: list[str]) -> None:
+    `minimum` > 0: the required ones are answered, but fewer than the artifact's `min_answers`."""
+
+    def __init__(self, missing: list[str], minimum: int = 0) -> None:
         super().__init__(f"answers missing for: {', '.join(missing)}")
         self.missing = missing
+        self.minimum = minimum
 
 
 class QuestionsOptions(BaseModel):
     rules: list[str] = Field(default_factory=list, description="Rules every run follows", examples=[["Max 8."]])
 
 
+class QuestionsParams(StepParams):
+    min_answers: int = Field(1, ge=0, description="Answers needed to approve, optional questions included")
+
+
 class QuestionsKind(Kind):
     Options = QuestionsOptions
-    Params = StepParams
+    Params = QuestionsParams
 
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:  # noqa: ARG002
-        params = StepParams.model_validate(task.params)
+        params = QuestionsParams.model_validate(task.params)
         params.rules = [*QuestionsOptions.model_validate(worker.options).rules, *params.rules]
         prompt = build_prompt(worker, task, params, kind="questions", parts=[_remembered(params), _TASK])
         answer = toolbox_calls.complete(
@@ -75,7 +83,8 @@ class QuestionsKind(Kind):
             kind="questions",
             task=task,
         )
-        value = {"questions": normalize(answer.value.get("questions", [])), "answers": {}}
+        questions = normalize(answer.value.get("questions", []))
+        value = {"questions": questions, "answers": {}, "min_answers": params.min_answers}
         return with_cost([ProposalDraft(TARGET_KIND, locator(params), value)], answer.cost)
 
 
@@ -108,17 +117,26 @@ def _normalized(question: dict, index: int, seen: set[str]) -> dict:
 
 
 def validate_answers(value: dict) -> None:
-    """Every non-optional question answered, every choice one of its options. Raises `ValueError`."""
+    """Every non-optional question answered, at least `min_answers` answers (capped at the number of questions),
+    every choice one of its options. Raises `ValueError`."""
     answers = value.get("answers") or {}
     if not isinstance(answers, dict):
         raise ValueError("answers must be an object {question id: answer}")
     questions = value.get("questions") or []
     if missing := [q.get("id", "") for q in questions if not q.get("optional") and not _answer(answers, q)]:
         raise AnswersMissingError(missing)
+    _check_minimum(questions, answers, int(value.get("min_answers") or 0))
     for question in questions:
         answer = _answer(answers, question)
         if question.get("type") == "choice" and answer and answer not in question.get("choices", []):
             raise ValueError(f"the answer to {question.get('id')} is not one of its choices")
+
+
+def _check_minimum(questions: list[dict], answers: dict, minimum: int) -> None:
+    minimum = min(minimum, len(questions))
+    unanswered = [q.get("id", "") for q in questions if not _answer(answers, q)]
+    if len(questions) - len(unanswered) < minimum:
+        raise AnswersMissingError(unanswered, minimum)
 
 
 def _answer(answers: dict, question: dict) -> str:
