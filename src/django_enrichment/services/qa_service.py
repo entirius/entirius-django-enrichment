@@ -10,8 +10,13 @@
   context — its params (prompt, brief, inputs) and the context numbers the kinds stored per subject
   (`params.context_numbers`, see `record_context`).
 
-`revision_service` runs `check` for every new revision; `recheck` re-runs it on demand. Only `{"text"}`
-values are checked; other values have no warnings.
+A `{"data"}` value (a JSON step: metadata, search phrases) gets `LIMIT` warnings against the step's
+`params.json_schema` (`maxLength` / `minLength` of strings, `maxItems` of arrays — the provider only sees them as
+hints, so they are enforced here), then the rule and number checks on each of its text fields; its warnings carry the
+field's `path` (`faq[2].answer`) and a span inside that field.
+
+`revision_service` runs `check` for every new revision; `recheck` re-runs it on demand. Other values (a select,
+media) have no warnings.
 """
 
 import json
@@ -31,6 +36,7 @@ _logger = logging.getLogger("process")
 
 RULE = "rule"
 NUMBER_NOT_IN_FACTS = "NUMBER_NOT_IN_FACTS"
+LIMIT = "LIMIT"
 CHECKLIST = "checklist"
 CONTEXT_NUMBERS = "context_numbers"
 SOURCE_PARAMS = ("prompt", "brief", "inputs")
@@ -45,11 +51,65 @@ def text_of(value: dict) -> str | None:
 
 def check(proposal: ContentProposal, value: dict) -> list[dict]:
     """The warnings of `value` as a value of `proposal` (its channel's profile, its task's context)."""
-    if not (text := text_of(value)):
+    if (text := text_of(value)) is None and not isinstance(value.get("data"), dict):
         return []
     profile = profile_service.merged(proposal_scope.channel_of(proposal))
-    warnings = [*rule_warnings(text, profile), *number_warnings(text, allowed_numbers(proposal, profile))]
-    return warnings[:MAX_WARNINGS]
+    allowed = allowed_numbers(proposal, profile)
+    if text is not None:
+        return [*rule_warnings(text, profile), *number_warnings(text, allowed)][:MAX_WARNINGS]
+    return data_warnings(value["data"], _schema_of(proposal), profile, allowed)[:MAX_WARNINGS]
+
+
+def data_warnings(data: dict, schema: dict, profile: dict, allowed: set[str]) -> list[dict]:
+    """The schema limits of a data value, then the text checks of each of its text fields (with their path)."""
+    warnings = list(limit_warnings(data, schema))
+    for path, text in text_fields(data):
+        found = [*rule_warnings(text, profile), *number_warnings(text, allowed)]
+        warnings += [{**warning, "path": path} for warning in found]
+    return warnings
+
+
+def limit_warnings(value: object, schema: dict, path: str = "") -> Iterator[dict]:
+    """`maxLength` / `minLength` of strings and `maxItems` of arrays, walked through `properties` and `items`."""
+    if isinstance(value, str):
+        yield from _length_warnings(value, schema, path)
+    elif isinstance(value, list):
+        if (limit := schema.get("maxItems")) is not None and len(value) > limit:
+            yield _limit(path, f"{len(value)} items, the limit is {limit}.")
+        for index, item in enumerate(value):
+            yield from limit_warnings(item, schema.get("items") or {}, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, sub in (schema.get("properties") or {}).items():
+            if key in value:
+                yield from limit_warnings(value[key], sub, f"{path}.{key}" if path else key)
+
+
+def _length_warnings(text: str, schema: dict, path: str) -> Iterator[dict]:
+    if (limit := schema.get("maxLength")) is not None and len(text) > limit:
+        yield _limit(path, f"{len(text)} characters, the limit is {limit}.")
+    if (least := schema.get("minLength")) is not None and len(text) < least:
+        yield _limit(path, f"{len(text)} characters, at least {least}.")
+
+
+def _limit(path: str, message: str) -> dict:
+    return {"code": LIMIT, "message": message, "span": None, "path": path}
+
+
+def text_fields(value: object, path: str = "") -> Iterator[tuple[str, str]]:
+    """Every string of a data value with its path (`faq[0].answer`)."""
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from text_fields(item, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from text_fields(item, f"{path}.{key}" if path else key)
+
+
+def _schema_of(proposal: ContentProposal) -> dict:
+    params = (proposal.task.params if proposal.task else None) or {}
+    return params.get("json_schema") if isinstance(params.get("json_schema"), dict) else {}
 
 
 def recheck(proposal: ContentProposal) -> ContentProposal:

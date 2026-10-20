@@ -21,6 +21,10 @@
   questions included (capped at the number of questions); 400 `ANSWERS_MISSING` names the minimum in `message`
   and lists the unanswered questions as `details[].issue` `MIN_ANSWERS` (a missing required answer stays `REQUIRED`).
 - Workflow step prompts carry the brief's language as an explicit instruction.
+- QA checks `{"data"}` values too (metadata, search phrases): `LIMIT` warnings against the step's `json_schema`
+  (`maxLength` / `minLength` / `maxItems`, which the provider only sees as hints), then the rule and number checks on
+  every text field; warnings carry `path` (`faq[2].answer`, null for a text value) — a new nullable field of
+  `QaWarning` in the API.
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject

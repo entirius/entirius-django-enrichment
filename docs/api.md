@@ -93,15 +93,19 @@ Batch: each pending text proposal of the task gets one call; failures land in `t
 
 ## QA checks (contract A4 § 4)
 
-Every revision of a `{"text"}` value (intake's revision 1, corrections, manual edits, restores) is checked by
-`qa_service.check`; the result is the revision's `warnings` and, for the latest revision, the proposal's
-`warnings`: `[{code, message, span: {start, end, text} | null}]` (≤ 50; offsets into the text).
+Every revision of a `{"text"}` or `{"data"}` value (intake's revision 1, corrections, manual edits, restores) is
+checked by `qa_service.check`; the result is the revision's `warnings` and, for the latest revision, the proposal's
+`warnings`: `[{code, message, span: {start, end, text} | null, path: str | null}]` (≤ 50; offsets into the text).
+A `{"data"}` value (a JSON step: metadata, search phrases) is checked field by field: `LIMIT` against the step's
+`params.json_schema`, then `rule` and `NUMBER_NOT_IN_FACTS` on every string, each warning with the field's `path`
+(`description`, `faq[2].answer`) and its span inside that field; `path` is null for a text value.
 
 | Code | Raised when |
 |---|---|
 | `rule` | an active profile `rules` pattern matches (`flags` `i m s x`), or a `language.spellings` `wrong` occurs (whole word, any case). A pattern that does not compile disables only its rule and logs a warning |
 | `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
 | `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
+| `LIMIT` | a `{"data"}` field breaks the step's `json_schema`: a string over `maxLength` / under `minLength`, an array over `maxItems` (`span` null). The schema goes to the provider with its limits as hints only (`toolbox_calls.provider_schema`), so they are enforced here |
 
 Numbers (`qa_numbers`) are compared by value: integers, decimals with a comma or a dot, thousands grouped by
 space / no-break space / comma / dot, percentages and ranges (each end separately). `12,5 %` = `12.5%`,
