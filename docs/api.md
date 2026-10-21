@@ -155,12 +155,12 @@ for the content guidance; the range is the contract.
   catalog's `at most N characters`), and the answer schema carries `minLength` / `maxLength`, which the provider sees
   as a description hint (`toolbox_calls.provider_schema`).
 - **One corrective call:** when a field with `max` up to 300 comes back outside its range, the run makes one more
-  completion for just those fields (selector tag `enrichment.revise`, the worker's system prompt and rules, the
-  current values as data, each field's range and how far the value is from it) and keeps what comes back, even if it
-  is still outside. Longer fields are never rewritten. A subject × language costs at most two completions; both are
-  charged to the task and shared by the drafts. A failed rewrite keeps the first values, never fails the subject, and
-  leaves the drafts' cost unknown (`None`, the task `cost_complete` false). The `enrichment.queue` log has
-  `event=field_rewrite fields=… still_out=<n>` or `event=field_rewrite_failed code=…`.
+  completion for just those fields: the same selector tag (`enrichment.write`) and answer shape, the worker's system
+  prompt and rules, the current values as data, each field's range and how far the value is from it. What comes back
+  is kept, even if it is still outside. Longer fields are never rewritten. A subject × language costs at most two
+  completions; both are charged to the task and shared by the drafts. A failed rewrite keeps the first values, never
+  fails the subject, and leaves the drafts' cost unknown (`None`, the task `cost_complete` false). The
+  `enrichment.queue` log has `event=field_rewrite fields=… still_out=<n>` or `event=field_rewrite_failed code=…`.
 - **QA:** a `{"text"}` proposal whose field has a range in the `options.field_limits` of the worker that produced it
   (`source` = `worker:<key>@v<n>`) gets a `LIMIT` warning when it is outside, on intake and on every later revision
   (an operator's edit too), so the review shows a miss the rewrite left.

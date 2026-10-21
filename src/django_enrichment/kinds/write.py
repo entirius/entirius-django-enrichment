@@ -150,7 +150,7 @@ class _WriteRun:
             user=self._rewrite_message(offenders, language, catalog),
             json_schema=_answer_schema(list(offenders), catalog, self.options.field_limits),
             model=self.worker.model,
-            kind="revise",
+            kind="write",
             task=self.task,
         )
 

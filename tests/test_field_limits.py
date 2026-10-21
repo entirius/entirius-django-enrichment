@@ -147,7 +147,7 @@ class TestCorrectiveCall:
         assert "<current_values>" in user and _text(195) in user and GOOD_TITLE not in user
         assert "between 120 and 160 characters, spaces included; now 195 characters, 35 too long" in user
         assert "- No prices." in user
-        assert second["tags"][0] == "enrichment.revise"
+        assert second["tags"][0] == "enrichment.write"
 
     def test_too_short_is_rewritten_too(self, catalog):
         answers = [
