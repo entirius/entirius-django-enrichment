@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 """The bus's only door to the AI toolbox — completion, translation, SEO data, video/image jobs and the usage read.
 
 Completion, translation and SEO data go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
@@ -32,7 +36,7 @@ from django_utils.toolbox import settings as toolbox_settings
 
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.kinds.base import SubjectError
-from django_enrichment.services import cost_service
+from django_enrichment.services import cost_service, lease_keepalive
 
 _TRANSLATOR_TOOL = "ai-translator"
 _SEO_TOOL = "ai-seo"
@@ -99,6 +103,7 @@ def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str
     """One structured completion for `task` (tags + cost); `value` is the parsed answer.
 
     Blank `model` = the channel's first catalogue model. `kind` names the selector tag."""
+    lease_keepalive.beat()
     messages = [Message(role="system", content=system)] if system else []
     messages.append(Message(role="user", content=user))
     with ToolboxClient() as client:
@@ -203,6 +208,7 @@ def seo(endpoint: str, payload: dict, *, task: Any = None) -> Costed:
     when missing — the caller validates it).
 
     Posted like translate (paid, `retry=False`); a toolbox cache hit comes back with cost 0."""
+    lease_keepalive.beat()
     with ToolboxClient() as client:
         with _unknown_cost_on_error(task, "seo"):
             body = client._post(client._url(_SEO_TOOL, endpoint), payload, retry=False)
@@ -286,9 +292,9 @@ def _run_media_job(
     with _unknown_cost_on_error(task, "media"):
         job = _wait_for_job(client, spec, job_id)
     cost = _charge(task, "media", job)
-    if job["status"] == "failed":
+    if job["status"] == "failed":  # the toolbox's code (IMAGE_BLOCKED, PROVIDER_ERROR) is the subject's error code
         code = (job.get("error") or {}).get("error", "UNKNOWN")
-        raise ValueError(f"toolbox {spec.path[:-1]} job {job_id} failed: {code}")
+        raise SubjectError(code, f"toolbox {spec.path[:-1]} job {job_id} failed: {code}")
     return job_id, job, cost
 
 

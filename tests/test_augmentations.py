@@ -165,6 +165,14 @@ class TestParams:
         with pytest.raises(ValueError, match="seo_scope"):
             task_service.spawn(type="pim.writer", scope_spec=SCOPE, params={**WRITE_PARAMS, "seo_scope": "site"})
 
+    def test_detail_survives_kind_validation(self, external_writer):
+        task = task_service.spawn(type="pim.writer", scope_spec=SCOPE, params={**WRITE_PARAMS, "seo_detail": "full"})
+        assert task.params["seo_detail"] == "full"
+
+    def test_unknown_detail_is_refused(self, external_writer):
+        with pytest.raises(ValueError, match="seo_detail"):
+            task_service.spawn(type="pim.writer", scope_spec=SCOPE, params={**WRITE_PARAMS, "seo_detail": "all"})
+
     def test_template_presets_augment(self, external_writer):
         params = {"fields": ["meta_title"], "languages": ["pl"], "augment": ["seo_brief"]}
         template_service.create_template(key="meta", label="Meta", worker_key="pim.writer", params=params)
@@ -231,6 +239,14 @@ class TestSeoBriefFullPath:
         assert brief["primary"] == "linen sofa"  # not the highest-volume phrase: its SERP intent did not match
         assert "Rejected 'how to clean a linen sofa'" in brief["serp_notes"]
         assert brief["search_volume"] == {"linen sofa": 900, "grey linen sofa": 300}
+
+    def test_brief_keeps_the_search_evidence(self, writer, django_capture_on_commit_callbacks):
+        _run_task(django_capture_on_commit_callbacks)
+        evidence = MemoryEntry.objects.get().data["evidence"]
+        assert {"phrase": "how to clean a linen sofa", "search_volume": 5000} in evidence["candidates"]
+        assert evidence["ideas"][0]["keyword"] == "linen sofa bed"
+        assert evidence["serp"]["linen sofa"]["organic"][0]["title"] == "Linen sofas - shop"
+        assert evidence["serp"]["linen sofa"]["people_also_ask"] == ["Is linen durable?"]
 
     def test_brief_is_remembered_for_ninety_days(self, writer, django_capture_on_commit_callbacks):
         task, _, _ = _run_task(django_capture_on_commit_callbacks)
@@ -355,6 +371,23 @@ class TestLanguages:
             step._data_blocks(task, params, "")
         assert {body["language_code"] for body in [*_sent(routes["volume"]), *_sent(routes["serp"])]} == {"en"}
 
+    def test_a_workflow_step_seeds_short_topic_phrases(self, writer):
+        task = SimpleNamespace(
+            pk=None, type="x", params={"augment": ["seo_brief"]}, scope_spec={"module": "enrichment"}
+        )
+        params = step.StepParams(channel="default", run="r1", step="keywords", brief={"topic": "Sofa care"})
+        with mock_toolbox() as router:
+            routes = _mock_seo(router)
+            step._data_blocks(task, params, "")
+            system = _by_selector(routes["complete"], "enrichment.seo_brief.seeds")[0]["messages"][0]["content"]
+        assert "2 to 4 words" in system and "topic" in system
+        assert "find exactly this item" not in system
+
+    def test_a_product_keeps_the_item_seeds_prompt(self, writer, django_capture_on_commit_callbacks):
+        _, router, _ = _run_task(django_capture_on_commit_callbacks)
+        system = _by_selector(router, "enrichment.seo_brief.seeds")[0]["messages"][0]["content"]
+        assert "find exactly this item" in system and "2 to 4 words" not in system
+
     def test_no_language_sends_no_language_code(self, writer):
         task = SimpleNamespace(pk=None, type="x", params={"channel": "default"}, scope_spec={"module": "pim"})
         with mock_toolbox() as router:
@@ -441,3 +474,63 @@ class TestErrors:
         with pytest.raises(SubjectError) as exc:
             seo_brief._seeds(SeedsAnswer(seeds=["x" * (SEED_MAX_CHARS + 5)]))
         assert exc.value.code == "SEO_BRIEF_NO_SEEDS"
+
+
+class TestSeoDetail:
+    """`seo_detail: full` (article steps) adds the search evidence to the block; the default stays the short brief."""
+
+    def test_full_detail_adds_the_search_evidence(self, writer, django_capture_on_commit_callbacks):
+        _, router, _ = _run_task(django_capture_on_commit_callbacks, params={"seo_detail": "full"})
+        prompt = _write_prompts(router)[0]
+        assert "Primary phrase: linen sofa" in prompt
+        assert "- how to clean a linen sofa: 5000" in prompt and "- linen sofa bed: 700" in prompt
+        assert 'SERP "linen sofa" (AI overview: no):\n1. b.test - Linen sofas - shop: Buy' in prompt
+        assert "People also ask: Is linen durable?" in prompt
+
+    def test_default_detail_keeps_the_short_brief(self, writer, django_capture_on_commit_callbacks):
+        _, router, _ = _run_task(django_capture_on_commit_callbacks)
+        prompt = _write_prompts(router)[0]
+        assert "Primary phrase: linen sofa" in prompt
+        assert 'SERP "' not in prompt and "People also ask" not in prompt
+
+    def test_memory_text_stays_the_short_brief(self, writer, django_capture_on_commit_callbacks):
+        _run_task(django_capture_on_commit_callbacks, params={"seo_detail": "full"})
+        assert "People also ask" not in MemoryEntry.objects.get().text
+
+    def test_reused_brief_brings_its_evidence_at_zero_cost(self, writer, django_capture_on_commit_callbacks):
+        _run_task(django_capture_on_commit_callbacks)
+        task = SimpleNamespace(
+            pk=None,
+            type="pim.writer",
+            params={"channel": "default", "seo_detail": "full"},
+            scope_spec={"module": "pim"},
+        )
+        with mock_toolbox() as router:
+            result = seo_brief.run(task=task, subject_ref="SKU-1", context=PL)
+            assert not router["complete"].called
+        assert result.cost == Decimal(0)
+        assert "People also ask: Is linen durable?" in result.block
+
+    def test_a_brief_without_evidence_renders_the_short_block(self, writer):
+        _remember("CAT-SOFAS")
+        task = SimpleNamespace(
+            pk=None,
+            type="pim.writer",
+            params={"channel": "default", "seo_detail": "full"},
+            scope_spec={"module": "pim"},
+        )
+        with mock_toolbox():
+            result = seo_brief.run(task=task, subject_ref="SKU-1", context=PL)
+        assert result.block.startswith("Primary phrase: linen sofa") and 'SERP "' not in result.block
+
+    def test_an_idea_fills_a_seed_volume_the_volume_call_did_not_know(self):
+        evidence = {
+            "candidates": [{"phrase": "sofa", "search_volume": None}],
+            "ideas": [{"keyword": "Sofa", "search_volume": 4400}],
+            "serp": {},
+        }
+        assert "- sofa: 4400" in seo_brief.render_evidence(evidence)
+
+    def test_unknown_volume_shows_as_a_question_mark(self):
+        evidence = {"candidates": [{"phrase": "sofa", "search_volume": None}], "ideas": [], "serp": {}}
+        assert "- sofa: ?" in seo_brief.render_evidence(evidence)

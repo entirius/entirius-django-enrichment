@@ -41,13 +41,15 @@ class StepPrompt:
 
 
 def build_prompt(worker: Any, task: Any, params: StepParams, *, kind: str, parts: list[str]) -> StepPrompt:
-    """System = worker prompt + profile instructions; user = rules, prompt, data blocks, `parts`, regeneration."""
+    """System = worker prompt + profile instructions; user = rules, prompt, data blocks, `parts`, language,
+    regeneration."""
     instructions, profile_data = seams.profile_for_task(task, channel=params.channel, kind=kind)
     user = join_prompts(
         extras.rules_block(params.rules),
         params.prompt,
         _data_blocks(task, params, profile_data),
         *parts,
+        _language(params),
         _regeneration(params),
     )
     return StepPrompt(system=join_prompts(worker.system_prompt, instructions), user=user)
@@ -76,6 +78,13 @@ def _memory(task: Any, params: StepParams, subject_ref: str) -> str:
         subject_ref=subject_ref,
         kinds=kinds,
     )
+
+
+def _language(params: StepParams) -> str:
+    """The brief's language as an instruction — inside the data block alone the model may write in another one."""
+    if not (language := str(params.brief.get("language") or "").strip()):
+        return ""
+    return f"Write all text in the language with ISO 639-1 code `{language}`, whatever language the data is in."
 
 
 def _regeneration(params: StepParams) -> str:

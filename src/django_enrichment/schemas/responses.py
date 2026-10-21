@@ -91,11 +91,12 @@ class QaSpan(BaseModel):
 
 
 class QaWarning(BaseModel):
-    """A QA warning of a text value (contract A4 § 4)."""
+    """A QA warning of a text or data value (contract A4 § 4)."""
 
-    code: str = Field(description="rule | NUMBER_NOT_IN_FACTS | checklist", examples=["NUMBER_NOT_IN_FACTS"])
+    code: str = Field(description="rule | NUMBER_NOT_IN_FACTS | checklist | LIMIT", examples=["NUMBER_NOT_IN_FACTS"])
     message: str = Field(examples=["The number 25% is not in the facts registry or the source context."])
-    span: QaSpan | None = Field(None, description="Where in the text; null when unknown")
+    span: QaSpan | None = Field(None, description="Where in the text (in the field of a data value); null when unknown")
+    path: str | None = Field(None, description="The field of a data value (`faq[2].answer`); null for a text value")
 
 
 class WarningsResponse(BaseModel):

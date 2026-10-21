@@ -93,15 +93,19 @@ Batch: each pending text proposal of the task gets one call; failures land in `t
 
 ## QA checks (contract A4 § 4)
 
-Every revision of a `{"text"}` value (intake's revision 1, corrections, manual edits, restores) is checked by
-`qa_service.check`; the result is the revision's `warnings` and, for the latest revision, the proposal's
-`warnings`: `[{code, message, span: {start, end, text} | null}]` (≤ 50; offsets into the text).
+Every revision of a `{"text"}` or `{"data"}` value (intake's revision 1, corrections, manual edits, restores) is
+checked by `qa_service.check`; the result is the revision's `warnings` and, for the latest revision, the proposal's
+`warnings`: `[{code, message, span: {start, end, text} | null, path: str | null}]` (≤ 50; offsets into the text).
+A `{"data"}` value (a JSON step: metadata, search phrases) is checked field by field: `LIMIT` against the step's
+`params.json_schema`, then `rule` and `NUMBER_NOT_IN_FACTS` on every string, each warning with the field's `path`
+(`description`, `faq[2].answer`) and its span inside that field; `path` is null for a text value.
 
 | Code | Raised when |
 |---|---|
 | `rule` | an active profile `rules` pattern matches (`flags` `i m s x`), or a `language.spellings` `wrong` occurs (whole word, any case). A pattern that does not compile disables only its rule and logs a warning |
 | `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
 | `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
+| `LIMIT` | a `{"data"}` field breaks the step's `json_schema`: a string over `maxLength` / under `minLength`, an array over `maxItems` (`span` null). The schema goes to the provider with its limits as hints only (`toolbox_calls.provider_schema`), so they are enforced here |
 
 Numbers (`qa_numbers`) are compared by value: integers, decimals with a comma or a dot, thousands grouped by
 space / no-break space / comma / dot, percentages and ranges (each end separately). `12,5 %` = `12.5%`,
@@ -146,7 +150,8 @@ memory_writes)`; `run_all` fences each block under its key and saves the memory 
 
 - **Enabling:** `params.augment: [keys]` on `POST tasks/` or in a template's `params` (templates may preset it).
   Keys are validated against the registry — an unknown key → 400 (a template with one is refused too).
-  `augment` and `seo_scope` (`subject | category`) survive the kind's params validation, like `template`.
+  `augment`, `seo_scope` (`subject | category`) and `seo_detail` (`brief | full`) survive the kind's params
+  validation, like `template`.
 - **Where blocks go:** `write` (per subject × language — each language's prompt gets the block researched in that
   language), `pick` (the channel's main language), and the workflow step kinds (`generate` / `questions`,
   `kinds/step.py`). In `write` / `pick` the augmentation's context is the adapter's `build_context` for the subject
@@ -160,17 +165,26 @@ memory_writes)`; `run_all` fences each block under its key and saves the memory 
 
 1. Reuse — the newest active, unexpired memory `seo_brief` in the same language (`data.language`) about the
    subject, then its category (adapter extra `category_of`) → that brief, cost 0, no call.
-2. Research — one completion proposes 3-5 seed phrases from the context (selector `enrichment.seo_brief.seeds`);
+2. Research — one completion proposes 3-5 seed phrases from the context (selector `enrichment.seo_brief.seeds`;
+   a workflow step's context — it has a `brief` — gets the topic prompt: 2-4 word head terms, never questions, for
+   the keyword tool to expand into the long tail; an item keeps the item prompt);
    toolbox SEO `search-volume/` and `keyword-ideas/` (one call each, all seeds) and `serp/` (depth 10) for the 3
    seeds with the highest volume, all through `toolbox_calls.seo` (`ToolboxClient._post`, `retry=False`; the
    toolbox cache answers repeats at cost 0). Every SEO call carries `language_code` = the context's `language`
    (blank → omitted); the location is the toolbox default.
 3. Evaluation — one completion (selector `enrichment.seo_brief.evaluate`), intent before volume: SERP intent must
    match the page, winnability, gaps, volume only breaks ties → `{primary, secondary (≤ 2), intent, serp_notes,
-   gaps}` plus `search_volume` of the chosen phrases (from the data, not the model) and `language`.
+   gaps}` plus `search_volume` of the chosen phrases (from the data, not the model), `language` and `evidence`
+   (the data the evaluation saw: `candidates` = seeds with volume, `ideas` = the top 20 keyword ideas, `serp` per
+   phrase = top 10 organic results, people also ask, AI overview flag).
 4. Memory — `seo_brief`, expires after 90 days, under the subject's category when the scope is `category`
    (`params.seo_scope`; the default for kind `write`, i.e. product descriptions — every product of the category
    reuses one brief), else under the subject; a subject without a category keeps it on the subject.
+5. Block — the short brief (primary, secondary, intent, volumes, SERP notes, gaps); with `params.seo_detail: full`
+   also the evidence (`render_evidence`: monthly volumes of seeds and ideas, then each SERP with its people also
+   ask) — the article steps use it to ask and write from the research. A reused brief brings its evidence at cost
+   0 (one research per run feeds every step); a brief remembered before `evidence` existed renders short. The
+   memory text stays the short brief.
 
 A toolbox failure fails the subject with `SEO_BRIEF_<toolbox code>` (e.g. `SEO_BRIEF_PROVIDER_ERROR`); an answer or
 SEO `data` that does not fit the boundary models (`augmentations/seo_answers.py`) with `SEO_BRIEF_BAD_RESPONSE`;

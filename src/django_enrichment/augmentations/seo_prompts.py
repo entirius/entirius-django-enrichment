@@ -10,6 +10,15 @@ to find exactly this item or page. Write them in the language of the context. Pr
 descriptive phrases over single generic words; no brand names unless the context is about that brand;
 no invented features."""
 
+# A workflow step (an article) researches a topic, not an item: long question-like seeds have no search volume, so the
+# seeds are the topic's head terms and the keyword tool expands them into the long tail.
+TOPIC_SEEDS_SYSTEM = """You propose seed phrases for keyword research on the topic of an article.
+Read the brief (topic, angle, audience) and propose 3 to 5 short phrases of 2 to 4 words that people really type
+into a search engine about this topic: the head terms and mid-tail phrases of the subject. No questions, no
+sentences, not the article's title. A keyword tool expands the seeds into the long tail with search volumes, so keep
+them broad enough to have volume. Write them in the language of the brief; no brand names unless the brief is about
+that brand."""
+
 SEED_MAX_CHARS = 80  # the toolbox SEO app refuses longer keywords (400)
 
 SEEDS_SCHEMA = {

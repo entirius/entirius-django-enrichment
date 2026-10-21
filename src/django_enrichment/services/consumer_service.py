@@ -5,7 +5,8 @@
 """Internal consumer — pulls units through the same `work_queue_service` an external worker uses.
 
 `consume` handles a few units one after the other (a Celery slot is never held for long), subject by subject,
-with a heartbeat before each subject. A budget error stops the unit and pauses the worker; a lost lease stops the
+with a heartbeat before each subject and, inside a long subject, between its toolbox calls (`lease_keepalive`).
+A budget error stops the unit and pauses the worker; a lost lease stops the
 consumer at once; a cancelled task stops it before the next paid call.
 """
 
@@ -17,7 +18,14 @@ import time
 from django_enrichment.enums import TaskStatus, WorkerMode
 from django_enrichment.kinds import extras, get_kind
 from django_enrichment.models import EnrichmentTask, Worker, WorkUnit
-from django_enrichment.services import queue_config, queue_log, runner_service, unit_result_service, work_queue_service
+from django_enrichment.services import (
+    lease_keepalive,
+    queue_config,
+    queue_log,
+    runner_service,
+    unit_result_service,
+    work_queue_service,
+)
 from django_enrichment.services.queue_types import LeaseLost, SubjectResult
 
 _logger = logging.getLogger("process")
@@ -79,13 +87,14 @@ def _run_subjects(worker: Worker, unit: WorkUnit) -> list[SubjectResult]:
     kind = get_kind(worker.kind)()
     task = EnrichmentTask.objects.get(pk=unit.task_id)
     results: list[SubjectResult] = []
-    for ref in unit.subject_refs:
-        work_queue_service.heartbeat(unit.lease_token)
-        task.refresh_from_db(fields=["status"])
-        if task.status == TaskStatus.CANCELLED.value:
-            break
-        result = runner_service.run_subject(worker, kind, task, ref)
-        if result.error_code in queue_config.get("ENRICHMENT_BUDGET_ERROR_CODES"):
-            raise BudgetStop(result.error_code)
-        results.append(result)
+    with lease_keepalive.kept_alive(lambda: work_queue_service.heartbeat(unit.lease_token)):
+        for ref in unit.subject_refs:
+            work_queue_service.heartbeat(unit.lease_token)
+            task.refresh_from_db(fields=["status"])
+            if task.status == TaskStatus.CANCELLED.value:
+                break
+            result = runner_service.run_subject(worker, kind, task, ref)
+            if result.error_code in queue_config.get("ENRICHMENT_BUDGET_ERROR_CODES"):
+                raise BudgetStop(result.error_code)
+            results.append(result)
     return results

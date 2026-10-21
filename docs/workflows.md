@@ -20,7 +20,7 @@ document goes to), `inputs_schema` (JSON Schema of the brief, `"type": "object"`
 
 `clean()` (`workflow_spec.definition_errors`) refuses: no steps, a malformed step, a duplicate key, `needs`
 naming a step that is not earlier (so a definition is acyclic), a `questions` step without the `review`
-gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate`,
+gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate` or `sections`,
 `questions` → `questions`, `document` → `compose`), a `document` step whose worker writes to another module
 than `target_module`, an `artifact`/`questions` step whose worker does not write to the built-in
 `enrichment` adapter, and an invalid inputs schema.
@@ -66,23 +66,27 @@ conformance kit's `DocumentCreateConformance` checks the shape.
 
 ## Kinds
 
-All three take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
+All four take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
 instruction, previous`); templates preset `prompt` / `rules` and the kind's own keys.
 
 | Kind | Own params | Call | Value |
 |---|---|---|---|
 | `generate` | `format: markdown \| text \| json`, `json_schema` (an object; json only) | one completion | `{"text"}`, or `{"data"}` shaped by the schema |
-| `questions` | — | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}}` (ids made unique, `choice` without choices → `text`) |
+| `sections` | `outline_step` (`outline`) | one completion per numbered outline heading (`### N. <title>` + the lines under it), each with its outline block and every section written before it (`sections_so_far`), then one for the lead and the closing (`article_body` → `{lead, closing}`); a regeneration hands each section only its own part of the previous version (matched by `## ` title) and the operator instruction before its task, the lead/closing call the whole previous version; an outline without numbered headings → one completion (logged); the calls keep the unit's lease alive | `{"text"}` = lead, sections (each under `## <its outline title>`, whatever heading the model wrote), closing; cost = the sum of the calls |
+| `questions` | `min_answers` (1; 0 = off) | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}, "min_answers": n}` (ids made unique, `choice` without choices → `text`) |
 | `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq |
 
 **Answers.** The operator fills `answers` (`{question id: text}`) with a manual edit (`PATCH proposals/{id}/`)
 and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING` (`details[].field` = the
-question ids), a `choice` answer outside its choices → 400.
+question ids, `issue` `REQUIRED`); fewer answers than `min_answers` (capped at the number of questions, optional ones
+count) → the same 400 with every unanswered question in `details` as `issue` `MIN_ANSWERS` and the minimum in
+`message`; a `choice` answer outside its choices → 400.
+An artifact without `min_answers` (made before it existed) keeps the old rule.
 
 **Prompt.** System = worker system prompt + profile instructions. User = rules, the template prompt, a
 data note, fenced data blocks (`brief`, `inputs`, `company_profile`, `memory` about `run:<uid>`, augmentation
-blocks), the kind's task,
-then for a regeneration the fenced `previous_version` and the operator instruction.
+blocks), the kind's task, the brief's `language` as an explicit instruction ("write all text in …"; none
+without a language), then for a regeneration the fenced `previous_version` and the operator instruction.
 
 ## Seams for profile, memory and augmentations (`kinds/seams.py`)
 

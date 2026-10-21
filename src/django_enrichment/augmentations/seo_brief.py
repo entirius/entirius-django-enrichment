@@ -8,7 +8,9 @@ The brief is per language: `context["language"]` (the kinds set it) goes to ever
 (blank → the toolbox market defaults), is stored in the brief and must match for reuse.
 
 1. Reuse: a fresh memory `seo_brief` in the language about the subject, then its category → that brief, cost 0.
-2. Research: a completion proposes 3-5 seed phrases from the context → toolbox SEO `search-volume/` and
+2. Research: a completion proposes 3-5 seed phrases from the context (a workflow step's context — it has a
+   `brief` — gets the topic prompt: 2-4 word head terms, not questions, for the keyword tool to expand; an item
+   keeps the item prompt) → toolbox SEO `search-volume/` and
    `keyword-ideas/` (one call each) → `serp/` for the top `SERP_TOP` seeds by volume.
 3. A completion evaluates intent first (SERP intent, winnability, gaps; volume breaks ties) →
    `{primary, secondary, intent, serp_notes, gaps, search_volume}`, remembered for `TTL` under the category when
@@ -45,6 +47,7 @@ from django_enrichment.augmentations.seo_prompts import (
     SEED_MAX_CHARS,
     SEEDS_SCHEMA,
     SEEDS_SYSTEM,
+    TOPIC_SEEDS_SYSTEM,
 )
 from django_enrichment.enums import MemoryKind
 from django_enrichment.kinds.base import SubjectError, fenced, join_prompts
@@ -82,12 +85,18 @@ def run(*, task: Any, subject_ref: str, context: dict) -> AugmentResult:
         language=subject.language,
     )
     if found:
-        return AugmentResult(block=render(found.data), cost=Decimal(0))
+        return AugmentResult(block=_block(task, found.data), cost=Decimal(0))
     try:
         brief, cost = _research(task, context, subject.language)
     except (ToolboxError, ValidationError) as exc:
         raise _failure(exc) from exc
-    return AugmentResult(block=render(brief), cost=cost, memory_writes=[_entry(task, subject, brief)])
+    return AugmentResult(block=_block(task, brief), cost=cost, memory_writes=[_entry(task, subject, brief)])
+
+
+def _block(task: Any, brief: dict) -> str:
+    """The short brief; with `params.seo_detail == "full"` also the search evidence it rests on."""
+    evidence = brief.get("evidence") if (task.params or {}).get("seo_detail") == "full" else None
+    return join_prompts(render(brief), render_evidence(evidence)) if evidence else render(brief)
 
 
 def _subject(task: Any, subject_ref: str, context: dict) -> _Subject:
@@ -113,7 +122,8 @@ class _Spend:
 def _research(task: Any, context: dict, language: str) -> tuple[dict, Decimal | None]:
     spend = _Spend()
     item = fenced("item_context", _dumps(context))
-    seeds = _seeds(SeedsAnswer.model_validate(spend.take(_complete(task, "seeds", SEEDS_SYSTEM, item))))
+    system = TOPIC_SEEDS_SYSTEM if "brief" in context else SEEDS_SYSTEM
+    seeds = _seeds(SeedsAnswer.model_validate(spend.take(_complete(task, "seeds", system, item))))
     market = {"language_code": language} if language else {}
     volumes = _volumes(_items(spend.take(_seo(task, "search-volume/", {"keywords": seeds, **market}))))
     ideas = _items(spend.take(_seo(task, "keyword-ideas/", {"keywords": seeds, **market})))
@@ -122,7 +132,7 @@ def _research(task: Any, context: dict, language: str) -> tuple[dict, Decimal | 
     evidence |= {"ideas": _ideas(ideas), "serp": serps}
     data = join_prompts(item, fenced("keyword_data", _dumps(evidence)))
     answer = EvaluateAnswer.model_validate(spend.take(_complete(task, "evaluate", EVALUATE_SYSTEM, data)))
-    return _brief(answer, volumes | _volumes(ideas), language), spend.total()
+    return _brief(answer, volumes | _volumes(ideas), language) | {"evidence": evidence}, spend.total()
 
 
 _SCHEMAS = {"seeds": SEEDS_SCHEMA, "evaluate": EVALUATE_SCHEMA}
@@ -223,6 +233,32 @@ def render(brief: dict) -> str:
     if language := brief.get("language"):
         lines.append(f"Researched for language: {language}")
     return "\n".join(lines)
+
+
+def render_evidence(evidence: dict) -> str:
+    """The search data a brief rests on: monthly volumes (seeds and ideas), then each SERP with people also ask."""
+    volumes = {item["phrase"]: item.get("search_volume") for item in evidence.get("candidates") or []}
+    for idea in evidence.get("ideas") or []:
+        if volumes.get(phrase := _phrase(idea["keyword"])) is None:
+            volumes[phrase] = idea.get("search_volume")
+    ranked = sorted(volumes.items(), key=lambda pair: -(pair[1] or 0))
+    lines = ["Monthly search volume (? = unknown):", *(f"- {p}: {v if v is not None else '?'}" for p, v in ranked)]
+    serps = [_render_serp(phrase, serp) for phrase, serp in (evidence.get("serp") or {}).items()]
+    return join_prompts("\n".join(lines), *serps)
+
+
+def _render_serp(phrase: str, serp: dict) -> str:
+    overview = {True: "yes", False: "no"}.get(serp.get("ai_overview"), "unknown")
+    results = [_organic_line(index, result) for index, result in enumerate(serp.get("organic") or [], start=1)]
+    lines = [f'SERP "{phrase}" (AI overview: {overview}):', *results]
+    if questions := serp.get("people_also_ask"):
+        lines.append(f"People also ask: {'; '.join(questions)}")
+    return "\n".join(lines)
+
+
+def _organic_line(index: int, result: dict) -> str:
+    head = f"{result.get('rank') or index}. {result.get('domain') or '?'} - {result.get('title') or ''}"
+    return f"{head}: {result['snippet']}" if result.get("snippet") else head
 
 
 def _entry(task: Any, subject: _Subject, brief: dict) -> MemoryEntry:

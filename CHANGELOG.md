@@ -1,7 +1,41 @@
 # Changelog
 
 ## Unreleased
+- Kind `sections`: a long artifact written section by section from the approved outline (`outline_step`, default
+  `outline`): one completion per numbered outline heading, each seeing every section written before it, then one
+  for the lead and the closing; every section starts with `## <its outline title>`; a regeneration hands each
+  section only its own part of the previous version and the operator instruction (never a trailing "write a new
+  version" that would invite a whole article); an outline without numbered headings is written in one call (logged).
+  An `artifact` step may run a `generate` or a `sections` worker (`STEP_OUTPUT_KINDS` maps an output to a tuple of
+  kinds).
+- Lease keepalive: every toolbox call heartbeats the running unit (at most once per 60 s), so a subject with many
+  paid calls no longer outlives its lease and gets paid twice; a lease lost inside a subject stops the consumer
+  instead of counting as a failed subject.
+- `seo_brief` keeps its search evidence (seed volumes, keyword ideas, SERP with people also ask) in the remembered
+  brief; `params.seo_detail: full` adds it to the prompt block (the short brief stays the default and the memory
+  text). Steps of one run reuse the research at cost 0.
+- `seo_brief` seeds of a workflow step (an article) come from a topic prompt: 2-4 word head terms instead of
+  question-like phrases, which have no search volume and left `keyword-ideas/` nothing to expand. Items keep the
+  item prompt.
+- Questions step: `min_answers` (default 1, 0 = off) — approval needs at least that many answers, optional
+  questions included (capped at the number of questions); 400 `ANSWERS_MISSING` names the minimum in `message`
+  and lists the unanswered questions as `details[].issue` `MIN_ANSWERS` (a missing required answer stays `REQUIRED`).
+- Workflow step prompts carry the brief's language as an explicit instruction.
+- QA checks `{"data"}` values too (metadata, search phrases): `LIMIT` warnings against the step's `json_schema`
+  (`maxLength` / `minLength` / `maxItems`, which the provider only sees as hints), then the rule and number checks on
+  every text field; warnings carry `path` (`faq[2].answer`, null for a text value) — a new nullable field of
+  `QaWarning` in the API.
 
+## 2.3.0rc3 — 2026-10-17
+- A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
+  with the toolbox's code instead of `INTERNAL_ERROR`, so the CMS names the reason (e.g. the provider's safety filter).
+
+## 2.3.0rc2 — 2026-10-17
+- A task from a template whose run picks another image `operation` drops the template's `preset`: the toolbox
+  refused a preset of another operation with `PRESET_NOT_FOUND` (e.g. "Enhance photo" run as a packshot); without a
+  preset it takes the default of the chosen operation.
+
+## 2.3.0rc1 — 2026-10-16
 - Proposal status changes lock the row and refuse a status that moved meanwhile: a concurrent apply and reject
   can no longer both win (the loser gets a 400 and its write rolls back).
 - SEO brief: when every proposed seed phrase is over the toolbox keyword limit (80 characters), the phrases are cut

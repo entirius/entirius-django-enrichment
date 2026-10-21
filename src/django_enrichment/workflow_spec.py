@@ -100,11 +100,12 @@ def _template_errors(spec: StepSpec, target_module: str) -> list[str]:
 
 
 def _worker_errors(spec: StepSpec, worker: "Worker", target_module: str) -> list[str]:
-    kind = STEP_OUTPUT_KINDS[spec.output]
+    kinds = STEP_OUTPUT_KINDS[spec.output]
     if not worker.active or worker.mode != WorkerMode.INTERNAL.value:
         return [f"step {spec.key!r}: worker {worker.key!r} must be active and internal (our runner runs the steps)"]
-    if worker.kind != kind:
-        return [f"step {spec.key!r}: output {spec.output!r} needs a {kind!r} worker, template runs {worker.kind!r}"]
+    if worker.kind not in kinds:
+        needed = " or ".join(repr(kind) for kind in kinds)
+        return [f"step {spec.key!r}: output {spec.output!r} needs a {needed} worker, template runs {worker.kind!r}"]
     if spec.output == StepOutput.DOCUMENT.value and worker.target_module != target_module:
         return [f"step {spec.key!r}: the document must go to {target_module!r}, not {worker.target_module!r}"]
     if spec.output != StepOutput.DOCUMENT.value and worker.target_module != ARTIFACT_KEY:

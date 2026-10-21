@@ -115,7 +115,23 @@ class TestApproveQuestions:
         body = response.json()
         assert body["error"] == "ANSWERS_MISSING"
         assert [detail["field"] for detail in body["details"]] == ["years", "tone"]
+        assert {detail["issue"] for detail in body["details"]} == {"REQUIRED"}
         assert ContentProposal.objects.get(pk=proposal_id).status == "pending"
+
+    def test_too_few_answers_name_the_minimum(self, started, admin_client):
+        proposal_id = started["steps"][0]["proposal_id"]
+        value = admin_client.get(f"{BASE}/proposals/{proposal_id}/").json()["proposed_value"]
+        value["questions"] = [{**question, "optional": True} for question in value["questions"]]
+        admin_client.patch(f"{BASE}/proposals/{proposal_id}/", {"proposed_value": value}, format="json")
+        body = admin_client.post(f"{BASE}/proposals/{proposal_id}/accept/").json()
+        assert body["error"] == "ANSWERS_MISSING"
+        assert body["message"] == "Answer at least 1 question before approving."
+        assert {(d["field"], d["issue"]) for d in body["details"]} == {
+            ("years", "MIN_ANSWERS"),
+            ("tone", "MIN_ANSWERS"),
+            ("extra", "MIN_ANSWERS"),
+        }
+        assert {d["description"] for d in body["details"]} == {"Answer at least 1 of these questions."}
 
     def test_answered_questions_approve_the_step(self, started, admin_client, django_capture_on_commit_callbacks):
         proposal_id = started["steps"][0]["proposal_id"]

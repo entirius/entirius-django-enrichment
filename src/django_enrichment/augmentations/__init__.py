@@ -47,6 +47,9 @@ class AugmentParams(BaseModel):
 
     augment: list[str] = Field(default_factory=list, description="Augmentation keys", examples=[["seo_brief"]])
     seo_scope: Literal["subject", "category"] | None = Field(None, description="Where seo_brief is remembered")
+    seo_detail: Literal["brief", "full"] | None = Field(
+        None, description="`full` adds the search evidence (volumes, SERP, people also ask) to the seo_brief block"
+    )
 
     @field_validator("augment")
     @classmethod

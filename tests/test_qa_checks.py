@@ -129,6 +129,72 @@ class TestRules:
         assert proposal.warnings == []
 
 
+META_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 20},
+        "description": {"type": "string", "maxLength": 30},
+        "faq": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}, "answer": {"type": "string", "maxLength": 15}},
+            },
+        },
+    },
+}
+
+
+def _data_proposal(data: dict, params: dict | None = None):
+    task = EnrichmentTask.objects.create(type="article.meta", params={"json_schema": META_SCHEMA, **(params or {})})
+    return _proposal("", proposed_value={"data": data}, task=task)
+
+
+class TestDataValues:
+    """A `{"data"}` value (metadata, search phrases): the step's schema limits, then the text checks per field."""
+
+    def test_a_field_over_its_limit_is_a_limit_warning_with_its_path(self, fake_adapter):
+        proposal = _data_proposal({"title": "Short", "description": "x" * 34})
+        assert proposal.warnings == [
+            {"code": "LIMIT", "message": "34 characters, the limit is 30.", "span": None, "path": "description"}
+        ]
+
+    def test_nested_fields_and_lists_are_checked(self, fake_adapter):
+        faq = [{"question": "Q?", "answer": "A long answer here."}, {"question": "Q2?", "answer": "A."}]
+        proposal = _data_proposal({"title": "", "faq": faq})
+        assert [(w["path"], w["message"]) for w in proposal.warnings] == [
+            ("title", "0 characters, at least 1."),
+            ("faq", "2 items, the limit is 1."),
+            ("faq[0].answer", "19 characters, the limit is 15."),
+        ]
+
+    def test_text_checks_run_on_every_text_field_with_its_path(self, fake_adapter):
+        _profile(rules=[{"id": "r", "pattern": "best", "message": "No superlatives."}])
+        faq = [{"question": "Is it the best?", "answer": "40 times."}]
+        proposal = _data_proposal({"title": "Chairs", "faq": faq})
+        assert [(w["code"], w["path"], w["span"]["text"]) for w in proposal.warnings if w["span"]] == [
+            ("rule", "faq[0].question", "best"),
+            ("NUMBER_NOT_IN_FACTS", "faq[0].answer", "40"),
+        ]
+
+    def test_numbers_of_the_inputs_are_allowed_in_data_too(self, fake_adapter):
+        proposal = _data_proposal({"title": "Rated 40"}, params={"inputs": {"edit": {"text": "40 cycles."}}})
+        assert proposal.warnings == []
+
+    def test_data_without_a_schema_gets_the_text_checks_only(self, fake_adapter):
+        _profile()
+        proposal = _proposal("", proposed_value={"data": {"note": "x" * 500 + " 77"}})
+        assert [(w["code"], w["path"]) for w in proposal.warnings] == [("NUMBER_NOT_IN_FACTS", "note")]
+
+    def test_the_api_carries_the_path(self, admin_client, fake_adapter):
+        proposal = _data_proposal({"title": "Short", "description": "x" * 34})
+        body = admin_client.get(f"{BASE}/proposals/{proposal.pk}/").json()
+        assert body["warnings"] == [
+            {"code": "LIMIT", "message": "34 characters, the limit is 30.", "span": None, "path": "description"}
+        ]
+
+
 class TestNumberCheck:
     def test_numbers_in_facts_pass_others_are_flagged_once(self, fake_adapter):
         _profile()
@@ -281,7 +347,7 @@ class TestApi:
                 f"{BASE}/proposals/{proposal.pk}/revise/", {"quick_action": "check_standard"}, format="json"
             )
         assert resp.status_code == 200
-        assert resp.json()["warnings"] == [{"code": "checklist", "message": "No benefit.", "span": None}]
+        assert resp.json()["warnings"] == [{"code": "checklist", "message": "No benefit.", "span": None, "path": None}]
 
     def test_check_standard_without_checklists_is_400(self, admin_client, fake_adapter):
         proposal = _proposal("A chair.")

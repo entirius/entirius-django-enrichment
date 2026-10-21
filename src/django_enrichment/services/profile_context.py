@@ -23,6 +23,7 @@ DEFAULT_ROUTING: dict[str, list[str]] = {
     "write": ["brand", "persona", "tone", "language", "facts"],
     "pick": ["brand", "language"],
     "generate": ["brand", "persona", "tone", "language", "facts", "proof", "seo"],
+    "sections": ["brand", "persona", "tone", "language", "facts", "proof", "seo"],
     "questions": ["brand", "facts"],
 }
 FALLBACK_SECTIONS = ["brand"]

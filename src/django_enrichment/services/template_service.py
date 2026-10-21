@@ -98,7 +98,16 @@ def merge_into_task(key: str, *, task_type: str, params: dict) -> tuple[str, dic
     if task_type and task_type != worker.key:
         raise ValueError(f"template {key!r} runs worker {worker.key!r}, not {task_type!r}")
     rules = [*template.rules, *template.params.get("rules", []), *params.get("rules", [])]
-    return worker.key, {**template.params, **params, "rules": list(dict.fromkeys(rules))}
+    return worker.key, {**_preset_params(template.params, params), **params, "rules": list(dict.fromkeys(rules))}
+
+
+def _preset_params(template_params: dict, params: dict) -> dict:
+    """A template's image `preset` belongs to its `operation`: a run that picks another operation drops it (the
+    toolbox refuses a preset of another operation; without one it takes that operation's default)."""
+    operation = params.get("operation")
+    if not operation or operation == template_params.get("operation"):
+        return template_params
+    return {key: value for key, value in template_params.items() if key != "preset"}
 
 
 def add_rule(template: TaskTemplate, rule: str) -> list[str]:

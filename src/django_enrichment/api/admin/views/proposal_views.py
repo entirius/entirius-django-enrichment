@@ -68,17 +68,29 @@ def _get_proposal_or_404(proposal_id: int):
 
 
 def _answers_missing(exc: AnswersMissingError) -> Response:
-    """400 `ANSWERS_MISSING` (v2 error shape): a questions step approved without its required answers."""
-    details = [
-        ErrorDetail(field=qid, issue="REQUIRED", description="This question needs an answer.") for qid in exc.missing
-    ]
+    """400 `ANSWERS_MISSING` (v2 error shape): a questions step approved without its required answers, or with fewer
+    answers than its minimum (then every unanswered question is a candidate: `MIN_ANSWERS`)."""
+    issue, description = _answers_issue(exc.minimum)
+    details = [ErrorDetail(field=qid, issue=issue, description=description) for qid in exc.missing]
     body = ErrorResponse(
         error="ANSWERS_MISSING",
-        message="Answer every required question before approving.",
+        message=_answers_message(exc.minimum),
         debug_id=uuid.uuid4().hex[:8],
         details=details,
     )
     return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _answers_issue(minimum: int) -> tuple[str, str]:
+    if not minimum:
+        return "REQUIRED", "This question needs an answer."
+    return "MIN_ANSWERS", f"Answer at least {minimum} of these questions."
+
+
+def _answers_message(minimum: int) -> str:
+    if not minimum:
+        return "Answer every required question before approving."
+    return f"Answer at least {minimum} question{'s' if minimum > 1 else ''} before approving."
 
 
 def _parse_confidence_min(raw: str | None) -> Decimal | None:
