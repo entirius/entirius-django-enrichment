@@ -30,6 +30,10 @@
   citation; with an empty registry every citation is flagged). The model had invented a "From the company profile"
   section for an empty profile and downstream steps treated it as ground truth. The format is now a contract between
   workflow prompts and QA (`docs/api.md` § QA checks).
+- A JSON step's strings lose the escapes a model wrote twice: a literal `\"` or `\n` (the CMS showed the backslashes,
+  e.g. in the search phrases' SERP notes) becomes a quote or a newline in every string of the `{"data"}` value before
+  intake. `\\"`, other backslash sequences, keys and `{"text"}` values are left as they are
+  (`services/json_unescape.py`, applied in kind `generate`; regenerations pass through it too).
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject

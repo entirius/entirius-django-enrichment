@@ -52,6 +52,7 @@ src/django_enrichment/
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
+│                       # json_unescape (leaf: the double-escaped `\"` / `\n` of a JSON step's strings, applied in kind generate),
 │                       # ai_usage_service (this month's toolbox usage, CMS header counter)
 ├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")

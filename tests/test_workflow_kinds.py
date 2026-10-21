@@ -30,9 +30,9 @@ def _task(params: dict) -> EnrichmentTask:
     return EnrichmentTask.objects.create(type="t", params=params)
 
 
-def _run(kind, params: dict) -> tuple[list, list[dict]]:
+def _run(kind, params: dict, respond=wf.respond) -> tuple[list, list[dict]]:
     with mock_toolbox() as router:
-        route = router["complete"].mock(side_effect=wf.respond)
+        route = router["complete"].mock(side_effect=respond)
         drafts = kind().run(_worker(), _task(params), "run:abc")
     return drafts, wf.sent(route)
 
@@ -56,6 +56,19 @@ class TestGenerate:
         assert drafts[0].proposed_value == {"data": wf.META}
         assert drafts[0].target_locator == {"step": "output"}
         assert sent[0]["json_schema"] == wf.META_SCHEMA
+
+    def test_json_strings_get_the_escapes_a_model_wrote_twice_restored(self):
+        answer = {"title": r"The \"best\" sofa", "faq": [{"a": r"One.\nTwo."}], "count": 2, r"k\"ey": r"\"x\""}
+        drafts, _ = _run(GenerateKind, {"format": "json"}, respond=wf.respond_with(answer))
+        assert drafts[0].proposed_value == {
+            "data": {"title": 'The "best" sofa', "faq": [{"a": "One.\nTwo."}], "count": 2, r"k\"ey": '"x"'}
+        }
+
+    @pytest.mark.parametrize("format", ["markdown", "text"])
+    def test_text_values_are_left_as_the_model_wrote_them(self, format):
+        text = r"He said \"hi\".\nNext line."
+        drafts, _ = _run(GenerateKind, {"format": format}, respond=wf.respond_with({"text": text}))
+        assert drafts[0].proposed_value == {"text": text}
 
     def test_schema_must_be_an_object(self):
         with pytest.raises(ValueError, match="object"):
