@@ -63,6 +63,9 @@ through `intake_media`: locator `{channel, source_picture_ref, operation, varian
 picks `add` (next to the original, the default and the only bulk mode) or `replace` (in place of the original,
 whose file stays the undo anchor) — see `docs/api.md` § Accept / drift.
 
+A subject that fails (unreadable picture, toolbox unreachable, blocked job) is recorded in `task.errors` with a stable
+code - the list is in `docs/api.md` § Failure codes.
+
 ## Review (CMS)
 
 `DiffRenderer` maps `target_kind=image|picture` to `ImageDiff` (before/after thumbnails, opening the

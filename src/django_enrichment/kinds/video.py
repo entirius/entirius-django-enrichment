@@ -7,8 +7,9 @@
 Without `params.picture_ref` the picture comes from the adapter's optional
 `main_picture(*, subject_ref, channel) -> (bytes, mime)`; with it, from the optional
 `picture(*, subject_ref, channel, picture_ref) -> (bytes, mime)` (a ref from `list_pictures`), which raises
-`LookupError` when the picture is not the subject's → `SubjectError("PICTURE_NOT_FOUND")`. Both are looked up with
-`getattr`; absent → the subject fails. The CMS sends `picture_ref` only for a one-product run. The toolbox media job runs to completion inside
+`LookupError` when the picture is not the subject's → `SubjectError("PICTURE_NOT_FOUND")`; either one raising `OSError`
+(file gone, not an image) → `SubjectError("PICTURE_UNREADABLE")`. Both are looked up with `getattr`; absent → the
+subject fails. The CMS sends `picture_ref` only for a one-product run. The toolbox media job runs to completion inside
 this call (blocking, POC). One media draft per subject: `target_kind="video"`, locator `{channel}`; the
 runner stages the mp4 through `proposal_service.intake_media`.
 """
@@ -19,7 +20,14 @@ from django.core.files.base import ContentFile
 from pydantic import BaseModel, Field
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
+from django_enrichment.kinds.base import (
+    Kind,
+    ProposalDraft,
+    SubjectError,
+    join_prompts,
+    unreadable_picture,
+    with_cost,
+)
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "video"
@@ -54,7 +62,15 @@ class VideoKind(Kind):
 
 
 def _source_picture(target_module: str, subject_ref: str, params: VideoParams) -> tuple[bytes, str]:
-    """The chosen picture (`params.picture_ref`) or, without one, the subject's main picture."""
+    """The chosen picture (`params.picture_ref`) or, without one, the subject's main picture; a file that cannot be
+    read (`OSError`: gone from disk, not an image) fails the subject with `PICTURE_UNREADABLE`."""
+    try:
+        return _read_picture(target_module, subject_ref, params)
+    except OSError as exc:
+        raise unreadable_picture(subject_ref) from exc
+
+
+def _read_picture(target_module: str, subject_ref: str, params: VideoParams) -> tuple[bytes, str]:
     if not params.picture_ref:
         return _extra(target_module, "main_picture")(subject_ref=subject_ref, channel=params.channel)
     try:

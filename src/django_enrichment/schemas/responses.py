@@ -26,7 +26,12 @@ class TaskResponse(BaseModel):
     params: dict
     batch_key: str
     counts: dict
-    errors: list[dict]
+    errors: list[dict] = Field(
+        description="Why subjects failed, first 20: `{subject_ref, code, error_id, message?, exception?}`. `code` is "
+        "a stable code, `error_id` finds the log trace, `message` is the toolbox's own reason, `exception` the "
+        "exception class name of an `INTERNAL_ERROR` (never its text)",
+        examples=[[{"subject_ref": "SKU-1", "code": "PICTURE_UNREADABLE", "error_id": "3fa9c1d2b4e7"}]],
+    )
     cost_usd: Decimal | None = Field(
         description="Sum of the known toolbox costs; null = none known", examples=["0.0042"]
     )

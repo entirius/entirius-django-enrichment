@@ -61,7 +61,8 @@ def _fail_task(task_id: int, exc: Exception) -> None:
     error_id = uuid.uuid4().hex[:12]
     _logger.exception("planning failed for task %s [%s]", task_id, error_id)
     task = task_service.get_task(task_id)
-    task_service.record_error(task, subject_ref="", code=toolbox_calls.failure_code(exc), error_id=error_id)
+    code, exception = toolbox_calls.failure_code(exc), toolbox_calls.failure_exception(exc)
+    task_service.record_error(task, subject_ref="", code=code, error_id=error_id, exception=exception)
     if task.status == TaskStatus.OPEN.value:
         task_service.mark_in_progress(task)
         task_service.transition_status(task, TaskStatus.FAILED.value)

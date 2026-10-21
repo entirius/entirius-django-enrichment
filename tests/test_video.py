@@ -11,12 +11,12 @@ import httpx
 import pytest
 import respx
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django_utils.toolbox import ToolboxError
+from django_utils.toolbox import ToolboxConnectionError, ToolboxError, ToolboxNotConfiguredError, ToolboxTimeoutError
 
 from django_enrichment.enums import TaskStatus
 from django_enrichment.kinds.base import SubjectError
 from django_enrichment.kinds.video import VideoKind
-from django_enrichment.models import ContentProposal
+from django_enrichment.models import ContentProposal, EnrichmentTask
 from django_enrichment.services import proposal_service, staging_store, task_service, toolbox_calls
 from tests.queue_helpers import run_queue
 
@@ -125,6 +125,7 @@ class TestVideoIntake:
 # ── toolbox media job API ─────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.django_db
 @pytest.mark.usefixtures("toolbox_settings", "no_sleep")
 class TestGenerateVideo:
     def test_submit_poll_download(self):
@@ -174,10 +175,47 @@ class TestGenerateVideo:
             assert _generate() == _MP4
         assert submit.calls[0].request.headers["X-API-Key"] == "media-key"
 
-    def test_not_configured(self, settings):
+    def test_not_configured_is_the_text_calls_code(self, settings):
         settings.AI_TOOLBOX_API_KEY = ""
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(ToolboxNotConfiguredError) as caught:
             _generate()
+        assert toolbox_calls.failure_code(caught.value) == "AI_TOOLBOX_NOT_CONFIGURED"
+        assert toolbox_calls.failure_detail(caught.value) == "AI toolbox is not configured for this instance"
+
+    @pytest.mark.parametrize(
+        ("raised", "error_class", "code"),
+        [
+            (httpx.ReadTimeout("slow"), ToolboxTimeoutError, "UPSTREAM_TIMEOUT"),
+            (httpx.ConnectTimeout("slow"), ToolboxTimeoutError, "UPSTREAM_TIMEOUT"),
+            (httpx.ConnectError("refused"), ToolboxConnectionError, "TOOLBOX_HTTP_0"),
+            (httpx.RemoteProtocolError("reset"), ToolboxConnectionError, "TOOLBOX_HTTP_0"),
+        ],
+    )
+    def test_a_transport_error_on_submit_is_a_typed_toolbox_error(self, raised, error_class, code):
+        with respx.mock() as router:
+            router.post(MEDIA).mock(side_effect=raised)
+            with pytest.raises(error_class) as caught:
+                _generate()
+        assert toolbox_calls.failure_code(caught.value) == code
+        assert toolbox_calls.failure_detail(caught.value).endswith(type(raised).__name__)
+        assert "toolbox.test" not in str(caught.value)
+
+    def test_a_transport_error_while_polling_is_typed_and_charges_an_unknown_cost(self):
+        task = EnrichmentTask.objects.create(type="t")
+        with respx.mock(assert_all_called=False) as router:
+            router.post(MEDIA).mock(return_value=httpx.Response(202, json={"job_id": _JOB}))
+            router.get(f"{MEDIA}{_JOB}/").mock(side_effect=httpx.ReadTimeout("slow"))
+            with pytest.raises(ToolboxTimeoutError):
+                toolbox_calls.generate_video(image=_PNG, mime="image/png", form={}, task=task)
+        task.refresh_from_db()
+        assert task.cost_complete is False
+
+    def test_a_transport_error_on_download_is_typed(self):
+        with respx.mock() as router:
+            _mock_job(router, "done")
+            router.get(f"{MEDIA}{_JOB}/download/").mock(side_effect=httpx.ReadError("cut"))
+            with pytest.raises(ToolboxConnectionError):
+                _generate()
 
 
 # ── kind `video` + runner ─────────────────────────────────────────────────────────────────────
@@ -225,6 +263,27 @@ class TestVideoKind:
         task = SimpleNamespace(params={"channel": "default", "picture_ref": "7"})
         with pytest.raises(ValueError, match="has no picture"):
             VideoKind().run(_worker(), task, "SKU-1")
+
+    @pytest.mark.parametrize("params", [{}, {"picture_ref": "7"}], ids=["main picture", "chosen picture"])
+    def test_a_picture_file_gone_from_disk_fails_the_subject(self, fake_adapter, monkeypatch, params):
+        def gone(**_kw):
+            raise FileNotFoundError("/srv/media/pictures/secret-name.jpg")
+
+        monkeypatch.setattr(fake_adapter, "main_picture", gone, raising=False)
+        monkeypatch.setattr(fake_adapter, "picture", gone, raising=False)
+        task = SimpleNamespace(params={"channel": "default", **params})
+        with pytest.raises(SubjectError) as caught:
+            VideoKind().run(_worker(), task, "SKU-1")
+        assert caught.value.code == "PICTURE_UNREADABLE"
+        assert "/srv" not in str(caught.value)
+        assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+    def test_a_corrupt_picture_fails_the_subject(self, fake_adapter, monkeypatch, corrupt_picture):
+        monkeypatch.setattr(fake_adapter, "main_picture", corrupt_picture, raising=False)
+        task = SimpleNamespace(params={"channel": "default"})
+        with pytest.raises(SubjectError) as caught:
+            VideoKind().run(_worker(), task, "SKU-1")
+        assert caught.value.code == "PICTURE_UNREADABLE"
 
     def test_picture_ref_survives_kind_validation(self):
         params = VideoKind.Params.model_validate({"channel": "default", "picture_ref": "7"}).model_dump()

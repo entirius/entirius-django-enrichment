@@ -265,12 +265,14 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
   string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;
   every subject failed (or resolve itself failed) → task `failed`. No retry, no budget logic. The reason lands in
-  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`.
+  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`; an `INTERNAL_ERROR` adds the
+  exception class name (`failure_exception`), still never the text. Codes: `docs/api.md` § Failure codes.
 - **`translate` posts via `ToolboxClient._post`/`_url`** (`retry=False`) — the client has no translator
   method. Tests: `mock_toolbox` plus a respx route for `ai-translator/.../translate/`.
 - **Video toolbox endpoint is a POC escape hatch** — `ENRICHMENT_VIDEO_TOOLBOX_*` let media jobs hit a
   local toolbox while text uses the shared test toolbox; remove once ai-toolbox-test has django-ai-media
-  (Redmine #34464). Video calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`).
+  (Redmine #34464). Video and image calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`), so
+  `_toolbox_transport_errors` turns httpx timeouts and connection errors into the typed toolbox errors a text call raises.
 - **The `video` kind blocks a Celery worker** — it polls the media job (10 s interval) up to
   `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
 - **Accept mode is stored, not passed** — `apply_service` sets `proposal.apply_mode` (`add` | `replace`, blank = no

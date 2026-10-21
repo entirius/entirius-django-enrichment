@@ -8,9 +8,11 @@ import json
 
 import httpx
 import pytest
-from django_utils.toolbox import ToolboxError
+import respx
+from django_utils.toolbox import ToolboxConnectionError, ToolboxError, ToolboxTimeoutError
 from django_utils.toolbox.testing import CANNED_COMPLETION, mock_toolbox
 
+from django_enrichment.kinds.base import SubjectError
 from django_enrichment.models import EnrichmentTask
 from django_enrichment.services import runner_service, toolbox_calls
 
@@ -80,6 +82,19 @@ class TestFailureDetail:
     def test_other_errors_have_no_detail(self):
         assert toolbox_calls.failure_detail(ValueError("secret path /etc")) == ""
 
+    @pytest.mark.parametrize(
+        ("exc", "detail"),
+        [
+            (ToolboxConnectionError(0, "Connection failed: ConnectError"), "Connection failed: ConnectError"),
+            (
+                ToolboxTimeoutError(0, "Request timed out: ReadTimeout", "UPSTREAM_TIMEOUT"),
+                "Request timed out: ReadTimeout",
+            ),
+        ],
+    )
+    def test_a_failure_without_an_http_answer_says_what_the_client_saw(self, exc, detail):
+        assert toolbox_calls.failure_detail(exc) == detail
+
     def test_detail_is_capped(self):
         exc = ToolboxError(502, "x", "C", upstream_message="m" * 1000)
         assert len(toolbox_calls.failure_detail(exc)) == 300
@@ -94,6 +109,50 @@ class TestFailureDetail:
         task = EnrichmentTask.objects.create(type="t")
         result = runner_service.run_subject(worker, Boom(), task, "run:1")
         assert (result.error_code, result.error_message) == ("PROVIDER_ERROR", "HTTP 502 PROVIDER_ERROR: rejected")
+
+
+class TestFailureException:
+    def test_an_unmapped_exception_names_its_class_and_nothing_else(self):
+        exc = FileNotFoundError("/srv/media/secret-name.jpg")
+        assert toolbox_calls.failure_code(exc) == "INTERNAL_ERROR"
+        assert toolbox_calls.failure_exception(exc) == "FileNotFoundError"
+
+    @pytest.mark.parametrize(
+        "exc",
+        [SubjectError("PICTURE_UNREADABLE"), ToolboxError(502, "x"), ToolboxError(402, "x", "BUDGET"), TimeoutError()],
+    )
+    def test_a_mapped_failure_has_no_class_name(self, exc):
+        assert toolbox_calls.failure_exception(exc) == ""
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("toolbox_settings")
+class TestMediaAndTextFailLikewise:
+    """A media call (plain httpx) and a text call (`ToolboxClient`) report the same failure with the same code."""
+
+    MEDIA = "http://toolbox.test/api/ai-media/v2/admin/shop/videos/"
+
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            httpx.ReadTimeout("slow"),
+            httpx.ConnectTimeout("slow"),
+            httpx.ConnectError("refused"),
+            httpx.ReadError("cut"),
+        ],
+    )
+    def test_same_code_on_both_paths(self, raised, monkeypatch):
+        monkeypatch.setattr(toolbox_calls.time, "sleep", lambda _s: None)
+        with mock_toolbox() as router:
+            router["complete"].mock(side_effect=raised)
+            with pytest.raises(ToolboxError) as text:
+                toolbox_calls.complete(system="", user="u", json_schema={}, model="m", kind="generate")
+        with respx.mock() as router:
+            router.post(self.MEDIA).mock(side_effect=raised)
+            with pytest.raises(ToolboxError) as media:
+                toolbox_calls.generate_video(image=b"png", mime="image/png", form={})
+        assert toolbox_calls.failure_code(media.value) == toolbox_calls.failure_code(text.value)
+        assert toolbox_calls.failure_detail(media.value) == toolbox_calls.failure_detail(text.value)
 
 
 class Flaky:

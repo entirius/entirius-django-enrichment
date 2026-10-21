@@ -11,6 +11,16 @@
 - Lease keepalive: every toolbox call heartbeats the running unit (at most once per 60 s), so a subject with many
   paid calls no longer outlives its lease and gets paid twice; a lease lost inside a subject stops the consumer
   instead of counting as a failed subject.
+- AI media runs (`video`, `image`) fail with a specific code instead of `INTERNAL_ERROR`: `PICTURE_UNREADABLE` when the
+  picture's file cannot be read (an `OSError` from the adapter's `main_picture` / `picture`: gone from the worker's
+  disk, not an image); `UPSTREAM_TIMEOUT` and the connection error (`TOOLBOX_HTTP_0`) when the toolbox media API times
+  out or cannot be reached - the same codes a text call gets, the media calls now raise the typed toolbox errors
+  `ToolboxClient` raises; `AI_TOOLBOX_NOT_CONFIGURED` (was a `ValueError`) when the media toolbox has no URL, key or
+  channel. A failure with no HTTP answer carries the client's own text as `message` (`Connection failed: ConnectError`)
+  instead of "HTTP 0 -: no message".
+- A subject that still fails with `INTERNAL_ERROR` stores the exception class name in its `errors[]` entry
+  (`exception`, e.g. `FileNotFoundError`; absent for every other code, never the exception text), so the failure can be
+  told apart without the container log. `errors` is documented in the OpenAPI schema.
 - `seo_brief` keeps its search evidence (seed volumes, keyword ideas, SERP with people also ask) in the remembered
   brief; `params.seo_detail: full` adds it to the prompt block (the short brief stays the default and the memory
   text). Steps of one run reuse the research at cost 0.

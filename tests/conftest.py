@@ -5,6 +5,8 @@
 # Shared pytest fixtures for django-enrichment.
 # Auth fixtures for the API land in etap-05; here we only need the test adapter + a review user.
 
+import io
+
 import pytest
 from django.test import override_settings
 
@@ -99,3 +101,16 @@ def make_worker(db):
         return worker_service.save_worker(Worker(**fields))
 
     return _make
+
+
+@pytest.fixture
+def corrupt_picture():
+    """A picture reader that fails like the PIM adapter on a stored file that is not an image (PIL cannot tell what
+    it is: `UnidentifiedImageError`, an `OSError`)."""
+    image_module = pytest.importorskip("PIL.Image")
+
+    def read(**_kw):
+        with image_module.open(io.BytesIO(b"not an image")) as image:
+            return b"not an image", image.format
+
+    return read

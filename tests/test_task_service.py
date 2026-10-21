@@ -285,6 +285,18 @@ def test_record_error_is_capped():
 
 
 @pytest.mark.django_db
+def test_record_error_keeps_message_and_exception_only_when_given():
+    task = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))
+    task_service.record_error(task, subject_ref="A", code="X", error_id="1", message="why", exception="OSError")
+    task_service.record_error(task, subject_ref="B", code="X", error_id="2")
+    task.refresh_from_db()
+    assert task.errors == [
+        {"subject_ref": "A", "code": "X", "error_id": "1", "message": "why", "exception": "OSError"},
+        {"subject_ref": "B", "code": "X", "error_id": "2"},
+    ]
+
+
+@pytest.mark.django_db
 def test_proposal_counts_groups_by_task_and_status(fake_adapter):
     from django_enrichment.services import proposal_service
 

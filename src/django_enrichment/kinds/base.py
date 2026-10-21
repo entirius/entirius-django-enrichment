@@ -39,6 +39,12 @@ class SubjectError(Exception):
         self.code = code
 
 
+def unreadable_picture(subject_ref: str) -> SubjectError:
+    """The subject's picture file cannot be read (gone from the worker's disk, not an image): fails this subject
+    with `PICTURE_UNREADABLE`. The message names the subject only — the OS error (a path) stays in the log."""
+    return SubjectError("PICTURE_UNREADABLE", f"a picture of {subject_ref!r} cannot be read")
+
+
 class Kind:
     """Base kind. Subclasses set `Options` / `Params` and implement `run`."""
 

@@ -106,6 +106,11 @@ def _intake_one(worker: Worker, task: EnrichmentTask, result: SubjectResult) -> 
             )
     task_service.increment_count(task, "failed")
     task_service.record_error(
-        task, subject_ref=result.subject_ref, code=code, error_id=error_id or "-", message=result.error_message
+        task,
+        subject_ref=result.subject_ref,
+        code=code,
+        error_id=error_id or "-",
+        message=result.error_message,
+        exception=result.error_exception,
     )
     return False
