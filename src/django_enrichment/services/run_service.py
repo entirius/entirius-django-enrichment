@@ -31,8 +31,12 @@ class SpawnResult:
     skipped_in_flight: list[str] = field(default_factory=list)
 
 
-def spawn(order: TaskSpawnRequest, *, requested_by: AbstractBaseUser | None = None) -> SpawnResult:
-    """Spawn `order` without the subjects already in flight. Raises `AlreadyRunningError` (all skipped), `ValueError`."""
+def spawn(
+    order: TaskSpawnRequest, *, requested_by: AbstractBaseUser | None = None, retry_of: int | None = None
+) -> SpawnResult:
+    """Spawn `order` without the subjects already in flight. Raises `AlreadyRunningError` (all skipped), `ValueError`.
+
+    `retry_of` marks the spawned task as the retry of that task id (`retry_service`)."""
     scope_spec, skipped = _drop_in_flight(order)
     task = task_service.spawn(
         type=order.type,
@@ -42,6 +46,7 @@ def spawn(order: TaskSpawnRequest, *, requested_by: AbstractBaseUser | None = No
         batch_key=order.batch_key,
         template=order.template,
         lane=order.lane or "",
+        retry_of=retry_of,
     )
     return SpawnResult(task=task, skipped_in_flight=skipped)
 

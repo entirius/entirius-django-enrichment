@@ -31,7 +31,13 @@ from django_enrichment.schemas.responses import (
     TaskResponse,
     TaskSpawnResponse,
 )
-from django_enrichment.services import lane_service, run_service, task_progress_service, task_service
+from django_enrichment.services import (
+    lane_service,
+    retry_service,
+    run_service,
+    task_progress_service,
+    task_service,
+)
 
 _TAGS = ["Enrichment Tasks"]
 
@@ -56,6 +62,17 @@ class AlreadyRunning(drf_exceptions.APIException):
     default_code = "already_running"
 
 
+class NotRetryable(drf_exceptions.APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "not_retryable"
+
+
+def _spawned(result: run_service.SpawnResult) -> Response:
+    """201 with the spawned task (`TaskSpawnResponse`) — `POST tasks/` and `POST tasks/{id}/retry/` answer alike."""
+    body = {**_serialize_with_proposals([result.task])[0], "skipped_in_flight": result.skipped_in_flight}
+    return Response(TaskSpawnResponse.model_validate(body).model_dump(mode="json"), status=status.HTTP_201_CREATED)
+
+
 def _get_task_or_404(task_id: int):
     try:
         return task_service.get_task(task_id)
@@ -72,9 +89,9 @@ class TaskViewSet(viewsets.ViewSet):
     serializer_class = None
 
     def get_throttles(self):
-        # Task spawning (single spawn + CSV import) is the analyzer/ops traffic path — capped so a
+        # Task spawning (single spawn, CSV import, retry) is the analyzer/ops traffic path — capped so a
         # leaked service-account token or a runaway loop can't spam it. Reads/status-PATCH are not.
-        if self.action in ("create", "import_csv"):
+        if self.action in ("create", "import_csv", "retry"):
             return [SpawnThrottle()]
         return []
 
@@ -134,8 +151,29 @@ class TaskViewSet(viewsets.ViewSet):
             raise AlreadyRunning(str(exc)) from exc
         except ValueError as exc:
             raise_as_drf(exc)
-        body = {**_serialize_with_proposals([result.task])[0], "skipped_in_flight": result.skipped_in_flight}
-        return Response(TaskSpawnResponse.model_validate(body).model_dump(mode="json"), status=status.HTTP_201_CREATED)
+        return _spawned(result)
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Retry the failed subjects of a task as a new task",
+        request=None,
+        responses={201: TaskSpawnResponse, 400: None, 404: None, 409: None},
+    )
+    def retry(self, request: Request, pk: int) -> Response:
+        """Spawn a new task for the subjects the task failed on (a failed task that names none: its whole scope),
+        with the same type, template and operator params and `params.retry_of` = this task. 409 `NOT_RETRYABLE`
+        while the task runs or when nothing failed, 409 `ALREADY_RUNNING` when those subjects are in flight again,
+        400 for a workflow step; everything else a spawn refuses (run lane cap, params) is the `POST tasks/` answer."""
+        task = _get_task_or_404(pk)
+        try:
+            result = retry_service.retry(task, user=request.user)
+        except retry_service.NotRetryableError as exc:
+            raise NotRetryable(str(exc)) from exc
+        except run_service.AlreadyRunningError as exc:
+            raise AlreadyRunning(str(exc)) from exc
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return _spawned(result)
 
     @extend_schema(
         tags=_TAGS,

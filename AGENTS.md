@@ -48,7 +48,7 @@ src/django_enrichment/
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
-│                       # lane_service + run_service (run lanes, in-flight dedupe),
+│                       # lane_service + run_service (run lanes, in-flight dedupe), retry_service (retry a finished task),
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
@@ -258,9 +258,13 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **The internal runner runs on two lanes** (`lane_service`): `task.lane` `now` → `enrichment_interactive`, `queue` →
   `enrichment_bulk` (worker with concurrency 1); never the default `celery` queue or `enrichment` (apply canvas). A host
   without a worker on both lanes leaves tasks `open` forever. Workflow steps and batch corrections are always `now`.
-- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` dedupes; internal spawns
-  (workflow steps, spawn rules, CSV import) and `batch_key` calls must keep spawning unchanged. Details: `docs/api.md`
-  § Run lanes.
+- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` (and `tasks/{id}/retry/`,
+  which spawns through it) dedupes; internal spawns (workflow steps, spawn rules, CSV import) and `batch_key` calls
+  must keep spawning unchanged. Details: `docs/api.md` § Run lanes.
+- **A key the bus writes into `task.params` while a run goes must be listed in `retry_service.RUNTIME_PARAMS`** —
+  `context_numbers` today. A retry copies the original's params and would carry the key into the new run. `retry_of`
+  survives kind validation only because `task_service.spawn(retry_of=)` adds it after.
+  Details: `docs/api.md` § Retry a task.
 - **Runner paging:** gap tasks re-pull page 1 (work queue), others page++; a seen-set stops the loop
   when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
   string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;

@@ -96,6 +96,7 @@ urlpatterns = [
         name="admin-tasks-detail",
     ),
     path("tasks/<int:pk>/revise/", RevisionViewSet.as_view({"post": "revise_task"}), name="admin-tasks-revise"),
+    path("tasks/<int:pk>/retry/", TaskViewSet.as_view({"post": "retry"}), name="admin-tasks-retry"),
     path("tasks/<int:pk>/targets/", TaskViewSet.as_view({"get": "targets"}), name="admin-tasks-targets"),
     # Proposals
     path("proposals/", ProposalViewSet.as_view({"get": "list", "post": "create"}), name="admin-proposals-list"),

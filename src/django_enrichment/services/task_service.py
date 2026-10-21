@@ -37,6 +37,7 @@ from django_enrichment.services import csv_import, lane_service, qa_auto_check, 
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
 ERRORS_CAP = 20
+RETRY_OF = "retry_of"
 
 
 def _validate_scope_spec(scope_spec: dict) -> None:
@@ -79,16 +80,20 @@ def spawn(
     batch_key: str = "",
     template: str = "",
     lane: str = "",
+    retry_of: int | None = None,
 ) -> EnrichmentTask:
     """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
 
     When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
     to the internal runner after commit (`worker_service.dispatch`). With `template`, the
     template decides `type` and presets params/rules (`template_service.merge_into_task`). `lane` is
-    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`).
+    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`). `retry_of` is the
+    id of the task this one retries (`retry_service`); it lands in `params.retry_of`, which kind validation would drop.
     """
     _validate_scope_spec(scope_spec)
     type, params = resolve_type_and_params(type, params or {}, template)
+    if retry_of is not None:
+        params = {**params, RETRY_OF: retry_of}
     lane = lane_service.resolve(lane, scope_spec)
 
     if batch_key:
