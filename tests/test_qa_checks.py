@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""QA checks (contract A4 § 4): profile rules, spellings, numbers vs facts / context, quick actions, API."""
+"""QA checks (contract A4 § 4): rules, spellings, numbers vs facts / context, fact citations, quick actions, API."""
 
 import json
 import logging
@@ -56,6 +56,10 @@ def _codes(warnings: list[dict]) -> list[str]:
 
 def _flagged(warnings: list[dict]) -> list[str]:
     return [w["span"]["text"] for w in warnings if w["code"] == qa_service.NUMBER_NOT_IN_FACTS]
+
+
+def _cited(warnings: list[dict]) -> list[dict]:
+    return [w for w in warnings if w["code"] == qa_service.FACT_NOT_IN_PROFILE]
 
 
 def _answer(parsed: dict) -> httpx.Response:
@@ -241,6 +245,94 @@ class TestNumberCheck:
         proposal.refresh_from_db()
         assert proposal.warnings == proposal.revisions.last().warnings == []
         assert _codes(proposal.revisions.first().warnings) == ["NUMBER_NOT_IN_FACTS"]
+
+
+class TestFactCitations:
+    """`(profile fact: <id>)` is the source label workflow prompts ask for; the id must be in the facts registry."""
+
+    def test_unknown_id_is_flagged_with_the_span_of_the_citation(self, fake_adapter):
+        _profile()
+        text = "Quiet motor (profile fact: noise level) for any room."
+        proposal = _proposal(text)
+        start = text.index("(")
+        assert proposal.warnings == [
+            {
+                "code": "FACT_NOT_IN_PROFILE",
+                "message": 'The profile fact "noise level" is not in the company profile\'s facts registry.',
+                "span": {"start": start, "end": text.index(")") + 1, "text": "(profile fact: noise level)"},
+            }
+        ]
+        assert proposal.revisions.get().warnings == proposal.warnings
+
+    @pytest.mark.parametrize(
+        "citation", ["(profile fact: f1)", "(Profile Fact :  f2 )", "(profile fact:f1)", "(profile fact: `f1`)"]
+    )
+    def test_an_id_of_the_registry_passes(self, fake_adapter, citation):
+        _profile()
+        assert _proposal(f"Saves energy {citation}.").warnings == []
+
+    def test_empty_profile_flags_every_citation_with_the_empty_registry_message(self, fake_adapter):
+        proposal = _proposal("Fast (profile fact: timing szpitala), cute (profile fact: liczba ubranek).")
+        assert [(w["message"], w["span"]["text"]) for w in proposal.warnings] == [
+            (
+                'The company profile has no facts; "timing szpitala" cannot be cited from it.',
+                "(profile fact: timing szpitala)",
+            ),
+            (
+                'The company profile has no facts; "liczba ubranek" cannot be cited from it.',
+                "(profile fact: liczba ubranek)",
+            ),
+        ]
+
+    def test_the_same_id_cited_twice_is_one_warning_on_the_first_citation(self, fake_adapter):
+        _profile()
+        text = "Soft (profile fact: fabric) and warm (profile fact: fabric), light (profile fact: weight)."
+        proposal = _proposal(text)
+        assert [w["span"]["text"] for w in _cited(proposal.warnings)] == [
+            "(profile fact: fabric)",
+            "(profile fact: weight)",
+        ]
+        assert _cited(proposal.warnings)[0]["span"]["start"] == text.index("(")
+
+    @pytest.mark.parametrize(
+        "citation",
+        ["(Profile Fact :  x )", "(PROFILE FACT: x)", "(profile fact:x)", "( profile  fact\t:\u00a0x\u00a0)"],
+    )
+    def test_case_and_whitespace_variants_are_caught(self, fake_adapter, citation):
+        _profile()
+        text = f"Claim {citation}."
+        [warning] = _proposal(text).warnings
+        assert warning["message"] == 'The profile fact "x" is not in the company profile\'s facts registry.'
+        assert warning["span"] == {"start": 6, "end": 6 + len(citation), "text": citation}
+
+    def test_a_number_in_a_cited_id_of_the_registry_is_not_a_new_number(self, fake_adapter):
+        _profile(facts=[{**FACTS[0], "id": "bag-4-weeks"}])
+        assert _proposal("Pack early (profile fact: bag-4-weeks).").warnings == []
+
+    def test_ids_are_compared_exactly(self, fake_adapter):
+        _profile()
+        assert [w["span"]["text"] for w in _proposal("Claim (profile fact: F1).").warnings] == ["(profile fact: F1)"]
+
+    @pytest.mark.parametrize(
+        "text", ["The profile fact: x.", "(profile fact: )", "(profile fact: a\nb)", "(profile facts: x)", "(fact: x)"]
+    )
+    def test_text_that_is_not_a_citation_is_left_alone(self, fake_adapter, text):
+        _profile()
+        assert _proposal(text).warnings == []
+
+    def test_a_data_field_carries_its_path_and_a_span_inside_the_field(self, fake_adapter):
+        _profile()
+        answer = "Timing matters (profile fact: timing)."
+        proposal = _proposal("", proposed_value={"data": {"faq": [{"answer": answer}], "title": "(profile fact: f1)"}})
+        [warning] = proposal.warnings
+        assert warning["code"] == "FACT_NOT_IN_PROFILE"
+        assert warning["path"] == "faq[0].answer"
+        assert warning["span"] == {"start": answer.index("("), "end": len(answer) - 1, "text": "(profile fact: timing)"}
+
+    def test_the_api_carries_the_code(self, admin_client, fake_adapter):
+        proposal = _proposal("Claim (profile fact: timing).")
+        body = admin_client.get(f"{BASE}/proposals/{proposal.pk}/").json()
+        assert [w["code"] for w in body["warnings"]] == ["FACT_NOT_IN_PROFILE"]
 
 
 class TestQuickActions:
