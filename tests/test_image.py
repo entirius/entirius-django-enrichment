@@ -6,6 +6,7 @@
 accept mode (`add` | `replace`) — single accept, bulk accept (always add) and undo."""
 
 import base64
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -141,6 +142,17 @@ class TestGenerateImage:
                 _generate()
         assert toolbox_calls.failure_code(caught.value) == "BUDGET_EXCEEDED"
 
+    @pytest.mark.parametrize(
+        ("raised", "code"),
+        [(httpx.ReadTimeout("slow"), "UPSTREAM_TIMEOUT"), (httpx.ConnectError("refused"), "TOOLBOX_HTTP_0")],
+    )
+    def test_a_transport_error_carries_the_text_calls_code(self, raised, code):
+        with respx.mock() as router:
+            router.post(IMAGES).mock(side_effect=raised)
+            with pytest.raises(ToolboxError) as caught:
+                _generate()
+        assert toolbox_calls.failure_code(caught.value) == code
+
     def test_timeout_raises(self, settings):
         settings.ENRICHMENT_IMAGE_TIMEOUT_S = 0
         with respx.mock(assert_all_called=False) as router:
@@ -203,6 +215,25 @@ class TestImageKind:
             ImageKind().run(_worker(), task, "SKU-1")
         assert caught.value.code == "PICTURE_NOT_FOUND"
 
+    def test_a_picture_file_gone_from_disk_fails_the_subject(self, pictures, fake_adapter, monkeypatch):
+        def gone(**_kw):
+            raise FileNotFoundError("/srv/media/pictures/secret-name.jpg")
+
+        monkeypatch.setattr(fake_adapter, "picture", gone, raising=False)
+        task = SimpleNamespace(params={"channel": "default", "operation": "enhance"})
+        with pytest.raises(SubjectError) as caught:
+            ImageKind().run(_worker(), task, "SKU-1")
+        assert caught.value.code == "PICTURE_UNREADABLE"
+        assert "/srv" not in str(caught.value)
+        assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+    def test_a_corrupt_picture_fails_the_subject(self, pictures, fake_adapter, monkeypatch, corrupt_picture):
+        monkeypatch.setattr(fake_adapter, "picture", corrupt_picture, raising=False)
+        task = SimpleNamespace(params={"channel": "default", "operation": "enhance"})
+        with pytest.raises(SubjectError) as caught:
+            ImageKind().run(_worker(), task, "SKU-1")
+        assert caught.value.code == "PICTURE_UNREADABLE"
+
     def test_no_main_picture_fails_the_subject(self, fake_adapter, monkeypatch):
         monkeypatch.setattr(fake_adapter, "list_pictures", lambda **_kw: [], raising=False)
         task = SimpleNamespace(params={"channel": "default", "operation": "enhance"})
@@ -231,6 +262,24 @@ class TestImageKind:
     def test_variants_are_one_to_four(self, n):
         with pytest.raises(ValueError):
             ImageKind.Params.model_validate({"channel": "default", "operation": "packshot", "n": n})
+
+    @pytest.mark.django_db
+    def test_a_missing_picture_file_is_recorded_with_its_code(self, pictures, fake_adapter, make_worker, monkeypatch):
+        def gone(**_kw):
+            raise FileNotFoundError("/srv/media/pictures/secret-name.jpg")
+
+        monkeypatch.setattr(fake_adapter, "picture", gone, raising=False)
+        make_worker(key="pim.image", kind="image", options={}, system_prompt="")
+        scope = {"mode": "list", "module": "pim", "refs": ["SKU-1"]}
+        task = task_service.spawn(
+            type="pim.image", scope_spec=scope, params={"channel": "default", "operation": "packshot"}
+        )
+        run_queue(task)
+        [error] = task.errors
+        assert task.status == TaskStatus.FAILED.value
+        assert (error["subject_ref"], error["code"]) == ("SKU-1", "PICTURE_UNREADABLE")
+        assert "exception" not in error  # a mapped code needs no class name
+        assert "/srv" not in json.dumps(task.errors)
 
     @pytest.mark.django_db
     def test_runner_stages_one_proposal_per_output(self, pictures, make_worker, staging_dir):

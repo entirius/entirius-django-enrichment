@@ -49,3 +49,9 @@ def test_rule_promotion_needs_the_profile_area_not_proposals():
     """Promoting to a worker or template changes instance-wide instructions: proposals:write alone is refused."""
     assert _needed("/api/enrichment/v2/admin/proposals/1/rules/promote/", "POST") == f"{PROFILE_AREA}:write"
     assert _needed("/api/enrichment/v2/admin/proposals/1/rules/", "PUT") == "enrichment.proposals:write"
+
+
+def test_retry_needs_the_proposals_area_like_spawn():
+    """A retry spawns paid work: write access to tasks, the same area as `POST tasks/`."""
+    assert _needed("/api/enrichment/v2/admin/tasks/1/retry/", "POST") == "enrichment.proposals:write"
+    assert _needed("/api/enrichment/v2/admin/tasks/", "POST") == "enrichment.proposals:write"

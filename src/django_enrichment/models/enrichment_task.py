@@ -26,9 +26,9 @@ class EnrichmentTask(BaseModel):
     lane = models.CharField(max_length=8, choices=TaskLane.choices, default=TaskLane.QUEUE)
     requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     counts = models.JSONField(default=dict, blank=True)
-    # Why subjects failed: [{subject_ref, code, error_id[, message]}], capped (task_service.ERRORS_CAP). `code` is a
-    # stable error code (a toolbox error code); `message` (toolbox failures) is the toolbox's own capped reason;
-    # `error_id` finds the full trace in the log.
+    # Why subjects failed: [{subject_ref, code, error_id[, message][, exception]}], capped (task_service.ERRORS_CAP).
+    # `code` is a stable error code (a toolbox error code); `message` (toolbox failures) is the toolbox's own capped
+    # reason; `error_id` finds the full trace in the log; `exception` (only `INTERNAL_ERROR`) is the exception class name.
     errors = models.JSONField(default=list, blank=True)
     # Cost ledger (contract A4 § 1), post factum from the toolbox's own cost fields — `cost_service` is the only
     # writer. `cost_usd` sums the known costs (null = nothing known yet), `cost_breakdown` is the same per source

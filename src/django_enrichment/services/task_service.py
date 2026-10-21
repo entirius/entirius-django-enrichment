@@ -37,6 +37,7 @@ from django_enrichment.services import csv_import, lane_service, qa_auto_check, 
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
 ERRORS_CAP = 20
+RETRY_OF = "retry_of"
 
 
 def _validate_scope_spec(scope_spec: dict) -> None:
@@ -79,16 +80,20 @@ def spawn(
     batch_key: str = "",
     template: str = "",
     lane: str = "",
+    retry_of: int | None = None,
 ) -> EnrichmentTask:
     """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
 
     When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
     to the internal runner after commit (`worker_service.dispatch`). With `template`, the
     template decides `type` and presets params/rules (`template_service.merge_into_task`). `lane` is
-    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`).
+    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`). `retry_of` is the
+    id of the task this one retries (`retry_service`); it lands in `params.retry_of`, which kind validation would drop.
     """
     _validate_scope_spec(scope_spec)
     type, params = resolve_type_and_params(type, params or {}, template)
+    if retry_of is not None:
+        params = {**params, RETRY_OF: retry_of}
     lane = lane_service.resolve(lane, scope_spec)
 
     if batch_key:
@@ -342,14 +347,16 @@ def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTa
 
 
 def record_error(
-    task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str, message: str = ""
+    task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str, message: str = "", exception: str = ""
 ) -> EnrichmentTask:
     """Remember why a subject failed (the first `ERRORS_CAP` failures; the counter keeps the total).
-    A run-level stop carries a plain `message` too."""
+    A run-level stop carries a plain `message` too; an `INTERNAL_ERROR` carries the `exception` class name
+    (never its text), so it can be told apart without the log."""
     task.refresh_from_db(fields=["errors"])
     if len(task.errors) < ERRORS_CAP:
+        optional = {"message": message, "exception": exception}
         entry = {"subject_ref": subject_ref, "code": code, "error_id": error_id}
-        task.errors.append({**entry, "message": message} if message else entry)
+        task.errors.append({**entry, **{key: value for key, value in optional.items() if value}})
         task.save(update_fields=["errors", "modified_at"])
     return task
 

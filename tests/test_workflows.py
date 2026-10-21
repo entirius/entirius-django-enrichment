@@ -16,6 +16,7 @@ from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntr
 from django_enrichment.services import (
     profile_service,
     proposal_service,
+    qa_service,
     task_service,
     undo_service,
     workflow_queries,
@@ -133,6 +134,48 @@ class TestTwoStepRun:
             workflow_service.regenerate(run.uid, "outline")
         with pytest.raises(ValueError, match="cannot be undone"):
             undo_service.revert(_proposal(run, "outline"))
+
+
+class TestDoubleEscapedJsonStep:
+    """A model that escapes its JSON twice: the proposal holds clean strings, the QA warnings are computed on them."""
+
+    ESCAPED = {
+        **wf.META,
+        "title": r"Care of a \"linen\" sofa",
+        "description": r"Brush it weekly (profile fact: \"care\").\nVacuum monthly.",
+    }
+    CLEAN = {
+        **wf.META,
+        "title": 'Care of a "linen" sofa',
+        "description": 'Brush it weekly (profile fact: "care").\nVacuum monthly.',
+    }
+
+    @pytest.fixture
+    def meta_run(self, setup, run_steps, admin_user):
+        fact = {"id": "care", "label": "Care", "value": "weekly", "source": "manual", "verified_at": "2026-01-01"}
+        profile_service.save_profile(channel="", data={"facts": [fact]})
+        wf.make_definition("meta-only", [wf.step("meta")])
+        with mock_toolbox() as router:
+            router["complete"].mock(side_effect=wf.respond_with(self.ESCAPED))
+            yield _start(run_steps, admin_user, "meta-only")
+
+    def test_intake_stores_clean_strings_and_the_warnings_of_the_clean_value(self, meta_run):
+        proposal = _proposal(meta_run, "meta")
+        assert proposal.proposed_value == {"data": self.CLEAN}
+        assert proposal.revisions.get(number=1).value == {"data": self.CLEAN}
+        assert proposal.warnings == []
+        # the same value with its backslashes would cite a fact called `\"care\"`
+        escaped = qa_service.check(proposal, {"data": self.ESCAPED})
+        assert [warning["code"] for warning in escaped] == ["FACT_NOT_IN_PROFILE"]
+
+    def test_a_regeneration_is_cleaned_too(self, meta_run, run_steps):
+        with mock_toolbox() as router:
+            router["complete"].mock(side_effect=wf.respond_with(self.ESCAPED))
+            with run_steps():
+                run = workflow_service.regenerate(meta_run.uid, "meta", instruction="Shorter")
+        proposal = _proposal(workflow_queries.get_run(run.uid), "meta")
+        assert (proposal.status, proposal.proposed_value) == ("pending", {"data": self.CLEAN})
+        assert proposal.warnings == []
 
 
 class TestFailureAndCancel:

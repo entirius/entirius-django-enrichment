@@ -7,7 +7,9 @@
 Completion, translation and SEO data go through `django_utils.toolbox.ToolboxClient` (transport, retries, typed
 errors) on the instance channel. Video and image jobs talk to the toolbox media API with plain httpx: the endpoint
 may differ from the text toolbox (`ENRICHMENT_VIDEO_TOOLBOX_*`, POC escape hatch, Redmine #34464).
-Prompts live in the kinds. Toolbox errors propagate: the runner counts the subject as failed.
+Prompts live in the kinds. Toolbox errors propagate: the runner counts the subject as failed. A media call turns the
+httpx transport errors into the typed errors `ToolboxClient` raises for the same failures (`_toolbox_transport_errors`),
+so a text call and a media call fail with the same stable codes.
 
 The schema sent to the provider is the "portable" subset (`provider_schema`): the provider cannot enforce value
 limits (length, item count, range) and the toolbox answers 502 when a model answer breaks one, so the limits
@@ -31,7 +33,16 @@ from typing import Any
 
 import httpx
 from django.conf import settings
-from django_utils.toolbox import CompletionRequest, Message, ToolboxClient, ToolboxError, ToolboxNotFoundError
+from django_utils.toolbox import (
+    CompletionRequest,
+    Message,
+    ToolboxClient,
+    ToolboxConnectionError,
+    ToolboxError,
+    ToolboxNotConfiguredError,
+    ToolboxNotFoundError,
+    ToolboxTimeoutError,
+)
 from django_utils.toolbox import settings as toolbox_settings
 
 from django_enrichment import settings as enrichment_settings
@@ -61,6 +72,7 @@ _DROPPED_KEYWORDS = frozenset(
     {"exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern", "format", "uniqueItems"}
 )
 _DETAIL_MAX = 300
+INTERNAL_ERROR = "INTERNAL_ERROR"  # `failure_code` of an exception nobody mapped
 _COST_STEP = Decimal("0.00000001")  # the ledger columns: decimal_places=8
 _COST_LIMIT = Decimal(10) ** 6  # the ledger columns: max_digits=14 → below 10**6
 
@@ -97,6 +109,19 @@ def _unknown_cost_on_error(task: Any, source: str) -> Iterator[None]:
     except Exception:
         cost_service.charge(task, source, None)
         raise
+
+
+@contextmanager
+def _toolbox_transport_errors() -> Iterator[None]:
+    """Plain httpx errors → the typed toolbox errors `ToolboxClient._send` raises for them: a timeout is
+    `UPSTREAM_TIMEOUT`, any other connection-level failure a `ToolboxConnectionError`. The message is the class name
+    only (as in the client); the httpx error stays chained for the log."""
+    try:
+        yield
+    except httpx.TimeoutException as exc:
+        raise ToolboxTimeoutError(0, f"Request timed out: {type(exc).__name__}", "UPSTREAM_TIMEOUT") from exc
+    except httpx.HTTPError as exc:
+        raise ToolboxConnectionError(0, f"Connection failed: {type(exc).__name__}") from exc
 
 
 def complete(*, system: str, user: str, json_schema: dict, model: str, kind: str, task: Any = None) -> Costed:
@@ -248,9 +273,10 @@ def generate_video(*, image: bytes, mime: str, form: dict[str, str], task: Any =
 
     `form` carries `preset`, `prompt`, `aspect_ratio`, `duration_s`. Polls inside the caller (a Celery
     task) up to `ENRICHMENT_VIDEO_TIMEOUT_S`; a failed job or the timeout raises. The finished job's cost is
-    charged before the download (a failed job's too); polling that breaks off charges an unknown cost.
+    charged before the download (a failed job's too); polling that breaks off charges an unknown cost. A toolbox
+    that is not configured, times out or cannot be reached raises the same typed errors as a text call.
     """
-    with _media_client() as client:
+    with _toolbox_transport_errors(), _media_client() as client:
         job_id, job, cost = _run_media_job(client, _VIDEO_JOB, image=(image, mime), form=form, task=task)
         video = _checked(client.get(f"videos/{job_id}/download/")).content
     return Costed(video, cost)
@@ -262,7 +288,7 @@ def generate_image(*, image: bytes, mime: str, form: dict[str, str], task: Any =
     `form` carries `operation`, `preset` (optional), `prompt`, `n`. Same job flow and error/cost rules as
     `generate_video`; polls up to `ENRICHMENT_IMAGE_TIMEOUT_S`. The job's cost covers all its outputs.
     """
-    with _media_client() as client:
+    with _toolbox_transport_errors(), _media_client() as client:
         job_id, job, cost = _run_media_job(client, _IMAGE_JOB, image=(image, mime), form=form, task=task)
         outputs = sorted(output["index"] for output in job.get("outputs") or [])
         images = [_checked(client.get(f"images/{job_id}/outputs/{k}/download/")).content for k in outputs]
@@ -332,7 +358,7 @@ def _media_client() -> httpx.Client:
     api_key = _video_setting("API_KEY", "AI_TOOLBOX_API_KEY")
     channel = _video_setting("CHANNEL", "AI_TOOLBOX_CHANNEL")
     if not (base_url and api_key and channel):
-        raise ValueError("video toolbox is not configured (ENRICHMENT_VIDEO_TOOLBOX_* / AI_TOOLBOX_*)")
+        raise ToolboxNotConfiguredError()  # what a text call raises for the same gap: `AI_TOOLBOX_NOT_CONFIGURED`
     return httpx.Client(
         base_url=f"{base_url}/api/ai-media/v2/admin/{channel}/",
         headers={"X-API-Key": api_key},
@@ -349,9 +375,12 @@ def failure_detail(exc: BaseException) -> str:
     """What the toolbox said about a failed call — `HTTP <status> <code>: <message>` (capped), `""` for other errors.
 
     The toolbox message is its own provider-error text (no keys, no request body); a gateway page that is not
-    JSON leaves it blank, which the detail says instead of dropping it."""
+    JSON leaves it blank, which the detail says instead of dropping it. A failure with no HTTP answer (status 0:
+    timeout, connection, not configured) has only the client's own fixed text, which is the detail."""
     if not isinstance(exc, ToolboxError):
         return ""
+    if exc.status_code == 0:
+        return exc.message[:_DETAIL_MAX]
     message = " ".join(exc.upstream_message.split()) or "no message (non-JSON or empty response body)"
     return f"HTTP {exc.status_code} {exc.code or '-'}: {message}"[:_DETAIL_MAX]
 
@@ -367,4 +396,12 @@ def failure_code(exc: BaseException) -> str:
         return exc.code or f"TOOLBOX_HTTP_{exc.status_code}"
     if isinstance(exc, TimeoutError):
         return "TIMEOUT"
-    return "INTERNAL_ERROR"
+    return INTERNAL_ERROR
+
+
+def failure_exception(exc: BaseException) -> str:
+    """The exception class name (`FileNotFoundError`) when `failure_code` can only say `INTERNAL_ERROR`, else `""`.
+
+    The class only, never the message: it tells a bug from a broken disk without the container log, and cannot
+    leak a path or model output."""
+    return type(exc).__name__ if failure_code(exc) == INTERNAL_ERROR else ""

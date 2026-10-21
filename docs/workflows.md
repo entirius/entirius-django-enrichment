@@ -76,6 +76,10 @@ instruction, previous`); templates preset `prompt` / `rules` and the kind's own 
 | `questions` | `min_answers` (1; 0 = off) | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}, "min_answers": n}` (ids made unique, `choice` without choices → `text`) |
 | `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq |
 
+**JSON values.** Some models escape their JSON twice and leave a literal `\"` or `\n` in a string. The `generate`
+kind (`format: json`) turns those into a quote and a newline in every string of the `{"data"}` value before intake
+(`services/json_unescape.py`); `\\"`, any other backslash sequence, the keys and `{"text"}` values stay as written.
+
 **Answers.** The operator fills `answers` (`{question id: text}`) with a manual edit (`PATCH proposals/{id}/`)
 and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING` (`details[].field` = the
 question ids, `issue` `REQUIRED`); fewer answers than `min_answers` (capped at the number of questions, optional ones

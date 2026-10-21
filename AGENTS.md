@@ -48,10 +48,11 @@ src/django_enrichment/
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
-│                       # lane_service + run_service (run lanes, in-flight dedupe),
+│                       # lane_service + run_service (run lanes, in-flight dedupe), retry_service (retry a finished task),
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
+│                       # json_unescape (leaf: the double-escaped `\"` / `\n` of a JSON step's strings, applied in kind generate),
 │                       # ai_usage_service (this month's toolbox usage, CMS header counter)
 ├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts)
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
@@ -258,19 +259,25 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **The internal runner runs on two lanes** (`lane_service`): `task.lane` `now` → `enrichment_interactive`, `queue` →
   `enrichment_bulk` (worker with concurrency 1); never the default `celery` queue or `enrichment` (apply canvas). A host
   without a worker on both lanes leaves tasks `open` forever. Workflow steps and batch corrections are always `now`.
-- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` dedupes; internal spawns
-  (workflow steps, spawn rules, CSV import) and `batch_key` calls must keep spawning unchanged. Details: `docs/api.md`
-  § Run lanes.
+- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` (and `tasks/{id}/retry/`,
+  which spawns through it) dedupes; internal spawns (workflow steps, spawn rules, CSV import) and `batch_key` calls
+  must keep spawning unchanged. Details: `docs/api.md` § Run lanes.
+- **A key the bus writes into `task.params` while a run goes must be listed in `retry_service.RUNTIME_PARAMS`** —
+  `context_numbers` today. A retry copies the original's params and would carry the key into the new run. `retry_of`
+  survives kind validation only because `task_service.spawn(retry_of=)` adds it after.
+  Details: `docs/api.md` § Retry a task.
 - **Runner paging:** gap tasks re-pull page 1 (work queue), others page++; a seen-set stops the loop
   when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
   string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;
   every subject failed (or resolve itself failed) → task `failed`. No retry, no budget logic. The reason lands in
-  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`.
+  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`; an `INTERNAL_ERROR` adds the
+  exception class name (`failure_exception`), still never the text. Codes: `docs/api.md` § Failure codes.
 - **`translate` posts via `ToolboxClient._post`/`_url`** (`retry=False`) — the client has no translator
   method. Tests: `mock_toolbox` plus a respx route for `ai-translator/.../translate/`.
 - **Video toolbox endpoint is a POC escape hatch** — `ENRICHMENT_VIDEO_TOOLBOX_*` let media jobs hit a
   local toolbox while text uses the shared test toolbox; remove once ai-toolbox-test has django-ai-media
-  (Redmine #34464). Video calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`).
+  (Redmine #34464). Video and image calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`), so
+  `_toolbox_transport_errors` turns httpx timeouts and connection errors into the typed toolbox errors a text call raises.
 - **The `video` kind blocks a Celery worker** — it polls the media job (10 s interval) up to
   `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
 - **Accept mode is stored, not passed** — `apply_service` sets `proposal.apply_mode` (`add` | `replace`, blank = no

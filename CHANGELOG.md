@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- `POST tasks/{id}/retry/` (empty body): runs the failed part of a finished task again as a new task through the
+  `POST tasks/` spawn path (params validation, lane, in-flight dedupe, planning, `requested_by`), answering like it
+  (201, `TaskSpawnResponse`). The scope is the distinct `subject_ref`s of the task's `errors` as a list scope; a failed
+  task naming none retries its whole scope. Same type, template and params, without `context_numbers`, plus
+  `params.retry_of`. 409 `NOT_RETRYABLE` while it runs or when nothing failed, 409 `ALREADY_RUNNING` when it is in
+  flight again, 400 for a workflow step. Access area `enrichment.proposals` (write), `enrichment_spawn` throttle.
 - Kind `sections`: a long artifact written section by section from the approved outline (`outline_step`, default
   `outline`): one completion per numbered outline heading, each seeing every section written before it, then one
   for the lead and the closing; every section starts with `## <its outline title>`; a regeneration hands each
@@ -11,6 +17,16 @@
 - Lease keepalive: every toolbox call heartbeats the running unit (at most once per 60 s), so a subject with many
   paid calls no longer outlives its lease and gets paid twice; a lease lost inside a subject stops the consumer
   instead of counting as a failed subject.
+- AI media runs (`video`, `image`) fail with a specific code instead of `INTERNAL_ERROR`: `PICTURE_UNREADABLE` when the
+  picture's file cannot be read (an `OSError` from the adapter's `main_picture` / `picture`: gone from the worker's
+  disk, not an image); `UPSTREAM_TIMEOUT` and the connection error (`TOOLBOX_HTTP_0`) when the toolbox media API times
+  out or cannot be reached - the same codes a text call gets, the media calls now raise the typed toolbox errors
+  `ToolboxClient` raises; `AI_TOOLBOX_NOT_CONFIGURED` (was a `ValueError`) when the media toolbox has no URL, key or
+  channel. A failure with no HTTP answer carries the client's own text as `message` (`Connection failed: ConnectError`)
+  instead of "HTTP 0 -: no message".
+- A subject that still fails with `INTERNAL_ERROR` stores the exception class name in its `errors[]` entry
+  (`exception`, e.g. `FileNotFoundError`; absent for every other code, never the exception text), so the failure can be
+  told apart without the container log. `errors` is documented in the OpenAPI schema.
 - `seo_brief` keeps its search evidence (seed volumes, keyword ideas, SERP with people also ask) in the remembered
   brief; `params.seo_detail: full` adds it to the prompt block (the short brief stays the default and the memory
   text). Steps of one run reuse the research at cost 0.
@@ -30,6 +46,10 @@
   citation; with an empty registry every citation is flagged). The model had invented a "From the company profile"
   section for an empty profile and downstream steps treated it as ground truth. The format is now a contract between
   workflow prompts and QA (`docs/api.md` § QA checks).
+- A JSON step's strings lose the escapes a model wrote twice: a literal `\"` or `\n` (the CMS showed the backslashes,
+  e.g. in the search phrases' SERP notes) becomes a quote or a newline in every string of the `{"data"}` value before
+  intake. `\\"`, other backslash sequences, keys and `{"text"}` values are left as they are
+  (`services/json_unescape.py`, applied in kind `generate`; regenerations pass through it too).
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject

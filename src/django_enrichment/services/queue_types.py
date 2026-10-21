@@ -17,10 +17,12 @@ class LeaseLost(Exception):
 
 @dataclass
 class SubjectResult:
-    """What a worker reports for one subject of a unit: drafts, or an `error_code` (+ `error_id` of its log trace)."""
+    """What a worker reports for one subject of a unit: drafts, or an `error_code` (+ `error_id` of its log trace;
+    `error_exception` = the class name of an `INTERNAL_ERROR`, internal consumer only)."""
 
     subject_ref: str
     drafts: list[ProposalDraft] = field(default_factory=list)
     error_code: str = ""
     error_id: str = ""
     error_message: str = ""
+    error_exception: str = ""
