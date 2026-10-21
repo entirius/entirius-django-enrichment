@@ -161,6 +161,11 @@ for the content guidance; the range is the contract.
   completions; both are charged to the task and shared by the drafts. A failed rewrite keeps the first values, never
   fails the subject, and leaves the drafts' cost unknown (`None`, the task `cost_complete` false). The
   `enrichment.queue` log has `event=field_rewrite fields=… still_out=<n>` or `event=field_rewrite_failed code=…`.
+- **Repeated answer object:** a model sometimes writes the whole answer again inside a field's string
+  (`{"description": "<p>…</p>"}`). A value that is exactly one JSON object whose only key is the field key or `text`,
+  holding a string, is replaced by that string (up to two levels), in the first answer and in the rewrite, so the
+  range measures the real text; any other value, braces in a real text included, stays as it came. Log:
+  `event=field_unwrapped field=<key>`.
 - **QA:** a `{"text"}` proposal whose field has a range in the `options.field_limits` of the worker that produced it
   (`source` = `worker:<key>@v<n>`) gets a `LIMIT` warning when it is outside, on intake and on every later revision
   (an operator's edit too), so the review shows a miss the rewrite left.

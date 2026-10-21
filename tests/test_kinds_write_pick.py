@@ -5,6 +5,7 @@
 """Generic kinds `write` / `pick` and the `translate` fields override — fake adapter extras, mocked toolbox."""
 
 import json
+import logging
 from types import SimpleNamespace
 
 import httpx
@@ -134,6 +135,65 @@ class TestWrite:
         with pytest.raises(SubjectError) as exc:
             self._run(params={"fields": ["color"]})
         assert toolbox_calls.failure_code(exc.value) == "FIELD_TYPE"
+
+
+class TestWriteUnwrapsRepeatedAnswer:
+    """A model sometimes writes the whole answer object again inside the field's string."""
+
+    _run = TestWrite._run
+    _params = TestWrite._params
+
+    def _texts(self, parsed: dict) -> list[str]:
+        drafts, _ = self._run(parsed=parsed)
+        return [draft.proposed_value["text"] for draft in drafts]
+
+    def test_the_field_key_wrapper_is_unwrapped_and_sanitised(self, catalog):
+        wrapped = json.dumps({"description": "<p>Smoczek</p><script>x</script>"})
+        assert self._texts({"meta_title": "Chair", "description": wrapped}) == ["Chair", "<p>Smoczek</p>"]
+
+    def test_the_text_wrapper_is_unwrapped(self, catalog):
+        wrapped = json.dumps({"text": "Chair 2000"}, ensure_ascii=False)
+        assert self._texts({"meta_title": wrapped, "description": "<p>x</p>"}) == ["Chair 2000", "<p>x</p>"]
+
+    def test_surrounding_whitespace_is_ignored(self, catalog):
+        wrapped = '\n  {"meta_title": "Chair"}  \n'
+        assert self._texts({"meta_title": wrapped, "description": "<p>x</p>"})[0] == "Chair"
+
+    def test_a_wrapper_wrapped_again_is_unwrapped_twice(self, catalog):
+        twice = json.dumps({"meta_title": json.dumps({"meta_title": "Chair"})})
+        assert self._texts({"meta_title": twice, "description": "<p>x</p>"})[0] == "Chair"
+
+    def test_the_event_names_the_field(self, catalog, caplog):
+        caplog.set_level(logging.INFO, logger="enrichment.queue")
+        self._texts({"meta_title": json.dumps({"meta_title": "Chair"}), "description": "<p>x</p>"})
+        assert "event=field_unwrapped worker=pim.x field=meta_title" in caplog.text
+        assert "field=description" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            '{"description": "<p>Other field</p>"}',
+            '{"meta_title": "Chair", "extra": "x"}',
+            '{"meta_title": "Chair", "text": "Chair"}',
+            '{"meta_title": ["Chair"]}',
+            '{"meta_title": {"meta_title": "Chair"}}',
+            '{"meta_title": 5}',
+            "{}",
+            '{"meta_title": "Chair"',
+            '{"meta_title": "Chair"} and more}',
+            "{not json}",
+            "Chair {sizes: S, M}",
+            '["meta_title"]',
+        ],
+    )
+    def test_anything_else_stays_as_it_came(self, catalog, caplog, value):
+        caplog.set_level(logging.INFO, logger="enrichment.queue")
+        assert self._texts({"meta_title": value, "description": "<p>x</p>"})[0] == value
+        assert "field_unwrapped" not in caplog.text
+
+    def test_html_text_with_braces_stays(self, catalog):
+        html = '<p>Use {"a": 1} in the template</p><style>p { color: red }</style>'
+        assert self._texts({"meta_title": "T", "description": html})[1] == '<p>Use {"a": 1} in the template</p>'
 
 
 class TestPick:
