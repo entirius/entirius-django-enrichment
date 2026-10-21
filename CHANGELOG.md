@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Kind `write`: a field value that repeats the whole answer object (`{"description": "<p>…</p>"}`, or with `text`
+  as the key) is replaced by the string inside it, in the first answer and in the corrective rewrite, so the proposal
+  and the `field_limits` check see the real text. Any other value, braces in a real text included, is left as it
+  came. Logged as `event=field_unwrapped field=<key>`.
 - `POST tasks/{id}/retry/` (empty body): runs the failed part of a finished task again as a new task through the
   `POST tasks/` spawn path (params validation, lane, in-flight dedupe, planning, `requested_by`), answering like it
   (201, `TaskSpawnResponse`). The scope is the distinct `subject_ref`s of the task's `errors` as a list scope; a failed

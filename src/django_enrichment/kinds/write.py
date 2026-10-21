@@ -15,6 +15,11 @@ Select fields belong to `pick` → subject error `FIELD_TYPE`.
 schema show it, and when a value comes back outside it the run makes ONE more completion for just those fields
 (`_rewrite`), then keeps what comes back. A subject × language costs at most two completions; a failed rewrite
 keeps the first values (never a subject failure for length) and charges an unknown cost.
+
+A model sometimes writes the whole answer object again inside a field's string (`{"description": "<p>…</p>"}`):
+a value that is exactly one JSON object whose only key is the field key or `text`, holding a string, is replaced by
+that string (also in the rewrite, so the limits measure the real text; `event=field_unwrapped field=<key>`).
+Any other value, braces in a real text included, stays as it came.
 """
 
 import json
@@ -34,6 +39,8 @@ from django_enrichment.services import queue_log, toolbox_calls
 from django_enrichment.services.queue_types import LeaseLost
 
 TARGET_KIND = "attribute_value"
+_WRAPPER_KEY = "text"
+_UNWRAP_LEVELS = 2
 
 
 class WriteOptions(BaseModel):
@@ -91,7 +98,7 @@ class _WriteRun:
             kind="write",
             task=self.task,
         )
-        values = {key: _clean(answer.value[key], catalog.get(key)) for key in self.params.fields}
+        values = {key: _clean(self._unwrapped(key, answer.value[key]), catalog.get(key)) for key in self.params.fields}
         rewrite = self._rewrite(values, system, language, catalog)
         values.update(rewrite.value)
         drafts = [self._draft(language, key, values[key]) for key in self.params.fields]
@@ -133,14 +140,23 @@ class _WriteRun:
         except Exception as exc:  # noqa: BLE001 — a length fix never fails the subject; the first values stay
             self._log("field_rewrite_failed", logging.WARNING, code=toolbox_calls.failure_code(exc))
             return toolbox_calls.Costed({}, None)
-        rewritten = {
-            key: _clean(text, catalog.get(key))
-            for key, text in answer.value.items()
-            if key in offenders and isinstance(text, str) and text.strip()
-        }
+        rewritten = self._rewritten(answer.value, offenders, catalog)
         still_out = len(self._out_of_range({**values, **rewritten}))
         self._log("field_rewrite", logging.INFO, fields=",".join(offenders), still_out=still_out)
         return toolbox_calls.Costed(rewritten, answer.cost)
+
+    def _rewritten(self, answer: dict, offenders: dict[str, str], catalog: dict[str, dict]) -> dict[str, str]:
+        texts = {key: self._unwrapped(key, text) for key, text in answer.items() if key in offenders}
+        return {
+            key: _clean(text, catalog.get(key)) for key, text in texts.items() if isinstance(text, str) and text.strip()
+        }
+
+    def _unwrapped(self, key: str, value: Any) -> Any:
+        """The text inside a value that repeats the answer object; any other value as it came."""
+        if (inner := _unwrap(key, value)) is None:
+            return value
+        self._log("field_unwrapped", logging.INFO, field=key)
+        return inner
 
     def _ask_rewrite(
         self, offenders: dict[str, str], system: str, language: str, catalog: dict[str, dict]
@@ -216,6 +232,33 @@ def _property(meta: dict | None, limit: FieldLimit | None) -> dict:
     elif max_length := (meta or {}).get("max_length"):
         prop["maxLength"] = max_length
     return prop
+
+
+def _unwrap(key: str, value: Any) -> str | None:
+    """The string inside `{"<key>": "…"}` / `{"text": "…"}`, wrapped up to `_UNWRAP_LEVELS` times; None when `value`
+    is no such wrapper."""
+    text, inner = value, None
+    for _ in range(_UNWRAP_LEVELS):
+        if (text := _wrapped_text(key, text)) is None:
+            break
+        inner = text
+    return inner
+
+
+def _wrapped_text(key: str, value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not (candidate.startswith("{") and candidate.endswith("}")):
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or len(parsed) != 1:
+        return None
+    ((name, text),) = parsed.items()
+    return text if name in (key, _WRAPPER_KEY) and isinstance(text, str) else None
 
 
 def _clean(value: str, meta: dict | None) -> str:

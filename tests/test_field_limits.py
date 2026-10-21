@@ -215,6 +215,43 @@ class TestCorrectiveCall:
         assert [d.target_locator["language"] for d in drafts] == ["pl", "pl", "en", "en"]
 
 
+class TestRewriteUnwrapsRepeatedAnswer:
+    def test_the_rewritten_value_is_unwrapped_before_it_is_measured(self, catalog, caplog):
+        caplog.set_level(logging.INFO, logger="enrichment.queue")
+        answers = [
+            _answer({"meta_title": GOOD_TITLE, "meta_description": _text(195)}),
+            _answer({"meta_description": json.dumps({"meta_description": _text(150)})}),
+        ]
+        drafts, route = _run_kind(answers)
+        assert route.call_count == 2
+        assert _texts(drafts)["meta_description"] == _text(150)
+        assert "event=field_rewrite worker=pim.writer fields=meta_description still_out=0" in caplog.text
+        assert "event=field_unwrapped worker=pim.writer field=meta_description" in caplog.text
+
+    def test_a_wrapped_first_value_is_measured_unwrapped(self, catalog):
+        answers = [_answer({"meta_title": json.dumps({"text": GOOD_TITLE}), "meta_description": _text(150)})]
+        drafts, route = _run_kind(answers)
+        assert route.call_count == 1
+        assert _texts(drafts) == {"meta_title": GOOD_TITLE, "meta_description": _text(150)}
+
+    def test_a_wrapped_blank_rewrite_keeps_the_original(self, catalog):
+        answers = [
+            _answer({"meta_title": GOOD_TITLE, "meta_description": _text(195)}),
+            _answer({"meta_description": json.dumps({"meta_description": "  "})}),
+        ]
+        drafts, _ = _run_kind(answers)
+        assert _texts(drafts)["meta_description"] == _text(195)
+
+    def test_a_rewrite_with_another_key_stays_as_it_came(self, catalog):
+        stays = json.dumps({"meta_title": _text(150)})
+        answers = [
+            _answer({"meta_title": GOOD_TITLE, "meta_description": _text(195)}),
+            _answer({"meta_description": stays}),
+        ]
+        drafts, _ = _run_kind(answers)
+        assert _texts(drafts)["meta_description"] == stays
+
+
 class TestCorrectiveCallFails:
     def test_failed_rewrite_keeps_the_original_and_never_fails_the_subject(self, catalog):
         answers = [
