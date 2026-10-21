@@ -29,6 +29,7 @@ _EXPECTED = {
     "/api/enrichment/v2/admin/proposals/{id}/rules/": {"put"},
     "/api/enrichment/v2/admin/proposals/{id}/rules/promote/": {"post"},
     "/api/enrichment/v2/admin/tasks/{id}/revise/": {"post"},
+    "/api/enrichment/v2/admin/tasks/{id}/retry/": {"post"},
 }
 
 
@@ -55,3 +56,14 @@ def test_every_enrichment_operation_has_operation_id_and_tag():
         for method, op in ops.items():
             assert op.get("operationId"), f"{method.upper()} {path} has no operationId"
             assert op.get("tags"), f"{method.upper()} {path} has no tag"
+
+
+@pytest.mark.django_db
+def test_retry_answers_like_a_spawn():
+    """The CMS tracks a retry as any new task: the 201 body is the schema of `POST tasks/`."""
+    paths = _schema()["paths"]
+    spawn = paths["/api/enrichment/v2/admin/tasks/"]["post"]["responses"]["201"]
+    retry = paths["/api/enrichment/v2/admin/tasks/{id}/retry/"]["post"]
+    assert retry["responses"]["201"] == spawn
+    assert retry["summary"] and "requestBody" not in retry
+    assert {"400", "404", "409"} <= set(retry["responses"])

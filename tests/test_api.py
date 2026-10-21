@@ -335,6 +335,7 @@ class TestCSVImport:
 
         assert throttles_for("create") == [SpawnThrottle]
         assert throttles_for("import_csv") == [SpawnThrottle]
+        assert throttles_for("retry") == [SpawnThrottle]
         assert throttles_for("list") == []
         assert throttles_for("targets") == []
 

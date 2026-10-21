@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- `POST tasks/{id}/retry/` (empty body): runs the failed part of a finished task again as a new task through the
+  `POST tasks/` spawn path (params validation, lane, in-flight dedupe, planning, `requested_by`), answering like it
+  (201, `TaskSpawnResponse`). The scope is the distinct `subject_ref`s of the task's `errors` as a list scope; a failed
+  task naming none retries its whole scope. Same type, template and params, without `context_numbers`, plus
+  `params.retry_of`. 409 `NOT_RETRYABLE` while it runs or when nothing failed, 409 `ALREADY_RUNNING` when it is in
+  flight again, 400 for a workflow step. Access area `enrichment.proposals` (write), `enrichment_spawn` throttle.
 - Kind `sections`: a long artifact written section by section from the approved outline (`outline_step`, default
   `outline`): one completion per numbered outline heading, each seeing every section written before it, then one
   for the lead and the closing; every section starts with `## <its outline title>`; a regeneration hands each

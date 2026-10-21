@@ -23,6 +23,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `GET` | `usage/month/` | `ai_usage_service.current_month` | This month's AI usage of the instance's toolbox client (CMS header counter) — see § AI usage this month |
 | `GET` | `workers/?target_module=` | `worker_service.list_active` | Active workers, plain list `[{key, label, kind, target_module, mode, params_schema}]` |
 | `POST` | `tasks/` | `run_service.spawn` → `task_service.spawn` | Spawn a work order. `scope_spec.module` required. `params` validated by the kind when an active Worker owns `type` (400 otherwise). `template: <key>` instead of (or matching) `type` — see § Templates. `lane: now \| queue` (omitted = by size), subjects already in flight skipped — see § Run lanes. Throttled (`enrichment_spawn`, 120/min). → 201 task + `skipped_in_flight`; 409 `ALREADY_RUNNING` |
+| `POST` | `tasks/{id}/retry/` | `retry_service.retry` → `run_service.spawn` | Empty body. A new task for the subjects the finished task failed on — see § Retry a task. Throttled (`enrichment_spawn`). → 201 task + `skipped_in_flight` (as `POST tasks/`); 404; 409 `NOT_RETRYABLE` / `ALREADY_RUNNING`; 400 workflow step |
 | `POST` | `tasks/import-csv/` | `task_service.import_csv` | Multipart CSV (`sku,field,type`) → N tasks grouped by `type`. One file = one channel + one language. Streamed lazily from one staged file. Throttled. → 201 |
 | `GET` | `tasks/` | `task_service.list_tasks` | Filter `type`/`status` (one or a comma list)/`batch_key`/`target_module`/`subject_ref`, paginated; every task carries `lane` and `queued_ahead` |
 | `GET` | `tasks/{id}/` | `task_service.get_task` | Retrieve |
@@ -238,6 +239,27 @@ their supersede behaviour.
 the same lane created before it (0 = next); `null` once it runs, after it finished, or for an external worker.
 `POST tasks/` adds `skipped_in_flight: [refs]` (empty when nothing was skipped).
 
+## Retry a task
+
+`POST tasks/{id}/retry/` (empty body) runs the failed part of a finished task again as a **new** task — the way
+`POST tasks/` spawns one (`run_service.spawn`): params validation, run lane, in-flight dedupe, work-queue planning,
+`requested_by` = the caller. The old task stays as it was. The answer is the `POST tasks/` answer: 201, the new task
+and `skipped_in_flight`.
+
+- **Subjects:** the distinct `subject_ref`s of the task's `errors`, as a list scope of the same module
+  (`{mode: "list", module, refs}`; a list scope keeps its other keys, any other scope keeps `channel`). `errors` is
+  capped (`ERRORS_CAP`, 20), so a run with more failures retries the ones recorded. A **failed** task whose errors
+  name no subject (the whole run failed, or the planner could not resolve it) retries its original scope unchanged.
+- **Params:** type, template and operator params of the original; the keys the bus wrote while it ran are left behind
+  (`retry_service.RUNTIME_PARAMS`: `context_numbers`, the per-subject numbers the QA check allows, and an earlier
+  `retry_of`) and `params.retry_of` = the id of the retried task (a retry of a retry points at the retried one).
+  Template rules are merged again, so a rule added to the template since is picked up.
+- **Lane:** by size, as `POST tasks/` without `lane` (one subject → `now`, more → `queue`); the batch key is not kept.
+- **Refused:** 404 unknown task · 409 `NOT_RETRYABLE` while the task is `open` / `in_progress`, or when it ended
+  `done` / `cancelled` with no failed subject · 409 `ALREADY_RUNNING` when every subject is in flight again (a double
+  click) · 400 for a workflow step (`params.run`, or a `run:<uid>` subject — regenerate it in its run) · whatever a
+  spawn refuses (400: run cap, params no longer valid for the worker).
+
 ## Work queue: the worker pull API (plan 23)
 
 A task is planned into small `WorkUnit`s (`ENRICHMENT_UNIT_SIZE`, default 5 subjects) after commit; internal and
@@ -386,8 +408,8 @@ All errors use the v2 envelope from `django-utils`:
 ```
 
 `VALIDATION_ERROR` (400, Pydantic or service `ValueError`), `NOT_FOUND` (404, unknown id),
-`AUTHENTICATION_REQUIRED` (401), `PERMISSION_DENIED` (403, non-admin), `ALREADY_RUNNING` (409, `POST tasks/` when
-every subject is already in flight — § Run lanes), `RATE_LIMITED` (429, intake throttle). Internal errors never leak `str(exc)` — the handler returns `INTERNAL_ERROR` + a logged
+`AUTHENTICATION_REQUIRED` (401), `PERMISSION_DENIED` (403, non-admin), `ALREADY_RUNNING` (409, `POST tasks/` and
+`tasks/{id}/retry/` when every subject is already in flight — § Run lanes), `NOT_RETRYABLE` (409, `tasks/{id}/retry/` — § Retry a task), `RATE_LIMITED` (429, intake throttle). Internal errors never leak `str(exc)` — the handler returns `INTERNAL_ERROR` + a logged
 `debug_id`.
 
 ## OpenAPI
