@@ -7,8 +7,9 @@
 One completion turns the brief into questions `{id, question, why, type: text|choice, choices, optional}`;
 it sees the profile facts and remembered answers (memory `answer`) so it does not ask again. The artifact
 value is `{"questions": [...], "answers": {}, "min_answers": n}`; the operator fills `answers` (`{question id: text}`)
-by a manual edit and approves. Approval needs every non-optional answer and at least `min_answers` answers (params,
-default 1 — an article never stands on research alone; 0 switches it off) → `ANSWERS_MISSING`.
+by a manual edit and approves. With `min_answers` (params, default 1 — an article never stands on research alone)
+approval needs that many answers to any of the questions, none is required on its own; with 0 (or an artifact made
+before `min_answers`) every non-optional question needs its answer → `ANSWERS_MISSING`.
 """
 
 from typing import Any
@@ -117,15 +118,16 @@ def _normalized(question: dict, index: int, seen: set[str]) -> dict:
 
 
 def validate_answers(value: dict) -> None:
-    """Every non-optional question answered, at least `min_answers` answers (capped at the number of questions),
-    every choice one of its options. Raises `ValueError`."""
+    """At least `min_answers` answers, any of them (capped at the number of questions) — or, without a minimum, every
+    non-optional question answered; every choice one of its options. Raises `ValueError`."""
     answers = value.get("answers") or {}
     if not isinstance(answers, dict):
         raise ValueError("answers must be an object {question id: answer}")
     questions = value.get("questions") or []
-    if missing := [q.get("id", "") for q in questions if not q.get("optional") and not _answer(answers, q)]:
+    if minimum := int(value.get("min_answers") or 0):
+        _check_minimum(questions, answers, minimum)
+    elif missing := [q.get("id", "") for q in questions if not q.get("optional") and not _answer(answers, q)]:
         raise AnswersMissingError(missing)
-    _check_minimum(questions, answers, int(value.get("min_answers") or 0))
     for question in questions:
         answer = _answer(answers, question)
         if question.get("type") == "choice" and answer and answer not in question.get("choices", []):

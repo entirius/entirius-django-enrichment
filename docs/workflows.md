@@ -85,10 +85,11 @@ kind's own keys.
 | `cover` | `scenes_step` (`cover_brief`), `aspect_ratio` (`16:9`), `max_variants` (3), `product_field` (`cover_product`), `product_module` (`pim`), `text_flag` (`cover_text_wanted`), `text_field` (`cover_text`) | one toolbox image job per scene (`instruct`, one output) on the product's main picture or a blank canvas; the prompt = lead + the scene + code's tail (the scene's `must_show` as `Must show:`, never cut; profile `visual`, capped at 300 / 150 characters: `Style:` / `Never show:`, the brief's text or a ban on any text, `Change: <instruction>`), cut to 1000 characters at the scene; a failed scene is left out | `{variants: [{title, prompt, alt, must_show}], chosen: null, alt, cover_text}`, the pictures in one staged bundle (`?variant=k`); cost = the sum of the jobs |
 
 **Answers.** The operator fills `answers` (`{question id: text}`) with a manual edit (`PATCH proposals/{id}/`)
-and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING` (`details[].field` = the
-question ids, `issue` `REQUIRED`); fewer answers than `min_answers` (capped at the number of questions, optional ones
-count) → the same 400 with every unanswered question in `details` as `issue` `MIN_ANSWERS` and the minimum in
-`message`; a `choice` answer outside its choices → 400.
+and approves. With `min_answers` > 0 any answers count and no question is required on its own: fewer answers than
+`min_answers` (capped at the number of questions) → 400 `ANSWERS_MISSING` with every unanswered question in `details`
+as `issue` `MIN_ANSWERS` and the minimum in `message`. With `min_answers: 0` (or an artifact made before it) a
+non-optional question without an answer → the same 400 (`details[].field` = the question ids, `issue` `REQUIRED`).
+A `choice` answer outside its choices → 400.
 
 **Cover pick.** The operator sets `chosen` (the variant index; the CMS also moves `alt` to that variant's unless the
 operator wrote one) with `PATCH proposals/{id}/` and approves; no valid pick → 400 `COVER_NOT_CHOSEN`. The approved

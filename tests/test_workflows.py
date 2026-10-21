@@ -247,12 +247,14 @@ class TestArticleFlow:
         proposal_service.update_value(questions, {**questions.proposed_value, "answers": answers}, user=user)
         return questions
 
-    def test_questions_need_their_required_answers(self, article, toolbox, run_steps, admin_user):
+    def test_questions_need_one_answer_to_any_question(self, article, toolbox, run_steps, admin_user):
         run = _start(run_steps, admin_user, "article")
-        questions = self._answer(run, {"years": "Since 1999"}, admin_user)
+        questions = workflow_queries.step_proposal(str(run.uid), "ask")
         with pytest.raises(AnswersMissingError) as exc:
             proposal_service.accept(questions, user=admin_user)
-        assert exc.value.missing == ["tone"]
+        assert exc.value.minimum == 1
+        questions = self._answer(run, {"extra": "Only the optional one."}, admin_user)
+        assert _accept(run_steps, questions, admin_user).steps_state[0]["status"] == "approved"
 
     def test_approved_answers_land_in_memory_and_steps_use_the_profile(self, article, toolbox, run_steps, admin_user):
         profile_service.save_profile(channel="", data={"always_rules": ["Never promise delivery dates."]})

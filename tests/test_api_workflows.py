@@ -108,8 +108,12 @@ class TestRuns:
 
 
 class TestApproveQuestions:
-    def test_accept_without_answers_is_answers_missing(self, started, admin_client):
+    def test_without_a_minimum_the_required_answers_are_missing(self, started, admin_client):
         proposal_id = started["steps"][0]["proposal_id"]
+        value = admin_client.get(f"{BASE}/proposals/{proposal_id}/").json()["proposed_value"]
+        admin_client.patch(
+            f"{BASE}/proposals/{proposal_id}/", {"proposed_value": {**value, "min_answers": 0}}, format="json"
+        )
         response = admin_client.post(f"{BASE}/proposals/{proposal_id}/accept/")
         assert response.status_code == 400
         body = response.json()
@@ -120,9 +124,6 @@ class TestApproveQuestions:
 
     def test_too_few_answers_name_the_minimum(self, started, admin_client):
         proposal_id = started["steps"][0]["proposal_id"]
-        value = admin_client.get(f"{BASE}/proposals/{proposal_id}/").json()["proposed_value"]
-        value["questions"] = [{**question, "optional": True} for question in value["questions"]]
-        admin_client.patch(f"{BASE}/proposals/{proposal_id}/", {"proposed_value": value}, format="json")
         body = admin_client.post(f"{BASE}/proposals/{proposal_id}/accept/").json()
         assert body["error"] == "ANSWERS_MISSING"
         assert body["message"] == "Answer at least 1 question before approving."

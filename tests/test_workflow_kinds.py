@@ -160,6 +160,14 @@ class TestMinimumAnswers:
     def test_an_artifact_without_a_minimum_keeps_the_old_rule(self):
         validate_answers({"questions": self.OPTIONAL, "answers": {}})
 
+    def test_with_a_minimum_no_question_is_required_on_its_own(self):
+        validate_answers({"questions": wf.QUESTIONS, "answers": {"extra": "Only this one."}, "min_answers": 1})
+
+    def test_zero_keeps_the_required_questions(self):
+        with pytest.raises(AnswersMissingError) as exc:
+            validate_answers({"questions": wf.QUESTIONS, "answers": {"extra": "Only this one."}, "min_answers": 0})
+        assert (exc.value.missing, exc.value.minimum) == (["years", "tone"], 0)
+
 
 @pytest.mark.django_db
 class TestCompose:

@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Questions with `min_answers` (> 0): approval needs that many answers to any of the questions; the model's
+  `optional: false` no longer makes a question required (it did block an operator who wanted to leave it blank).
+  `min_answers: 0` and artifacts made before `min_answers` keep the required questions.
 - Kind `cover` and step output `image`: a cover picture from the scenes of a `generate` step (`scenes_step`, data
   `{scenes: [{title, prompt, alt, must_show}]}`; `must_show` = what the article demands the picture gets right,
   added to the image prompt as `Must show:`), one toolbox image job per scene (`instruct`, `aspect_ratio`, default 16:9), on
