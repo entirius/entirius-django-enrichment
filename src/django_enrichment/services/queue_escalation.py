@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 """Queue escalation — pause a failing worker and tell the operator through django_notifications.
 
 Soft dependency: the module absent, the channel missing or `notify` raising → one log line, never an error in
