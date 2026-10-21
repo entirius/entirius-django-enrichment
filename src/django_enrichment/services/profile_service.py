@@ -105,9 +105,9 @@ def version_ids(channel: str = INSTANCE) -> list[int]:
     return list(current.order_by("profile__channel").values_list("pk", flat=True))
 
 
-def context_for(*, channel: str, task_type: str, kind: str) -> tuple[str, str]:
+def context_for(*, channel: str, task_type: str, kind: str, sections: list[str] | None = None) -> tuple[str, str]:
     """`(instructions, data)` of the channel's profile for a prompt; both blank without a profile."""
-    return profile_context.render(merged(channel), task_type=task_type, kind=kind)
+    return profile_context.render(merged(channel), task_type=task_type, kind=kind, sections=sections)
 
 
 def record_use(*, task: EnrichmentTask, channel: str) -> None:

@@ -37,7 +37,8 @@ src/django_enrichment/
 │                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py
+│                       # generate / sections / questions / compose / image / cover, extras.py, step.py (step params),
+│                       # seams.py
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
@@ -52,8 +53,10 @@ src/django_enrichment/
 │                       # workflow_service (+ workflow_steps, workflow_queries),
 │                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
-│                       # ai_usage_service (this month's toolbox usage, CMS header counter)
-├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts)
+│                       # ai_usage_service (this month's toolbox usage, CMS header counter),
+│                       # image_bundle (a cover's variants as one staged zip)
+├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts),
+│                       # cover_product
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
@@ -138,7 +141,7 @@ values, one call per subject) read the optional adapter extras through `kinds/ex
 proposal — an artifact of the built-in `"enrichment"` adapter, or a document for the target module.
 Approving = accepting that proposal (`apply_service` → `workflow_service.on_proposal_applied` spawns the next
 steps); the runner hands finished step tasks to `on_task_finished`. Kinds `generate` / `sections` / `questions` /
-`compose`; profile, memory and augmentations reach prompts through `kinds/seams.py`. `adapter.apply` may
+`compose` / `cover` (step output `image`: picture variants in one staged bundle, the operator picks one); profile, memory and augmentations reach prompts through `kinds/seams.py`. `adapter.apply` may
 return `{"subject_ref"}` → `ContentProposal.result_ref`. Full flow: `docs/workflows.md`.
 
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the

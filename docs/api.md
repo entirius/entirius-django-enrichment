@@ -39,7 +39,7 @@ Error envelope `{error, message, debug_id, details}`, pagination `count/next/pre
 | `POST` | `spawn-rules/{key}/run/` | `spawn_rule_service.run_rule` | Throttled (`enrichment_spawn`). → 201 `spawned` / 200 `already_running` / 200 `no_candidates` |
 | `POST` | `proposals/` | `proposal_service.intake` | Worker intake — idempotent on `external_ref`. Throttled (`enrichment_intake`, 100/min). → 201 |
 | `POST` | `proposals/upload-media/` | `proposal_service.intake_media` | Multipart media intake — stages the binary, `target_kind=picture`. Size + MIME caps. Throttled. → 201 |
-| `GET` | `proposals/{id}/staged-file/` | `staging_store` | Stream a proposal's staged binary (admin-only) — the CMS "after" preview |
+| `GET` | `proposals/{id}/staged-file/` | `staging_store` | Stream a proposal's staged binary (admin-only) — the CMS "after" preview; `?variant=k` = picture `k` of a cover's bundle (`image/png`, 404 for a missing one) |
 | `GET` | `proposals/` | `proposal_service.list_for_review` | Filters: status/module/kind/batch/source/confidence_min/search/subject_ref/`task` (id); `ordering` allowlisted |
 | `GET` | `proposals/{id}/` | `proposal_service.get_proposal` | Retrieve |
 | `PATCH` | `proposals/{id}/` | `proposal_service.update_value` | Body `{proposed_value}` — pending/drifted only, else 400. Creates a `user` revision |
@@ -145,8 +145,9 @@ A field of the wrong type (select in `write`, non-select or no catalog in `pick`
 An augmentation is a deterministic research step that runs before a kind's completion and adds a fenced data
 block to its prompt — the model never calls a tool itself. Registry: `register_augmentation(key, fn)` in
 `django_enrichment.augmentations`, `fn(*, task, subject_ref, context) -> AugmentResult(block, cost,
-memory_writes)`; `run_all` fences each block under its key and saves the memory writes. Built in: `seo_brief`
-(registered in `EnrichmentConfig.ready()`).
+memory_writes)`; `run_all` fences each block under its key and saves the memory writes. Built in: `seo_brief` and
+`cover_product` (the `build_context` facts of the product in `brief.cover_product`, none without one; an unknown
+product fails the subject `PRODUCT_NOT_FOUND`), registered in `EnrichmentConfig.ready()`.
 
 - **Enabling:** `params.augment: [keys]` on `POST tasks/` or in a template's `params` (templates may preset it).
   Keys are validated against the registry — an unknown key → 400 (a template with one is refused too).
@@ -384,6 +385,7 @@ All errors use the v2 envelope from `django-utils`:
 ```
 
 `VALIDATION_ERROR` (400, Pydantic or service `ValueError`), `NOT_FOUND` (404, unknown id),
+`ANSWERS_MISSING` / `COVER_NOT_CHOSEN` (400, approving a questions step without its answers / a cover without a pick),
 `AUTHENTICATION_REQUIRED` (401), `PERMISSION_DENIED` (403, non-admin), `ALREADY_RUNNING` (409, `POST tasks/` when
 every subject is already in flight — § Run lanes), `RATE_LIMITED` (429, intake throttle). Internal errors never leak `str(exc)` — the handler returns `INTERNAL_ERROR` + a logged
 `debug_id`.

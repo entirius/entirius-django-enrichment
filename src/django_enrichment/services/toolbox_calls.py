@@ -283,6 +283,7 @@ def _run_media_job(
 ) -> tuple[str, dict, Decimal | None]:
     """Submit one media job and wait for it: `(job_id, finished job, charged cost)`; a failed job raises."""
     data, mime = image
+    lease_keepalive.beat()
     response = client.post(f"{spec.path}/", data=form, files={"image": ("image", data, mime)})
     job_id = _checked(response).json()["job_id"]
     with _unknown_cost_on_error(task, "media"):
@@ -320,6 +321,7 @@ def _wait_for_job(client: httpx.Client, spec: _MediaJob, job_id: str) -> dict:
         if job["status"] in ("done", "failed"):
             return job
         time.sleep(spec.poll_interval_s)
+        lease_keepalive.beat()  # a media job polls for minutes without another toolbox call
     raise TimeoutError(f"toolbox {spec.path[:-1]} job {job_id} not done after {timeout_s}s")
 
 

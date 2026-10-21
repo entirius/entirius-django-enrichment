@@ -9,7 +9,7 @@ answers "nothing" and the prompt simply has no such section. Expected callables:
 
 | seam | callable |
 |---|---|
-| profile | `services.profile_service.context_for(*, channel, task_type, kind) -> (instructions, data)` |
+| profile | `services.profile_service.context_for(*, channel, task_type, kind, sections) -> (instructions, data)` |
 | profile versions | `services.profile_service.version_ids(channel) -> list[int]`, `record_use(*, task, channel)` |
 | memory recall | `services.memory_service.recall(*, channel, subject_module, subject_ref, kinds, budget_chars) -> str` |
 | answers written | `services.memory_service.record_answers(*, run, step, value) -> None` |
@@ -43,18 +43,31 @@ def _seam(module_path: str, name: str) -> Callable[..., Any] | None:
     return getattr(module, name, None)
 
 
-def profile(*, channel: str, task_type: str, kind: str) -> tuple[str, str]:
-    """`(instructions, data)` of the company profile for this task; blank without a profile service."""
+def profile(*, channel: str, task_type: str, kind: str, sections: list[str] | None = None) -> tuple[str, str]:
+    """`(instructions, data)` of the company profile for this task; blank without a profile service. `sections`
+    (a step template's pick) replace the kind's routing."""
     context_for = _seam(PROFILE_SERVICE, "context_for")
-    return context_for(channel=channel, task_type=task_type, kind=kind) if context_for else ("", "")
+    if not context_for:
+        return "", ""
+    return context_for(channel=channel, task_type=task_type, kind=kind, sections=sections or None)
 
 
-def profile_for_task(task: Any, *, channel: str, kind: str) -> tuple[str, str]:
+def profile_for_task(task: Any, *, channel: str, kind: str, sections: list[str] | None = None) -> tuple[str, str]:
     """`profile(...)` for a task's own prompt, stamping the profile versions it used on the task."""
-    instructions, data = profile(channel=channel, task_type=task.type, kind=kind)
+    instructions, data = profile(channel=channel, task_type=task.type, kind=kind, sections=sections)
     if (instructions or data) and (record_use := _seam(PROFILE_SERVICE, "record_use")):
         record_use(task=task, channel=channel)
     return instructions, data
+
+
+def profile_section(task: Any, *, channel: str, name: str) -> dict:
+    """One section of the effective profile as data (`{}` without a profile service or when it is empty), stamping
+    the profile versions on the task when it is used — for a kind whose code, not the model, applies the section."""
+    merged = _seam(PROFILE_SERVICE, "merged")
+    section = (merged(channel) if merged else {}).get(name) or {}
+    if section and (record_use := _seam(PROFILE_SERVICE, "record_use")):
+        record_use(task=task, channel=channel)
+    return section
 
 
 def profile_versions(channel: str) -> list[int]:
