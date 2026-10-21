@@ -100,7 +100,7 @@ checked by `qa_service.check`; the result is the revision's `warnings` and, for 
 A `{"data"}` value (a JSON step: metadata, search phrases) is checked field by field: `LIMIT` against the step's
 `params.json_schema`, then `rule`, `NUMBER_NOT_IN_FACTS` and `FACT_NOT_IN_PROFILE` on every string, each warning
 with the field's `path` (`description`, `faq[2].answer`) and its span inside that field; `path` is null for a text
-value.
+value, which gets `LIMIT` first when its field has a `write` worker character range (§ Field length).
 
 | Code | Raised when |
 |---|---|
@@ -108,7 +108,7 @@ value.
 | `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`id`, `label`, `value` — a citation's id never counts as a new number), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
 | `FACT_NOT_IN_PROFILE` | the text cites `(profile fact: <id>)` and `<id>` is not an `id` of the merged profile's `facts` registry — once per distinct id, `span` on the whole citation. The format is a contract with the workflow prompts that ask the model to label claims with their source (the `id` column of the facts table in the prompt); case and the whitespace around the colon and the id are free, the id is compared exactly. An empty registry flags every citation |
 | `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
-| `LIMIT` | a `{"data"}` field breaks the step's `json_schema`: a string over `maxLength` / under `minLength`, an array over `maxItems` (`span` null). The schema goes to the provider with its limits as hints only (`toolbox_calls.provider_schema`), so they are enforced here |
+| `LIMIT` | a `{"data"}` field breaks the step's `json_schema`: a string over `maxLength` / under `minLength`, an array over `maxItems` (`span` null). The schema goes to the provider with its limits as hints only (`toolbox_calls.provider_schema`), so they are enforced here. A `{"text"}` value outside the `field_limits` range of its field (`write` worker options): `195 characters, the limit is 160.` / `100 characters, at least 120.` (`span` and `path` null) |
 
 Numbers (`qa_numbers`) are compared by value: integers, decimals with a comma or a dot, thousands grouped by
 space / no-break space / comma / dot, percentages and ranges (each end separately). `12,5 %` = `12.5%`,
@@ -137,11 +137,33 @@ channel languages are asked once per language per task, not per subject.
 
 | Kind | Params | Calls | Drafts |
 |---|---|---|---|
-| `write` | `{channel, fields, languages, prompt, rules}` (+ `augment`, `seo_scope`); options `{rules, field_rules}` | one per subject × language; schema = one string per field (`maxLength` from the catalog) | one per field × language, `{"text"}`, `html` fields sanitised |
+| `write` | `{channel, fields, languages, prompt, rules}` (+ `augment`, `seo_scope`); options `{rules, field_rules, field_limits}` | one per subject × language, plus one rewrite when a short field comes back outside its `field_limits` range (§ Field length); schema = one string per field (`maxLength` from the catalog, or the `field_limits` range) | one per field × language, `{"text"}`, `html` fields sanitised |
 | `pick` | `{channel, fields, prompt, rules}` (+ `augment`, `seo_scope`); options `{rules}` | one per subject; schema = enum of option values per field (array for multiselect) | one per field, locator language `None`, `{"option"}` / `{"options"}` |
 
 A field of the wrong type (select in `write`, non-select or no catalog in `pick`) fails the subject with
 `FIELD_TYPE` in `task.errors`. `translate` takes an optional `params.fields` that overrides the worker's.
+
+### Field length (`write` option `field_limits`)
+
+A model does not count characters: a prose `field_rules` entry ("140-160 characters") alone landed five meta
+descriptions at 195 characters on average. `options.field_limits` gives a field a number range, keyed by the
+catalog field key: `{"meta_description": {"min": 120, "max": 160}, "meta_title": {"min": 40, "max": 60}}`.
+`max` is required, `min` defaults to 0 (`at most max`) and must not exceed `max`; spaces count. Keep `field_rules`
+for the content guidance; the range is the contract.
+
+- **Prompt and schema:** the field line reads `between 120 and 160 characters, spaces included` (replacing the
+  catalog's `at most N characters`), and the answer schema carries `minLength` / `maxLength`, which the provider sees
+  as a description hint (`toolbox_calls.provider_schema`).
+- **One corrective call:** when a field with `max` up to 300 comes back outside its range, the run makes one more
+  completion for just those fields: the same selector tag (`enrichment.write`) and answer shape, the worker's system
+  prompt and rules, the current values as data, each field's range and how far the value is from it. What comes back
+  is kept, even if it is still outside. Longer fields are never rewritten. A subject × language costs at most two
+  completions; both are charged to the task and shared by the drafts. A failed rewrite keeps the first values, never
+  fails the subject, and leaves the drafts' cost unknown (`None`, the task `cost_complete` false). The
+  `enrichment.queue` log has `event=field_rewrite fields=… still_out=<n>` or `event=field_rewrite_failed code=…`.
+- **QA:** a `{"text"}` proposal whose field has a range in the `options.field_limits` of the worker that produced it
+  (`source` = `worker:<key>@v<n>`) gets a `LIMIT` warning when it is outside, on intake and on every later revision
+  (an operator's edit too), so the review shows a miss the rewrite left.
 
 ## Augmentations (contract A4 § 5)
 

@@ -37,7 +37,8 @@ src/django_enrichment/
 │                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py
+│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py,
+│                       # field_limits.py (leaf: the `{min, max}` character range of a `write` field)
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
@@ -132,7 +133,9 @@ flow: `docs/api.md` § Revisions and corrections.
 values, one call per subject) read the optional adapter extras through `kinds/extras.py` (`describe_fields`,
 `channel_languages`, `make_locator`, `field_key`, `build_context`, each with a fallback; catalog memoised per task); a kind refuses a subject with
 `SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
-`template` merges them (`template_service.merge_into_task`). Details: `docs/api.md` § Generic kinds, § Templates.
+`template` merges them (`template_service.merge_into_task`). `write` takes `options.field_limits` (a `{min, max}` character
+range per field, `kinds/field_limits.py`): shown in the prompt, one corrective call for a short field outside it, `LIMIT`
+warning from QA (`docs/api.md` § Field length). Details: `docs/api.md` § Generic kinds, § Templates.
 
 **Workflows:** a `WorkflowDefinition` lists steps (templates) with `needs` and gates (`review` | `auto`); a
 `WorkflowRun` freezes them in `steps_state`. Each step is a task on the subject `run:<uid>`; its output is a
