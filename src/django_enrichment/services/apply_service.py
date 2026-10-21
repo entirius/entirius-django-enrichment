@@ -29,6 +29,7 @@ from django_enrichment.services import staging_store
 
 _logger = logging.getLogger("process")
 
+_ARTIFACT_KIND = "artifact"
 _APPLYABLE_STATUSES = frozenset({ProposalStatus.PENDING.value, ProposalStatus.DRIFTED.value})
 
 
@@ -146,7 +147,8 @@ def apply(
     # anchor is the OLD source object (e.g. PIM Picture), never this file. Outside the transaction
     # (file ops aren't transactional) and best-effort — a stale staged file is harmless, cleaned by
     # the etap-10 beat; failing the apply over it would be wrong (the write already committed).
-    if proposal.staged_file:
+    # An artifact's bundle is read by a later step (compose takes the picked cover), so it stays until the prune.
+    if proposal.staged_file and proposal.target_kind != _ARTIFACT_KIND:
         try:
             staging_store.delete(proposal.staged_file)
         except Exception:  # noqa: BLE001 — staged cleanup must never fail a committed apply

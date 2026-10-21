@@ -27,14 +27,16 @@ class EnrichmentConfig(AppConfig):
 
     @staticmethod
     def _register_augmentations() -> None:
-        from django_enrichment.augmentations import register_augmentation, seo_brief
+        from django_enrichment.augmentations import cover_product, register_augmentation, seo_brief
 
         register_augmentation("seo_brief", seo_brief.run)
+        register_augmentation("cover_product", cover_product.run)
 
     @staticmethod
     def _register_kinds() -> None:
         from django_enrichment.kinds import register_kind
         from django_enrichment.kinds.compose import ComposeKind
+        from django_enrichment.kinds.cover import CoverKind
         from django_enrichment.kinds.field import FieldKind
         from django_enrichment.kinds.generate import GenerateKind
         from django_enrichment.kinds.image import ImageKind
@@ -55,3 +57,4 @@ class EnrichmentConfig(AppConfig):
         register_kind("sections", SectionsKind)
         register_kind("questions", QuestionsKind)
         register_kind("compose", ComposeKind)
+        register_kind("cover", CoverKind)

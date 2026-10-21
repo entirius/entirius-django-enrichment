@@ -19,11 +19,16 @@ document goes to), `inputs_schema` (JSON Schema of the brief, `"type": "object"`
 ```
 
 `clean()` (`workflow_spec.definition_errors`) refuses: no steps, a malformed step, a duplicate key, `needs`
-naming a step that is not earlier (so a definition is acyclic), a `questions` step without the `review`
+naming a step that is not earlier (so a definition is acyclic), a `questions` or `image` step without the `review`
 gate, an unknown template, a template whose worker is inactive or not `internal`, a template whose worker kind does not make the output (`artifact` → `generate` or `sections`,
-`questions` → `questions`, `document` → `compose`), a `document` step whose worker writes to another module
-than `target_module`, an `artifact`/`questions` step whose worker does not write to the built-in
+`questions` → `questions`, `document` → `compose`, `image` → `cover`), a `document` step whose worker writes to another
+module than `target_module`, an `artifact`/`questions`/`image` step whose worker does not write to the built-in
 `enrichment` adapter, and an invalid inputs schema.
+
+An inputs-schema property with `x-picture-of: <adapter key>` takes `{channel, ref}` of that module's subject; `start`
+refuses (400) a subject that does not exist or has no main picture, so the brief fails before any paid step. A
+property with `x-steps: [step keys]` reaches only those steps' briefs (`workflow_steps.brief_for`): the cover's hints,
+text and product stay out of the research and the writing.
 
 ## Run
 
@@ -66,25 +71,33 @@ conformance kit's `DocumentCreateConformance` checks the shape.
 
 ## Kinds
 
-All four take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
-instruction, previous`); templates preset `prompt` / `rules` and the kind's own keys.
+All step kinds take the step params (`kinds/step.py`: `channel, run, step, brief, inputs, prompt, rules,
+instruction, previous, profile_sections`); templates preset `prompt` / `rules` / `profile_sections` (the profile
+sections the step reads instead of its kind's routing — the profile's routing of the task type still wins) and the
+kind's own keys.
 
 | Kind | Own params | Call | Value |
 |---|---|---|---|
 | `generate` | `format: markdown \| text \| json`, `json_schema` (an object; json only) | one completion | `{"text"}`, or `{"data"}` shaped by the schema |
 | `sections` | `outline_step` (`outline`) | one completion per numbered outline heading (`### N. <title>` + the lines under it), each with its outline block and every section written before it (`sections_so_far`), then one for the lead and the closing (`article_body` → `{lead, closing}`); a regeneration hands each section only its own part of the previous version (matched by `## ` title) and the operator instruction before its task, the lead/closing call the whole previous version; an outline without numbered headings → one completion (logged); the calls keep the unit's lease alive | `{"text"}` = lead, sections (each under `## <its outline title>`, whatever heading the model wrote), closing; cost = the sum of the calls |
 | `questions` | `min_answers` (1; 0 = off) | one completion, schema `{questions: [{id, question, why, type: text\|choice, choices, optional}]}`; sees profile facts and remembered answers | `{"questions": [...], "answers": {}, "min_answers": n}` (ids made unique, `choice` without choices → `text`) |
-| `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq |
+| `compose` | `body_step` (`draft`), `meta_step` (`meta`), `language` (blank = `brief.language`), `cover_step` (blank = no cover) | none (cost 0) | `{language, title, slug, body_markdown, meta, faq}`; title = meta title, else the first `# heading`, else `brief.title`; slug slugified; `meta` = the meta data without title/slug/faq; with `cover_step` also `cover: {alt, file_name}` and the picked picture as the staged file |
+| `cover` | `scenes_step` (`cover_brief`), `aspect_ratio` (`16:9`), `max_variants` (3), `product_field` (`cover_product`), `product_module` (`pim`), `text_flag` (`cover_text_wanted`), `text_field` (`cover_text`) | one toolbox image job per scene (`instruct`, one output) on the product's main picture or a blank canvas; the prompt = lead + the scene + code's tail (the scene's `must_show` as `Must show:`, never cut; profile `visual`, capped at 300 / 150 characters: `Style:` / `Never show:`, the brief's text or a ban on any text, `Change: <instruction>`), cut to 1000 characters at the scene; a failed scene is left out | `{variants: [{title, prompt, alt, must_show}], chosen: null, alt, cover_text}`, the pictures in one staged bundle (`?variant=k`); cost = the sum of the jobs |
 
 **JSON values.** Some models escape their JSON twice and leave a literal `\"` or `\n` in a string. The `generate`
 kind (`format: json`) turns those into a quote and a newline in every string of the `{"data"}` value before intake
 (`services/json_unescape.py`); `\\"`, any other backslash sequence, the keys and `{"text"}` values stay as written.
 
 **Answers.** The operator fills `answers` (`{question id: text}`) with a manual edit (`PATCH proposals/{id}/`)
-and approves. A non-optional question without an answer → 400 `ANSWERS_MISSING` (`details[].field` = the
-question ids, `issue` `REQUIRED`); fewer answers than `min_answers` (capped at the number of questions, optional ones
-count) → the same 400 with every unanswered question in `details` as `issue` `MIN_ANSWERS` and the minimum in
-`message`; a `choice` answer outside its choices → 400.
+and approves. With `min_answers` > 0 any answers count and no question is required on its own: fewer answers than
+`min_answers` (capped at the number of questions) → 400 `ANSWERS_MISSING` with every unanswered question in `details`
+as `issue` `MIN_ANSWERS` and the minimum in `message`. With `min_answers: 0` (or an artifact made before it) a
+non-optional question without an answer → the same 400 (`details[].field` = the question ids, `issue` `REQUIRED`).
+A `choice` answer outside its choices → 400.
+
+**Cover pick.** The operator sets `chosen` (the variant index; the CMS also moves `alt` to that variant's unless the
+operator wrote one) with `PATCH proposals/{id}/` and approves; no valid pick → 400 `COVER_NOT_CHOSEN`. The approved
+artifact keeps its bundle for `compose`; the retention prune drops it.
 An artifact without `min_answers` (made before it existed) keeps the old rule.
 
 **Prompt.** System = worker system prompt + profile instructions. User = rules, the template prompt, a

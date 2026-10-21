@@ -32,6 +32,11 @@ class StepParams(BaseModel):
     rules: list[str] = Field(default_factory=list, description="Rules of this run", examples=[["No prices."]])
     instruction: str = Field("", description="Operator instruction of a regeneration", examples=["Shorter."])
     previous: dict | None = Field(None, description="The value being regenerated")
+    profile_sections: list[str] = Field(
+        default_factory=list,
+        description="Profile sections this step reads (template); empty = the kind's routing",
+        examples=[["brand", "visual"]],
+    )
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,9 @@ class StepPrompt:
 def build_prompt(worker: Any, task: Any, params: StepParams, *, kind: str, parts: list[str]) -> StepPrompt:
     """System = worker prompt + profile instructions; user = rules, prompt, data blocks, `parts`, language,
     regeneration."""
-    instructions, profile_data = seams.profile_for_task(task, channel=params.channel, kind=kind)
+    instructions, profile_data = seams.profile_for_task(
+        task, channel=params.channel, kind=kind, sections=params.profile_sections
+    )
     user = join_prompts(
         extras.rules_block(params.rules),
         params.prompt,

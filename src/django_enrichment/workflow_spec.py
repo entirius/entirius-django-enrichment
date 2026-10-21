@@ -7,8 +7,8 @@
 A step is `{key, label, template, needs, gate, output}`. `needs` name earlier steps only, so a definition
 is acyclic by construction. The step's template must exist and run the kind its output needs
 (`STEP_OUTPUT_KINDS`) on an active internal worker; a `document` step must write to the definition's
-`target_module`, any other step to the built-in `enrichment` adapter; a `questions`
-step always waits for the operator (its answers are the point).
+`target_module`, any other step to the built-in `enrichment` adapter; a `questions` or `image`
+step always waits for the operator (its answers, the picked variant, are the point).
 """
 
 from typing import TYPE_CHECKING, Literal
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from django_enrichment.models import Worker
 
 STEP_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
+_OPERATOR_OUTPUTS = frozenset({StepOutput.QUESTIONS.value, StepOutput.IMAGE.value})
 
 
 class StepSpec(BaseModel):
@@ -35,7 +36,7 @@ class StepSpec(BaseModel):
     template: str = Field(min_length=1, max_length=64)
     needs: list[str] = Field(default_factory=list)
     gate: Literal["review", "auto"] = StepGate.REVIEW.value
-    output: Literal["artifact", "questions", "document"] = StepOutput.ARTIFACT.value
+    output: Literal["artifact", "questions", "document", "image"] = StepOutput.ARTIFACT.value
 
 
 _STEPS = TypeAdapter(list[StepSpec])
@@ -84,8 +85,9 @@ def _graph_errors(specs: list[StepSpec]) -> list[str]:
             for need in spec.needs
             if need not in seen
         ]
-        if spec.output == StepOutput.QUESTIONS.value and spec.gate != StepGate.REVIEW.value:
-            errors.append(f"step {spec.key!r}: a questions step needs the review gate")
+        if spec.output in _OPERATOR_OUTPUTS and spec.gate != StepGate.REVIEW.value:
+            article = "an" if spec.output[0] in "aeiou" else "a"
+            errors.append(f"step {spec.key!r}: {article} {spec.output} step needs the review gate")
         seen.add(spec.key)
     return errors
 

@@ -38,17 +38,20 @@ _TITLES = {
     "proof": "Proof",
     "seo": "SEO",
     "checklists": "Checklists",
+    "visual": "Visual style",
 }
 _LISTS = {
     "brand": [("differentiators", "Differentiators"), ("never_say", "Never say")],
     "tone": [("ai_patterns", "Avoid")],
+    "visual": [("never_show", "Never show")],
+    "seo": [("exclude_terms", "Never target these phrases or brands")],
 }
 _FACT_COLUMNS = ["id", "label", "value", "source", "verified_at"]
 
 
-def render(data: dict, *, task_type: str, kind: str) -> tuple[str, str]:
+def render(data: dict, *, task_type: str, kind: str, sections: list[str] | None = None) -> tuple[str, str]:
     """`(instructions, facts table)`, both blank when the routed sections are empty."""
-    sections = routed_sections(data, task_type=task_type, kind=kind)
+    sections = routed_sections(data, task_type=task_type, kind=kind, sections=sections)
     always = _bullets("Always", data.get("always_rules", []))
     texts = join_prompts(*(_section(name, data.get(name) or {}) for name in sections if name != "facts"))
     facts = facts_table(data.get("facts", [])) if "facts" in sections else ""
@@ -57,10 +60,11 @@ def render(data: dict, *, task_type: str, kind: str) -> tuple[str, str]:
     return capped(join_prompts(CONFLICT_NOTE, always), texts, facts)
 
 
-def routed_sections(data: dict, *, task_type: str, kind: str) -> list[str]:
-    """Routed section names, facts first, then brand, then the rest in routing order."""
+def routed_sections(data: dict, *, task_type: str, kind: str, sections: list[str] | None = None) -> list[str]:
+    """Routed section names, facts first, then brand, then the rest in routing order. The profile's routing of the
+    task type wins over `sections` (what a step template asks for), which win over the kind's routing and defaults."""
     routing = data.get("routing", {})
-    names = routing.get(task_type) or routing.get(kind) or DEFAULT_ROUTING.get(kind, FALLBACK_SECTIONS)
+    names = routing.get(task_type) or sections or routing.get(kind) or DEFAULT_ROUTING.get(kind, FALLBACK_SECTIONS)
     return [name for name in PRIORITY if name in names] + [name for name in names if name not in PRIORITY]
 
 

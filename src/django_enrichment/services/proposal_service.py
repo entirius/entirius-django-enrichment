@@ -27,7 +27,7 @@ from django_enrichment import settings as enrichment_settings
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import PROPOSAL_STATUS_TRANSITIONS, ProposalStatus, RevisionAuthor
 from django_enrichment.models import ContentProposal, EnrichmentTask, compute_locator_hash
-from django_enrichment.services import apply_service, revision_service, staging_store, task_service
+from django_enrichment.services import apply_service, image_bundle, revision_service, staging_store, task_service
 
 _logger = logging.getLogger("process")
 
@@ -144,6 +144,7 @@ def _create_with_revision(**fields: Any) -> ContentProposal:
     return proposal
 
 
+_ZIP_MIME = "application/zip"
 _MP4_BRANDS = frozenset({b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"avc1", b"dash", b"M4V "})
 
 
@@ -155,6 +156,8 @@ def _sniff_media_mime(head: bytes) -> str | None:
     """
     if head[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
+    if head[:4] == b"PK\x03\x04":
+        return _ZIP_MIME  # allowed for an image bundle only
     if head[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if head[:6] in (b"GIF87a", b"GIF89a"):
@@ -174,14 +177,16 @@ def _media_rules(target_kind: str) -> tuple[str, int, frozenset[str]]:
     django.conf.settings is checked first so a host override / test fixture wins; the module-settings
     value is the single source of the literal defaults (no duplicated constants here).
     """
-    if target_kind == "picture":
-        max_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
+    image_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
+    if target_kind in ("picture", "document"):  # a document's binary is its cover picture
         allowed = getattr(settings, "ENRICHMENT_ALLOWED_IMAGE_MIME", enrichment_settings.ENRICHMENT_ALLOWED_IMAGE_MIME)
-        return "image", max_bytes, frozenset(allowed)
+        return "image", image_bytes, frozenset(allowed)
+    if target_kind == "artifact":  # the picture variants of a `cover` step, one zip (`image_bundle`)
+        return "image bundle", image_bytes * image_bundle.MAX_VARIANTS, frozenset({_ZIP_MIME})
     if target_kind == "video":
         max_bytes = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", enrichment_settings.ENRICHMENT_MAX_VIDEO_BYTES)
         return "video", max_bytes, frozenset({"video/mp4"})
-    raise ValueError(f"unsupported media target_kind {target_kind!r} (allowed: picture, video)")
+    raise ValueError(f"unsupported media target_kind {target_kind!r} (allowed: picture, video, document, artifact)")
 
 
 def _validate_media(file, target_kind: str = "picture") -> None:

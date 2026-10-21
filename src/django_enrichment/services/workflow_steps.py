@@ -7,7 +7,8 @@
 Only `workflow_service` calls this, always under the run's row lock. A step is spawned as an ordinary task
 of its template, on the run's subject `run:<uid>` (resolved by the built-in `enrichment` adapter), with
 frozen params: run, step, channel, the brief, the approved values of the steps it needs and — for a
-regeneration — the previous value and the operator's instruction.
+regeneration — the previous value and the operator's instruction. A brief field whose inputs-schema property lists
+`x-steps` reaches only those steps (the cover's hints stay out of the research and the writing).
 """
 
 from decimal import Decimal
@@ -19,6 +20,7 @@ from django_enrichment.services import task_service
 from django_enrichment.workflow_spec import parse_steps
 
 RUN_PREFIX = "run:"
+STEPS_KEYWORD = "x-steps"
 
 
 def subject_ref(run: WorkflowRun) -> str:
@@ -56,7 +58,7 @@ def spawn(run: WorkflowRun, step: dict, *, instruction: str = "", previous: dict
         "run": run.uid,
         "step": step["key"],
         "channel": run.channel,
-        "brief": run.inputs,
+        "brief": brief_for(run, step["key"]),
         "inputs": _inputs(run, step),
         "instruction": instruction,
         "previous": previous,
@@ -71,6 +73,17 @@ def spawn(run: WorkflowRun, step: dict, *, instruction: str = "", previous: dict
         lane=TaskLane.NOW.value,
     )
     step.update(status=StepStatus.RUNNING.value, task_id=task.pk, proposal_id=None)
+
+
+def brief_for(run: WorkflowRun, key: str) -> dict:
+    """The run's brief without the fields meant for other steps (`x-steps`)."""
+    properties = (run.definition.inputs_schema or {}).get("properties") or {}
+    hidden = {
+        name
+        for name, prop in properties.items()
+        if isinstance(prop, dict) and STEPS_KEYWORD in prop and key not in (prop[STEPS_KEYWORD] or [])
+    }
+    return {name: value for name, value in (run.inputs or {}).items() if name not in hidden}
 
 
 def _inputs(run: WorkflowRun, step: dict) -> dict[str, dict]:

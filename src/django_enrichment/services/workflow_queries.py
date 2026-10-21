@@ -8,7 +8,7 @@ from typing import Any
 
 from django.db.models import QuerySet
 
-from django_enrichment.models import WorkflowDefinition, WorkflowRun
+from django_enrichment.models import ContentProposal, WorkflowDefinition, WorkflowRun
 from django_enrichment.services import workflow_steps
 from django_enrichment.workflow_spec import parse_steps
 
@@ -41,6 +41,14 @@ def get_run(uid: str) -> WorkflowRun:
     if run := WorkflowRun.objects.select_related("definition").filter(uid=uid).first():
         return run
     raise ValueError(f"workflow run {uid!r} not found")
+
+
+def step_proposal(uid: str, key: str) -> ContentProposal | None:
+    """The current output of step `key` of run `uid` (None when the run, the step or its output is missing)."""
+    run = WorkflowRun.objects.filter(uid=uid).first()
+    step = next((item for item in run.steps_state if item["key"] == key), None) if run else None
+    proposal_id = step.get("proposal_id") if step else None
+    return ContentProposal.objects.filter(pk=proposal_id).first() if proposal_id else None
 
 
 def describe(run: WorkflowRun) -> dict[str, Any]:

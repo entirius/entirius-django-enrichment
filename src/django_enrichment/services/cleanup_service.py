@@ -36,8 +36,9 @@ from django_enrichment.services import staging_store
 
 _logger = logging.getLogger("process")
 
-# The media `target_kind` (etap-08). Only picture proposals carry a staged file or an external undo
-# anchor, so only they need the per-row side-effect pass — the text majority is bulk-deleted.
+# The media `target_kind` (etap-08). Picture proposals carry an external undo anchor; they and every other row with a
+# staged file (a cover's bundle, a document's cover) need the per-row side-effect pass — the text majority is
+# bulk-deleted.
 _PICTURE_KIND = "picture"
 
 # Modules we've already warned about being unregistered — so a backlog of proposals for a removed
@@ -77,8 +78,9 @@ def _release_anchors_and_staged(aged) -> tuple[int, int]:
     pictures_gc = 0
     staged_deleted = 0
     chunk = enrichment_settings.ENRICHMENT_APPLY_BATCH_SIZE
-    for proposal in aged.filter(target_kind=_PICTURE_KIND).iterator(chunk_size=chunk):
-        adapter = _adapter_or_none(proposal.target_module)
+    media = aged.filter(Q(target_kind=_PICTURE_KIND) | ~Q(staged_file=""))
+    for proposal in media.iterator(chunk_size=chunk):
+        adapter = _adapter_or_none(proposal.target_module) if proposal.target_kind == _PICTURE_KIND else None
         hook = getattr(adapter, "release_undo_anchor", None) if adapter is not None else None
         if hook is not None:
             try:

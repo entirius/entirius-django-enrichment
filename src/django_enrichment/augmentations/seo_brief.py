@@ -17,12 +17,17 @@ The brief is per language: `context["language"]` (the kinds set it) goes to ever
    the scope is `category` (`params.seo_scope`; default for kind `write`, falls back to the subject without a
    category), else under the subject.
 
+Phrases the company never targets — the profile's `seo.exclude_terms` (a competitor's brand, a banned word), matched
+as whole words, case-insensitive — are left out of the seeds and the keyword ideas before the evaluation and out of
+the evidence a prompt shows (also of a remembered brief, against the current list).
+
 Every call charges the task (`toolbox_calls`); a toolbox failure or an answer that does not fit the boundary
 models (`seo_answers`) fails the subject with `SEO_BRIEF_<code>`; other errors propagate to the runner.
 """
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -50,6 +55,7 @@ from django_enrichment.augmentations.seo_prompts import (
     TOPIC_SEEDS_SYSTEM,
 )
 from django_enrichment.enums import MemoryKind
+from django_enrichment.kinds import seams
 from django_enrichment.kinds.base import SubjectError, fenced, join_prompts
 from django_enrichment.models import MemoryEntry
 from django_enrichment.services import memory_service, toolbox_calls, worker_service
@@ -96,7 +102,31 @@ def run(*, task: Any, subject_ref: str, context: dict) -> AugmentResult:
 def _block(task: Any, brief: dict) -> str:
     """The short brief; with `params.seo_detail == "full"` also the search evidence it rests on."""
     evidence = brief.get("evidence") if (task.params or {}).get("seo_detail") == "full" else None
-    return join_prompts(render(brief), render_evidence(evidence)) if evidence else render(brief)
+    if not evidence:
+        return render(brief)
+    return join_prompts(render(brief), render_evidence(without_excluded(evidence, excluded_terms(task))))
+
+
+def excluded_terms(task: Any) -> list[str]:
+    """The profile's `seo.exclude_terms` for the task's channel, lowercased."""
+    channel = (task.params or {}).get("channel", "")
+    terms = seams.profile_section(task, channel=channel, name="seo").get("exclude_terms") or []
+    return [term for term in (_phrase(str(item)) for item in terms) if term]
+
+
+def is_excluded(phrase: str, terms: list[str]) -> bool:
+    """Whether `phrase` contains one of `terms` as whole words."""
+    text = _phrase(phrase)
+    return any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) for term in terms)
+
+
+def without_excluded(evidence: dict, terms: list[str]) -> dict:
+    """`evidence` without the candidates and ideas that contain an excluded term (the SERP stays as it is)."""
+    if not terms:
+        return evidence
+    candidates = [item for item in evidence.get("candidates") or [] if not is_excluded(item["phrase"], terms)]
+    ideas = [item for item in evidence.get("ideas") or [] if not is_excluded(item["keyword"], terms)]
+    return {**evidence, "candidates": candidates, "ideas": ideas}
 
 
 def _subject(task: Any, subject_ref: str, context: dict) -> _Subject:
@@ -123,13 +153,14 @@ def _research(task: Any, context: dict, language: str) -> tuple[dict, Decimal | 
     spend = _Spend()
     item = fenced("item_context", _dumps(context))
     system = TOPIC_SEEDS_SYSTEM if "brief" in context else SEEDS_SYSTEM
-    seeds = _seeds(SeedsAnswer.model_validate(spend.take(_complete(task, "seeds", system, item))))
+    terms = excluded_terms(task)
+    seeds = _seeds(SeedsAnswer.model_validate(spend.take(_complete(task, "seeds", system, item))), terms)
     market = {"language_code": language} if language else {}
     volumes = _volumes(_items(spend.take(_seo(task, "search-volume/", {"keywords": seeds, **market}))))
     ideas = _items(spend.take(_seo(task, "keyword-ideas/", {"keywords": seeds, **market})))
     serps = _serps(task, _top(seeds, volumes), market, spend)
     evidence = {"candidates": [{"phrase": s, "search_volume": volumes.get(s)} for s in seeds]}
-    evidence |= {"ideas": _ideas(ideas), "serp": serps}
+    evidence = without_excluded(evidence | {"ideas": _ideas(ideas), "serp": serps}, terms)
     data = join_prompts(item, fenced("keyword_data", _dumps(evidence)))
     answer = EvaluateAnswer.model_validate(spend.take(_complete(task, "evaluate", EVALUATE_SYSTEM, data)))
     return _brief(answer, volumes | _volumes(ideas), language) | {"evidence": evidence}, spend.total()
@@ -172,9 +203,12 @@ def _items(data: Any) -> list[KeywordItem]:
     return SeoItems.model_validate(data).items
 
 
-def _seeds(answer: SeedsAnswer) -> list[str]:
-    """Phrases within the toolbox keyword limit; only when none fits, the overlong ones cut to whole words."""
-    phrases = list(dict.fromkeys(_phrase(seed) for seed in answer.seeds))
+def _seeds(answer: SeedsAnswer, terms: list[str] | None = None) -> list[str]:
+    """Phrases within the toolbox keyword limit, none with an excluded term; only when none fits, the overlong ones
+    cut to whole words."""
+    phrases = [
+        seed for seed in dict.fromkeys(_phrase(seed) for seed in answer.seeds) if not is_excluded(seed, terms or [])
+    ]
     seeds = [seed for seed in phrases if 0 < len(seed) <= SEED_MAX_CHARS]
     if not (seeds := seeds or list(dict.fromkeys(filter(None, map(_cut, phrases))))):
         raise SubjectError("SEO_BRIEF_NO_SEEDS", "no seed phrases proposed")

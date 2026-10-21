@@ -97,8 +97,17 @@
     },
     "headlines": {"$ref": "#/$defs/textSection"},
     "proof": {"$ref": "#/$defs/textSection"},
-    "seo": {"$ref": "#/$defs/textSection"},
+    "seo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text": {"$ref": "#/$defs/text"}, "exclude_terms": {"$ref": "#/$defs/lines"}}
+    },
     "checklists": {"$ref": "#/$defs/textSection"},
+    "visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text": {"$ref": "#/$defs/text"}, "never_show": {"$ref": "#/$defs/lines"}}
+    },
     "always_rules": {"$ref": "#/$defs/lines"},
     "rules": {
       "type": "array",
@@ -123,7 +132,7 @@
       "additionalProperties": {
         "type": "array",
         "items": {
-          "enum": ["brand", "persona", "facts", "tone", "language", "headlines", "proof", "seo", "checklists"]
+          "enum": ["brand", "persona", "facts", "tone", "language", "headlines", "proof", "seo", "checklists", "visual"]
         }
       }
     }
