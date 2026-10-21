@@ -14,9 +14,11 @@ Every state change happens under the run's row lock. Approved answers go to memo
 import logging
 
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from jsonschema import Draft202012Validator
 
+from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import ProposalStatus, RunStatus, StepGate, StepOutput, StepStatus, TaskStatus
 from django_enrichment.kinds import seams
 from django_enrichment.models import ContentProposal, EnrichmentTask, WorkflowDefinition, WorkflowRun
@@ -27,6 +29,9 @@ _REVIEWABLE = frozenset({StepStatus.REVIEW.value, StepStatus.FAILED.value})
 _TASK_CLOSED = frozenset({TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value})
 _CLOSED = frozenset({RunStatus.DONE.value, RunStatus.CANCELLED.value})
 CANCEL_REASON = "workflow run cancelled"
+# An inputs-schema property with this keyword (value: an adapter key) takes `{channel, ref}` of that module's subject,
+# which must exist and have a main picture — checked at start, not at the step that needs the picture.
+PICTURE_KEYWORD = "x-picture-of"
 
 
 def start(*, definition: str, inputs: dict, channel: str = "", user: AbstractBaseUser | None = None) -> WorkflowRun:
@@ -35,6 +40,7 @@ def start(*, definition: str, inputs: dict, channel: str = "", user: AbstractBas
     if found is None:
         raise ValueError(f"unknown or inactive workflow {definition!r}")
     _validate_inputs(found.inputs_schema, inputs)
+    _check_pictures(found.inputs_schema, inputs)
     with transaction.atomic():
         run = WorkflowRun.objects.create(
             definition=found,
@@ -53,6 +59,27 @@ def _validate_inputs(schema: dict, inputs: dict) -> None:
         raise ValueError(
             "; ".join(f"inputs.{'.'.join(map(str, err.path)) or '(root)'}: {err.message}" for err in errors)
         )
+
+
+def _check_pictures(schema: dict, inputs: dict) -> None:
+    for key, prop in (schema.get("properties") or {}).items():
+        module = prop.get(PICTURE_KEYWORD) if isinstance(prop, dict) else None
+        if module and isinstance(inputs.get(key), dict):
+            _check_picture(key, module, inputs[key])
+
+
+def _check_picture(key: str, module: str, value: dict) -> None:
+    """Raises `ValueError` unless `value` names a subject of `module` with a main picture."""
+    ref, channel = str(value.get("ref") or ""), str(value.get("channel") or "")
+    list_pictures = getattr(get_adapter(module), "list_pictures", None)
+    if list_pictures is None:
+        raise ValueError(f"inputs.{key}: module {module!r} cannot list pictures")
+    try:
+        pictures = list_pictures(subject_ref=ref, channel=channel)
+    except (ObjectDoesNotExist, LookupError) as exc:
+        raise ValueError(f"inputs.{key}: {ref!r} not found in channel {channel!r}") from exc
+    if not any(item.get("is_main") for item in pictures):
+        raise ValueError(f"inputs.{key}: {ref!r} has no main picture")
 
 
 def regenerate(uid: str, key: str, *, instruction: str = "") -> WorkflowRun:

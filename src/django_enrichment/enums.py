@@ -130,12 +130,14 @@ class StepOutput(models.TextChoices):
     ARTIFACT = "artifact", "Artifact (text or data)"
     QUESTIONS = "questions", "Questions for the operator"
     DOCUMENT = "document", "Document in the target module"
+    IMAGE = "image", "Image variants to pick from"
 
 
 STEP_OUTPUT_KINDS: dict[str, tuple[str, ...]] = {
     StepOutput.ARTIFACT.value: ("generate", "sections"),
     StepOutput.QUESTIONS.value: ("questions",),
     StepOutput.DOCUMENT.value: ("compose",),
+    StepOutput.IMAGE.value: ("cover",),
 }
 
 

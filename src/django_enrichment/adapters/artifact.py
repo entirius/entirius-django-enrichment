@@ -6,13 +6,15 @@
 
 An artifact is an intermediate step output (a brief's keywords, an outline, questions with answers) that
 lives only in its proposal: `target_kind="artifact"`, `subject_ref="run:<uid>"`, locator `{"step"}`, value
-`{"text"}` | `{"data"}` | `{"questions", "answers"}`. There is nothing to write, so `apply` only checks
-that a questions artifact is answered; approving it advances the run (`workflow_service`, called by
+`{"text"}` | `{"data"}` | `{"questions", "answers"}` | `{"variants", "chosen", "alt", "cover_text"}` (a cover, its pictures
+in a staged bundle). There is nothing to write, so `apply` only checks that a questions artifact is answered and a
+cover has its pick; approving it advances the run (`workflow_service`, called by
 `apply_service` for every `run:` proposal). An approved step cannot be undone → `revert` refuses.
 """
 
 from typing import Any
 
+from django_enrichment.kinds.cover import validate_pick
 from django_enrichment.kinds.questions import validate_answers
 
 KEY = "enrichment"
@@ -34,9 +36,12 @@ def read_current(*, subject_ref: str, target_kind: str, target_locator: dict) ->
 
 
 def apply(proposal: Any) -> None:
-    """Approve: a questions artifact needs its required answers (`AnswersMissingError` otherwise)."""
+    """Approve: a questions artifact needs its required answers (`AnswersMissingError`), a cover its pick
+    (`CoverNotChosenError`)."""
     if "questions" in proposal.proposed_value:
         validate_answers(proposal.proposed_value)
+    if "variants" in proposal.proposed_value:
+        validate_pick(proposal.proposed_value)
 
 
 def revert(proposal: Any) -> None:  # noqa: ARG001 — refusing is the contract

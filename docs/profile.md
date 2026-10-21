@@ -16,7 +16,8 @@ only the sections that differ. `data` follows `schemas/profile_schema.json` (`PR
  "facts": [{"id", "label", "value", "source", "verified_at", "note"}],      # the facts registry
  "tone": {"text", "ai_patterns": [str]},
  "language": {"text", "spellings": [{"wrong", "right"}], "glossary": [{"term", "translations": {lang: str}}]},
- "headlines": {"text"}, "proof": {"text"}, "seo": {"text"}, "checklists": {"text"},
+ "headlines": {"text"}, "proof": {"text"}, "seo": {"text", "exclude_terms": [str]}, "checklists": {"text"},
+ "visual": {"text", "never_show": [str]},
  "always_rules": [str],
  "rules": [{"id", "pattern", "flags", "message", "do", "dont", "active"}],   # deterministic lint (QA)
  "routing": {"<task type or kind>": ["brand", "tone", …]}}
@@ -34,6 +35,15 @@ markdown section replaces the instance's; the list sections add to it — `alway
 (deduplicated), `rules` and `facts` are joined by `id` with the overlay winning on the same id. A memory
 promotion into a channel overlay therefore never hides the instance rules or facts.
 
+**Never targeted.** `seo.exclude_terms` lists phrases and brand names the company never targets (a competitor's
+brand, a word it does not use). `seo_brief` drops every seed and keyword idea that contains one (whole words,
+case-insensitive) before its evaluation and from the evidence it shows; the text steps see the list under the SEO
+section ("Never target these phrases or brands").
+
+**Visual style.** `visual` describes how pictures look (photo or illustration, palette, people, framing) and what
+they never show. The `cover` kind appends it to every image prompt itself (`Style:` / `Never show:`), so a series stays
+consistent whatever the scenes say; a step that writes scenes reads it through `profile_sections`.
+
 **QA checks.** `rules`, `language.spellings`, the `facts` registry and `checklists.text` also drive the QA
 warnings on every proposal revision — `docs/api.md` § QA checks.
 
@@ -41,7 +51,7 @@ warnings on every proposal revision — `docs/api.md` § QA checks.
 
 | Step | Rule |
 |---|---|
-| sections | `routing[task_type]`, else `routing[kind]`, else the default: write → brand, persona, tone, language, facts; pick → brand, language; generate → brand, persona, tone, language, facts, proof, seo; questions → brand, facts; anything else → brand |
+| sections | `routing[task_type]`, else the step template's `profile_sections`, else `routing[kind]`, else the default: write → brand, persona, tone, language, facts; pick → brand, language; generate → brand, persona, tone, language, facts, proof, seo; questions → brand, facts; anything else → brand |
 | order | facts → brand → the rest in routing order (conflict priority, stated in the instructions) |
 | instructions | conflict note, `always_rules` (always, first), then each routed text section (`## Brand`, …) — operator-authored text is the instruction channel; it goes to the **system** message |
 | data | the facts registry as a markdown table (`id, label, value, source, verified_at`) — a fenced `company_profile` data block in the **user** message |

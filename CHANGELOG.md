@@ -7,6 +7,31 @@
   task naming none retries its whole scope. Same type, template and params, without `context_numbers`, plus
   `params.retry_of`. 409 `NOT_RETRYABLE` while it runs or when nothing failed, 409 `ALREADY_RUNNING` when it is in
   flight again, 400 for a workflow step. Access area `enrichment.proposals` (write), `enrichment_spawn` throttle.
+- Profile `seo.exclude_terms`: phrases and brand names the company never targets; `seo_brief` leaves them out of the
+  seeds and keyword ideas (whole words, case-insensitive) and of the evidence a prompt shows, also for a remembered
+  brief. The evaluation prompt refuses another company's brand phrases (own brands stay unless the context forbids
+  brand names).
+- Questions with `min_answers` (> 0): approval needs that many answers to any of the questions; the model's
+  `optional: false` no longer makes a question required (it did block an operator who wanted to leave it blank).
+  `min_answers: 0` and artifacts made before `min_answers` keep the required questions.
+- Kind `cover` and step output `image`: a cover picture from the scenes of a `generate` step (`scenes_step`, data
+  `{scenes: [{title, prompt, alt, must_show}]}`; `must_show` = what the article demands the picture gets right,
+  added to the image prompt as `Must show:`), one toolbox image job per scene (`instruct`, `aspect_ratio`, default 16:9), on
+  the main picture of the brief's product (`{channel, ref}`) or a blank canvas (the toolbox has no text-to-image). Code
+  ends every prompt: the profile's `visual` section, the brief's cover text or a ban on any text, a regeneration's
+  instruction. The pictures are staged as one bundle (zip, `services/image_bundle`); the artifact value is
+  `{variants, chosen, alt, cover_text}`; approval needs a pick (400 `COVER_NOT_CHOSEN`); an `image` step needs the review
+  gate. `GET proposals/{id}/staged-file/?variant=k` serves one picture. An approved artifact keeps its staged file
+  until the retention prune, which now drops every staged file (artifact, document), not only pictures'.
+- `compose` with `cover_step`: the picked picture travels as the document proposal's staged file and the value gains
+  `cover: {alt, file_name}` (the operator's alt, else the picked variant's).
+- Workflow inputs: a property with `x-picture-of: <adapter>` takes `{channel, ref}` of that module's subject, which
+  must exist and have a main picture — checked at start (400), not at the step that needs it.
+- Workflow inputs: a property with `x-steps: [step keys]` reaches only the briefs of those steps.
+- Augmentation `cover_product`: the facts (`build_context`) of the product the brief puts on the cover.
+- Profile section `visual` (`text`, `never_show`), also a routing target; step templates may pick the profile sections
+  a step reads (`profile_sections`), the profile's routing of the task type still wins. Seam `profile_section`.
+- Media jobs keep the unit's lease alive while they poll.
 - Kind `sections`: a long artifact written section by section from the approved outline (`outline_step`, default
   `outline`): one completion per numbered outline heading, each seeing every section written before it, then one
   for the lead and the closing; every section starts with `## <its outline title>`; a regeneration hands each

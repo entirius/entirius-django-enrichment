@@ -11,7 +11,7 @@ path (throttled + idempotent on `external_ref`); accept routes through the drift
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django_utils.api.v2_errors import ErrorDetail, ErrorResponse, raise_pydantic_as_drf
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from pydantic import ValidationError
@@ -27,6 +27,7 @@ from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle, IntakeThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf, serialize_proposal
 from django_enrichment.enums import ProposalStatus
+from django_enrichment.kinds.cover import CoverNotChosenError
 from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.schemas.requests import (
     BulkAcceptRequest,
@@ -45,7 +46,7 @@ from django_enrichment.schemas.responses import (
     ProposalListResponse,
     ProposalResponse,
 )
-from django_enrichment.services import proposal_service, staging_store, task_service
+from django_enrichment.services import image_bundle, proposal_service, staging_store, task_service
 
 _TAGS = ["Enrichment Proposals"]
 
@@ -79,6 +80,29 @@ def _answers_missing(exc: AnswersMissingError) -> Response:
         details=details,
     )
     return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _cover_not_chosen(exc: CoverNotChosenError) -> Response:
+    """400 `COVER_NOT_CHOSEN` (v2 error shape): a cover step approved before one of its variants was picked."""
+    body = ErrorResponse(
+        error="COVER_NOT_CHOSEN",
+        message="Choose one of the cover variants before approving.",
+        debug_id=uuid.uuid4().hex[:8],
+        details=[],
+    )
+    return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _variant_response(proposal, raw: str) -> HttpResponse:
+    """One picture of a cover's staged bundle; 404 for a bad index or a proposal that holds no bundle."""
+    if not raw.isdigit():
+        raise drf_exceptions.NotFound("no such variant")
+    with proposal.open_staged_file() as staged:
+        try:
+            image = image_bundle.read(staged, int(raw))
+        except LookupError as exc:
+            raise drf_exceptions.NotFound("no such variant") from exc
+    return HttpResponse(image, content_type="image/png")
 
 
 def _answers_issue(minimum: int) -> tuple[str, str]:
@@ -215,14 +239,25 @@ class ProposalViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Stream a proposal's staged binary (CMS before/after preview)",
+        summary="Stream a proposal's staged binary (CMS before/after preview); `variant` = one picture of a cover",
+        parameters=[
+            OpenApiParameter(
+                "variant",
+                int,
+                OpenApiParameter.QUERY,
+                required=False,
+                description="Index of a cover variant (a cover artifact stages its pictures as one bundle)",
+            )
+        ],
         responses={200: None, 404: None},
     )
-    def staged_file(self, request: Request, pk: int) -> FileResponse:
+    def staged_file(self, request: Request, pk: int) -> HttpResponse:
         """Serve the staged binary for review (admin-only). The CMS fetches this as the 'after' image."""
         proposal = _get_proposal_or_404(pk)
         if not proposal.staged_file or not staging_store.exists(proposal.staged_file):
             raise drf_exceptions.NotFound("no staged file for this proposal")
+        if (variant := request.query_params.get("variant")) is not None:
+            return _variant_response(proposal, variant)
         # open_file owns the handle (and re-validates the ref); FileResponse closes it when streamed.
         return FileResponse(staging_store.open_file(proposal.staged_file))
 
@@ -310,6 +345,8 @@ class ProposalViewSet(viewsets.ViewSet):
             proposal = proposal_service.accept(proposal, user=request.user, mode=data.mode)
         except AnswersMissingError as exc:
             return _answers_missing(exc)
+        except CoverNotChosenError as exc:
+            return _cover_not_chosen(exc)
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(_serialize(proposal))
