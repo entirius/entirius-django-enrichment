@@ -224,6 +224,7 @@ class TestFailureReasons:
         assert error["subject_ref"] == "SKU-2"
         assert error["code"] == "INTERNAL_ERROR"
         assert len(error["error_id"]) == 12
+        assert error["exception"] == "RuntimeError"  # the class only: it tells a bug from a broken disk
         assert "boom" not in json.dumps(task.errors)
 
     def test_toolbox_error_keeps_its_code(self, echo_worker):
@@ -231,6 +232,7 @@ class TestFailureReasons:
         task = self._run(["SKU-1"], toolbox_fail_on=["SKU-1"])
         assert task.status == TaskStatus.FAILED.value
         assert [e["code"] for e in task.errors] == ["TRANSLATOR_NOT_CONFIGURED"]
+        assert "exception" not in task.errors[0]
         assert "secret" not in json.dumps(task.errors)
 
     def test_resolve_failure_is_recorded_without_a_subject(self, echo_worker):
@@ -241,3 +243,4 @@ class TestFailureReasons:
         run_queue(task)
         task.refresh_from_db()
         assert [(e["subject_ref"], e["code"]) for e in task.errors] == [("", "INTERNAL_ERROR")]
+        assert task.errors[0]["exception"] == "ValueError"

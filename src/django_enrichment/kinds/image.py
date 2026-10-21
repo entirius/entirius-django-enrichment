@@ -6,11 +6,11 @@
 
 The source picture is `params.picture_ref` (a ref from the adapter's optional `list_pictures`), blank = the
 one `list_pictures` marks `is_main`. It is read with the optional `picture(*, subject_ref, channel, picture_ref)`
-(`LookupError` → `SubjectError("PICTURE_NOT_FOUND")`); an adapter without both extras fails the subject. The
-toolbox image job runs to completion inside this call (blocking, like `video`). Each output becomes one media
-draft `target_kind="picture"`, locator `{channel, source_picture_ref, operation, variant}` — the source ref tells
-the adapter which picture "replace" swaps; operation + variant keep the variants of one run apart (a re-run of
-the same operation supersedes its own variants only). The job's cost is split over the drafts.
+(`LookupError` → `SubjectError("PICTURE_NOT_FOUND")`, `OSError` → `"PICTURE_UNREADABLE"`); an adapter without both
+extras fails the subject. The toolbox image job runs to completion inside this call (blocking, like `video`). Each
+output becomes one media draft `target_kind="picture"`, locator `{channel, source_picture_ref, operation, variant}` —
+the source ref tells the adapter which picture "replace" swaps; operation + variant keep the variants of one run apart
+(a re-run of the same operation supersedes its own variants only). The job's cost is split over the drafts.
 """
 
 from typing import Any, Literal
@@ -19,7 +19,14 @@ from django.core.files.base import ContentFile
 from pydantic import BaseModel, Field, model_validator
 
 from django_enrichment.adapters import get_adapter
-from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError, join_prompts, with_cost
+from django_enrichment.kinds.base import (
+    Kind,
+    ProposalDraft,
+    SubjectError,
+    join_prompts,
+    unreadable_picture,
+    with_cost,
+)
 from django_enrichment.services import toolbox_calls
 
 TARGET_KIND = "picture"
@@ -88,6 +95,8 @@ def _read_picture(adapter: Any, subject_ref: str, channel: str, picture_ref: str
         return _extra(adapter, "picture")(subject_ref=subject_ref, channel=channel, picture_ref=picture_ref)
     except LookupError as exc:
         raise SubjectError("PICTURE_NOT_FOUND", f"picture {picture_ref!r} is not one of {subject_ref!r}'s") from exc
+    except OSError as exc:  # the file is gone from disk, or is not an image (PIL's UnidentifiedImageError)
+        raise unreadable_picture(subject_ref) from exc
 
 
 def _form(worker: Any, params: ImageParams) -> dict[str, str]:

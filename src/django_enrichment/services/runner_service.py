@@ -56,7 +56,11 @@ def _attempt(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: str)
         detail = toolbox_calls.failure_detail(exc)
         _logger.exception("runner failed on subject %r of task %s [%s] %s", subject_ref, task.pk, error_id, detail)
         return SubjectResult(
-            subject_ref, error_code=toolbox_calls.failure_code(exc), error_id=error_id, error_message=detail
+            subject_ref,
+            error_code=toolbox_calls.failure_code(exc),
+            error_id=error_id,
+            error_message=detail,
+            error_exception=toolbox_calls.failure_exception(exc),
         )
 
 

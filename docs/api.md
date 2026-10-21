@@ -356,6 +356,26 @@ Every task response carries `errors` (why subjects failed — stable codes, see 
 `proposal_counts` (`{status: n}` of the task's proposals, one grouped query per page), so the CMS can say
 "1 proposal to review", "applied" or "failed: translator not configured" without more calls.
 
+## Failure codes
+
+An `errors` entry is `{subject_ref, code, error_id, message?, exception?}`. `error_id` finds the trace in the `process`
+log. `message` is the toolbox's own capped reason; for a failure with no HTTP answer it is the client's fixed text
+(`Connection failed: ConnectError`). `exception` appears only with `INTERNAL_ERROR` and is the exception class name
+(`FileNotFoundError`), never its text. A toolbox error keeps the toolbox's code (`BUDGET_EXCEEDED`, `PROVIDER_ERROR`,
+...), or `TOOLBOX_HTTP_<status>` when it sent none. Codes a media run (`video`, `image`) can fail a subject with:
+
+| Code | Meaning |
+|---|---|
+| `PICTURE_NOT_FOUND` | the chosen `picture_ref` is not one of the subject's pictures |
+| `NO_PICTURE` | `image` kind: the subject has no main picture |
+| `PICTURE_UNREADABLE` | the picture's file cannot be read - gone from the worker's disk, or not an image |
+| `UPSTREAM_TIMEOUT` | the toolbox did not answer in time (a text call gets the same code) |
+| `TOOLBOX_HTTP_0` | the toolbox cannot be reached - refused, DNS, connection reset (a text call gets the same code) |
+| `AI_TOOLBOX_NOT_CONFIGURED` | the toolbox has no URL, API key or channel (`ENRICHMENT_VIDEO_TOOLBOX_*` / `AI_TOOLBOX_*`) |
+| `TIMEOUT` | the media job was not done within `ENRICHMENT_VIDEO_TIMEOUT_S` / `ENRICHMENT_IMAGE_TIMEOUT_S` |
+| `IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ... | the toolbox job failed with its own code |
+| `INTERNAL_ERROR` | anything else; `exception` names the class |
+
 ## Costs (contract A4 § 1)
 
 Post factum only — no estimates, no markup. Task responses carry `cost_usd` (sum of the known toolbox
