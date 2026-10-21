@@ -319,6 +319,15 @@ POST   /spawn-rules/{key}/run/       # run now (enrichment_spawn throttle)
 `200 {status:"no_candidates", task:null}` (the page-1 probe, after the dedup/cooldown filter,
 came back empty). `GET /tasks/?batch_key=` supports the CMS running indicator.
 
+The spawned task carries the rule's budget and key in `params`, next to the rule's `task_params`: `limit` (the rule's,
+else `ENRICHMENT_SPAWN_DEFAULT_LIMIT`), `cooldown_days` (the rule's, else `ENRICHMENT_SPAWN_COOLDOWN_DAYS`) and
+`spawn_rule` (the rule's `key`). They are bus-level keys: a worker's kind validation drops every param its kind does
+not declare, these three survive it (`gap_params.carried_params`; `limit` and `cooldown_days` non-negative integers,
+`spawn_rule` at most 64 characters, else 400). So a run plans at most `limit` subjects (`counts.proposed` reaching it
+closes the task), a target rejected or applied within `cooldown_days` stays out, and the task names its rule. A
+`gap`-scope task from `POST tasks/` takes `limit` and `cooldown_days` the same way; `spawn_rule` is a label, nothing
+reads it.
+
 ## Intake idempotency
 
 `POST /proposals/` is idempotent on `external_ref` (the worker's execution id): re-posting the same

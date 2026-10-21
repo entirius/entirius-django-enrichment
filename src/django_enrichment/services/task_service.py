@@ -33,7 +33,14 @@ from django_enrichment import augmentations
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import csv_import, lane_service, qa_auto_check, template_service, worker_service
+from django_enrichment.services import (
+    csv_import,
+    gap_params,
+    lane_service,
+    qa_auto_check,
+    template_service,
+    worker_service,
+)
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
 ERRORS_CAP = 20
@@ -59,15 +66,22 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
     return task
 
 
+def _carried_params(params: dict) -> dict:
+    """The bus-level keys of `params`, each validated by its owner: augmentations, the QA check, the gap budget."""
+    carried: dict = {}
+    for carry in (augmentations.carried_params, qa_auto_check.carried_params, gap_params.carried_params):
+        carried.update(carry(params))
+    return carried
+
+
 def resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
-    """Validated `(type, params)`; `params.augment` / `seo_scope` / `qa_check` and a template's key survive kind
-    validation."""
+    """Validated `(type, params)`; `params.augment` / `seo_scope` / `qa_check`, the gap budget (`limit`,
+    `cooldown_days`, `spawn_rule`) and a template's key survive kind validation."""
     if template:
         task_type, params = template_service.merge_into_task(template, task_type=task_type, params=params)
     if not task_type:
         raise ValueError("give a task type or a template")
-    carried = {**augmentations.carried_params(params), **qa_auto_check.carried_params(params)}
-    params = {**worker_service.validate_params(task_type, params), **carried}
+    params = {**worker_service.validate_params(task_type, params), **_carried_params(params)}
     return task_type, {**params, "template": template} if template else params
 
 
@@ -230,7 +244,7 @@ def resolve_gap_page(scope_spec: dict, params: dict, counts: dict, page: int = 1
     ``counts["proposed"]`` reaches it, the queue reads empty and the worker marks the task done)
     and ``cooldown_days`` (see ``_filter_gap_candidates``).
     """
-    limit = params.get("limit")
+    limit = params.get(gap_params.LIMIT)
     proposed = counts.get("proposed", 0)
     if limit is not None and proposed >= limit:
         return []
@@ -270,7 +284,7 @@ def _filter_gap_candidates(candidates: list[Any], *, target_module: str, params:
     if not refs:
         return candidates
 
-    cooldown = timedelta(days=params.get("cooldown_days", _spawn_cooldown_days()))
+    cooldown = timedelta(days=params.get(gap_params.COOLDOWN_DAYS, _spawn_cooldown_days()))
     now = timezone.now()
     blocked: set[tuple[str, str]] = set()
     rows = ContentProposal.objects.filter(

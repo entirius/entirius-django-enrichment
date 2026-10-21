@@ -50,6 +50,13 @@
   e.g. in the search phrases' SERP notes) becomes a quote or a newline in every string of the `{"data"}` value before
   intake. `\\"`, other backslash sequences, keys and `{"text"}` values are left as they are
   (`services/json_unescape.py`, applied in kind `generate`; regenerations pass through it too).
+- Spawn rules: a rule's run keeps its `limit`, `cooldown_days` and key. A worker's kind validation dropped them from
+  the task's params (`limit`, `cooldown_days`, `spawn_rule` are not params of any kind), so "Run now" planned every gap
+  on the rule instead of its `limit`, the rule's `cooldown_days` gave way to the module default and the task did not
+  name the rule that spawned it. The three keys now survive the validation (`services/gap_params.py`, carried like
+  `params.augment` and `qa_check`) and are checked on the way in: `limit` and `cooldown_days` non-negative integers,
+  `spawn_rule` at most 64 characters, else 400. A `gap`-scope task from `POST tasks/` takes `limit` and `cooldown_days`
+  the same way.
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
