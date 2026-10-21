@@ -19,6 +19,9 @@ A `{"data"}` value (a JSON step: metadata, search phrases) gets `LIMIT` warnings
 hints, so they are enforced here), then the rule, number and citation checks on each of its text fields; its
 warnings carry the field's `path` (`faq[2].answer`) and a span inside that field.
 
+A `{"text"}` value gets a `LIMIT` warning (no `path`) when its field has a character range in the `options.field_limits`
+of the `write` worker that produced it (`kinds.field_limits`) and the text is outside it.
+
 `revision_service` runs `check` for every new revision; `recheck` re-runs it on demand. Other values (a select,
 media) have no warnings.
 """
@@ -31,9 +34,12 @@ from collections.abc import Iterator
 from django.db import transaction
 from django.utils import timezone
 
+from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import REVISABLE_STATUSES
+from django_enrichment.kinds import extras
+from django_enrichment.kinds.field_limits import FieldLimit, configured
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import profile_service, proposal_scope, qa_numbers
+from django_enrichment.services import profile_service, proposal_scope, qa_numbers, worker_service
 from django_enrichment.services.revise_values import RevisionNotApplicableError
 
 _logger = logging.getLogger("process")
@@ -62,7 +68,7 @@ def check(proposal: ContentProposal, value: dict) -> list[dict]:
     profile = profile_service.merged(proposal_scope.channel_of(proposal))
     allowed = allowed_numbers(proposal, profile)
     if text is not None:
-        return list(text_warnings(text, profile, allowed))[:MAX_WARNINGS]
+        return [*field_limit_warnings(proposal, text), *text_warnings(text, profile, allowed)][:MAX_WARNINGS]
     return data_warnings(value["data"], _schema_of(proposal), profile, allowed)[:MAX_WARNINGS]
 
 
@@ -79,6 +85,22 @@ def text_warnings(text: str, profile: dict, allowed: set[str]) -> Iterator[dict]
     yield from rule_warnings(text, profile)
     yield from number_warnings(text, allowed)
     yield from fact_citation_warnings(text, profile)
+
+
+def field_limit_warnings(proposal: ContentProposal, text: str) -> Iterator[dict]:
+    """`LIMIT` when `text` is outside the character range its field has in the producing worker's options."""
+    if (limit := _field_limit(proposal)) is None:
+        return
+    for warning in _length_warnings(text, limit.json_schema(), ""):
+        yield {key: value for key, value in warning.items() if key != "path"}
+
+
+def _field_limit(proposal: ContentProposal) -> FieldLimit | None:
+    worker = worker_service.from_source(proposal.source)
+    if worker is None or not (limits := configured(worker.options)):
+        return None
+    key = extras.field_key(get_adapter(proposal.target_module), proposal.target_locator or {})
+    return limits.get(key) if key else None
 
 
 def limit_warnings(value: object, schema: dict, path: str = "") -> Iterator[dict]:

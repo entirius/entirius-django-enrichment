@@ -37,14 +37,15 @@ src/django_enrichment/
 │                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py
+│                       # generate / sections / questions / compose / image, extras.py, step.py (step params), seams.py,
+│                       # field_limits.py (leaf: the `{min, max}` character range of a `write` field)
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
 │   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
-│                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
+│                       # cleanup_service, spawn_rule_service (+ gap_params), csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
@@ -132,7 +133,9 @@ flow: `docs/api.md` § Revisions and corrections.
 values, one call per subject) read the optional adapter extras through `kinds/extras.py` (`describe_fields`,
 `channel_languages`, `make_locator`, `field_key`, `build_context`, each with a fallback; catalog memoised per task); a kind refuses a subject with
 `SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
-`template` merges them (`template_service.merge_into_task`). Details: `docs/api.md` § Generic kinds, § Templates.
+`template` merges them (`template_service.merge_into_task`). `write` takes `options.field_limits` (a `{min, max}` character
+range per field, `kinds/field_limits.py`): shown in the prompt, one corrective call for a short field outside it, `LIMIT`
+warning from QA (`docs/api.md` § Field length). Details: `docs/api.md` § Generic kinds, § Templates.
 
 **Workflows:** a `WorkflowDefinition` lists steps (templates) with `needs` and gates (`review` | `auto`); a
 `WorkflowRun` freezes them in `steps_state`. Each step is a task on the subject `run:<uid>`; its output is a
@@ -291,6 +294,10 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
   pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
   Details: `docs/api.md` § Costs.
+- **`limit` / `cooldown_days` / `spawn_rule` survive kind validation only because `task_service` carries them**
+  (`gap_params.carried_params`, validated). A spawn rule's run sets all three; without them the gap resolve sees no
+  budget and no cooldown ("Run now" takes every gap). A new bus-level param joins the carriers in
+  `task_service._carried_params`, never a special case in `spawn`.
 - **`params.augment` / `seo_scope` survive kind validation only because `task_service` re-adds them**
   (`augmentations.carried_params`, validated against the registry). `seo_brief` SEO calls go through
   `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.

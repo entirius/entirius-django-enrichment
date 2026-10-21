@@ -50,6 +50,24 @@
   e.g. in the search phrases' SERP notes) becomes a quote or a newline in every string of the `{"data"}` value before
   intake. `\\"`, other backslash sequences, keys and `{"text"}` values are left as they are
   (`services/json_unescape.py`, applied in kind `generate`; regenerations pass through it too).
+- Spawn rules: a rule's run keeps its `limit`, `cooldown_days` and key. A worker's kind validation dropped them from
+  the task's params (`limit`, `cooldown_days`, `spawn_rule` are not params of any kind), so "Run now" planned every gap
+  on the rule instead of its `limit`, the rule's `cooldown_days` gave way to the module default and the task did not
+  name the rule that spawned it. The three keys now survive the validation (`services/gap_params.py`, carried like
+  `params.augment` and `qa_check`) and are checked on the way in: `limit` and `cooldown_days` non-negative integers,
+  `spawn_rule` at most 64 characters, else 400. A `gap`-scope task from `POST tasks/` takes `limit` and `cooldown_days`
+  the same way.
+- Kind `write`: numeric length limits for short fields. A prose rule ("140-160 characters") is not enough, models do not
+  count characters: five meta descriptions written for real products averaged 195 characters, none within 120-160.
+  Worker `options.field_limits` (`{"meta_description": {"min": 120, "max": 160}}`, `max` required, `min` default 0)
+  is shown to the model next to the field (prompt line and answer schema hint). A short field (`max` up to 300) that
+  comes back outside its range is rewritten once: one more completion for just those fields (the current values, each
+  range and the distance from it), the result is kept even if it is still outside, so a subject × language costs at
+  most two completions, both charged to the task and shared by the drafts. A failed rewrite keeps the first values,
+  never fails the subject and leaves the drafts' cost unknown; the queue log has `event=field_rewrite` /
+  `field_rewrite_failed`. QA: a text proposal outside the range its field has in the producing worker's options gets a
+  `LIMIT` warning (`195 characters, the limit is 160.`), on intake and on every revision, so review shows what the
+  rewrite missed. Long fields (descriptions) are never rewritten.
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject

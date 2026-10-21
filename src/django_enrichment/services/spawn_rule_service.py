@@ -20,7 +20,7 @@ from django.db.models import Q, QuerySet
 
 from django_enrichment.enums import TaskStatus
 from django_enrichment.models import EnrichmentTask, SpawnRule
-from django_enrichment.services import task_service
+from django_enrichment.services import gap_params, task_service
 
 # Prefix of the deterministic per-rule batch_key. Owned here — the CMS never composes keys.
 GAP_RULE_BATCH_PREFIX = "gaprule:"
@@ -135,9 +135,9 @@ def run_rule(rule: SpawnRule, *, requested_by: AbstractBaseUser | None = None) -
     }
     params = {
         **rule.task_params,
-        "limit": rule.limit if rule.limit is not None else _spawn_default_limit(),
-        "cooldown_days": rule.cooldown_days if rule.cooldown_days is not None else _spawn_cooldown_days(),
-        "spawn_rule": rule.key,
+        gap_params.LIMIT: rule.limit if rule.limit is not None else _spawn_default_limit(),
+        gap_params.COOLDOWN_DAYS: rule.cooldown_days if rule.cooldown_days is not None else _spawn_cooldown_days(),
+        gap_params.SPAWN_RULE: rule.key,
     }
     if not task_service.resolve_gap_page(scope_spec, params, counts={}, page=1):
         return None
