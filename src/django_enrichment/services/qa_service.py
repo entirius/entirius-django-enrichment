@@ -198,12 +198,13 @@ def number_warnings(text: str, allowed: set[str]) -> Iterator[dict]:
 
 
 def fact_citation_warnings(text: str, profile: dict) -> Iterator[dict]:
-    """One warning per distinct `(profile fact: <id>)` whose id is not in the profile's facts registry."""
+    """One warning per distinct `(profile fact: <id>)` whose id is not in the profile's facts registry (quotes or
+    backticks around the id, as markdown output often has them, are not part of it)."""
     known = {fact.get("id") for fact in profile.get("facts", [])}
     seen: set[str] = set()
     for match in FACT_CITATION.finditer(text):
-        cited = match.group(1).strip()
-        if cited in known or cited in seen:
+        cited = match.group(1).strip().strip("`'\"").strip()
+        if not cited or cited in known or cited in seen:
             continue
         seen.add(cited)
         span = _span(match.start(), match.end(), match.group())
@@ -219,7 +220,9 @@ def _fact_message(cited: str, *, empty: bool) -> str:
 def allowed_numbers(proposal: ContentProposal, profile: dict) -> set[str]:
     """Numbers of the facts registry, the task's source params (`SOURCE_PARAMS`, never its configuration)
     and the subject's stored context numbers."""
-    facts = " ".join(f"{fact.get('label', '')} {fact.get('value', '')}" for fact in profile.get("facts", []))
+    facts = " ".join(
+        f"{fact.get('id', '')} {fact.get('label', '')} {fact.get('value', '')}" for fact in profile.get("facts", [])
+    )
     params = (proposal.task.params if proposal.task else None) or {}
     source = json.dumps([params.get(key) for key in SOURCE_PARAMS], ensure_ascii=False)
     stored = params.get(CONTEXT_NUMBERS, {}).get(proposal.subject_ref, [])

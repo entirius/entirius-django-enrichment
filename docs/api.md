@@ -104,7 +104,7 @@ value.
 | Code | Raised when |
 |---|---|
 | `rule` | an active profile `rules` pattern matches (`flags` `i m s x`), or a `language.spellings` `wrong` occurs (whole word, any case). A pattern that does not compile disables only its rule and logs a warning |
-| `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`label`, `value`), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
+| `NUMBER_NOT_IN_FACTS` | a number of the text matches no number of the profile facts registry (`id`, `label`, `value` — a citation's id never counts as a new number), the task's source params (`prompt`, `brief`, `inputs` only — configuration such as `limit` never counts) or the subject's stored context numbers — once per distinct number |
 | `FACT_NOT_IN_PROFILE` | the text cites `(profile fact: <id>)` and `<id>` is not an `id` of the merged profile's `facts` registry — once per distinct id, `span` on the whole citation. The format is a contract with the workflow prompts that ask the model to label claims with their source (the `id` column of the facts table in the prompt); case and the whitespace around the colon and the id are free, the id is compared exactly. An empty registry flags every citation |
 | `checklist` | `check_standard` found a failed checklist item (`span` only when the quoted words occur in the text) |
 | `LIMIT` | a `{"data"}` field breaks the step's `json_schema`: a string over `maxLength` / under `minLength`, an array over `maxItems` (`span` null). The schema goes to the provider with its limits as hints only (`toolbox_calls.provider_schema`), so they are enforced here |

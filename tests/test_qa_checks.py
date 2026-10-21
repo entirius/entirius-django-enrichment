@@ -264,7 +264,9 @@ class TestFactCitations:
         ]
         assert proposal.revisions.get().warnings == proposal.warnings
 
-    @pytest.mark.parametrize("citation", ["(profile fact: f1)", "(Profile Fact :  f2 )", "(profile fact:f1)"])
+    @pytest.mark.parametrize(
+        "citation", ["(profile fact: f1)", "(Profile Fact :  f2 )", "(profile fact:f1)", "(profile fact: `f1`)"]
+    )
     def test_an_id_of_the_registry_passes(self, fake_adapter, citation):
         _profile()
         assert _proposal(f"Saves energy {citation}.").warnings == []
@@ -302,6 +304,10 @@ class TestFactCitations:
         [warning] = _proposal(text).warnings
         assert warning["message"] == 'The profile fact "x" is not in the company profile\'s facts registry.'
         assert warning["span"] == {"start": 6, "end": 6 + len(citation), "text": citation}
+
+    def test_a_number_in_a_cited_id_of_the_registry_is_not_a_new_number(self, fake_adapter):
+        _profile(facts=[{**FACTS[0], "id": "bag-4-weeks"}])
+        assert _proposal("Pack early (profile fact: bag-4-weeks).").warnings == []
 
     def test_ids_are_compared_exactly(self, fake_adapter):
         _profile()
