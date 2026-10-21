@@ -21,7 +21,7 @@ from django_enrichment.augmentations.seo_prompts import SEED_MAX_CHARS
 from django_enrichment.kinds import SubjectError, seams, step
 from django_enrichment.kinds.base import fenced
 from django_enrichment.models import ContentProposal, EnrichmentTask, MemoryEntry
-from django_enrichment.services import task_service, template_service
+from django_enrichment.services import profile_service, task_service, template_service
 
 TASKS = "/api/enrichment/v2/admin/tasks/"
 SEO = "http://toolbox.test/api/ai-seo/v2/admin/shop"
@@ -534,3 +534,31 @@ class TestSeoDetail:
     def test_unknown_volume_shows_as_a_question_mark(self):
         evidence = {"candidates": [{"phrase": "sofa", "search_volume": None}], "ideas": [], "serp": {}}
         assert "- sofa: ?" in seo_brief.render_evidence(evidence)
+
+
+class TestExcludedTerms:
+    """The profile's `seo.exclude_terms` keep a phrase out of the research and out of the evidence a prompt shows."""
+
+    def test_whole_words_case_insensitive(self):
+        assert seo_brief.is_excluded("LOVI smoczek", ["lovi"])
+        assert seo_brief.is_excluded("smoczek  lovi prime", ["lovi prime"])
+        assert not seo_brief.is_excluded("lovingly made sofa", ["lovi"])
+
+    def test_research_leaves_them_out_of_seeds_ideas_and_evidence(self, writer, django_capture_on_commit_callbacks):
+        profile_service.save_profile(channel="", data={"seo": {"exclude_terms": ["grey", "Bed"]}})
+        _, router, routes = _run_task(django_capture_on_commit_callbacks, params={"seo_detail": "full"})
+        assert "grey linen sofa" not in _sent(routes["volume"])[0]["keywords"]
+        evaluate = _by_selector(router, "enrichment.seo_brief.evaluate")[0]["messages"][-1]["content"]
+        assert "linen sofa bed" not in evaluate and "grey linen sofa" not in evaluate
+        prompt = _write_prompts(router)[0]
+        assert "- linen sofa bed:" not in prompt and "- linen sofa: 900" in prompt
+
+    def test_a_remembered_brief_is_shown_against_the_current_list(self, writer, django_capture_on_commit_callbacks):
+        _run_task(django_capture_on_commit_callbacks)
+        profile_service.save_profile(channel="", data={"seo": {"exclude_terms": ["bed"]}})
+        task = EnrichmentTask.objects.create(
+            type="pim.writer", params={"channel": "default", "seo_detail": "full"}, scope_spec={"module": "pim"}
+        )
+        with mock_toolbox():
+            result = seo_brief.run(task=task, subject_ref="SKU-1", context=PL)
+        assert "linen sofa bed" not in result.block and "- linen sofa: 900" in result.block

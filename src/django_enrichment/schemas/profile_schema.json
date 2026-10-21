@@ -97,7 +97,11 @@
     },
     "headlines": {"$ref": "#/$defs/textSection"},
     "proof": {"$ref": "#/$defs/textSection"},
-    "seo": {"$ref": "#/$defs/textSection"},
+    "seo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text": {"$ref": "#/$defs/text"}, "exclude_terms": {"$ref": "#/$defs/lines"}}
+    },
     "checklists": {"$ref": "#/$defs/textSection"},
     "visual": {
       "type": "object",

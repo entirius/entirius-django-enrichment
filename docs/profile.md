@@ -16,7 +16,7 @@ only the sections that differ. `data` follows `schemas/profile_schema.json` (`PR
  "facts": [{"id", "label", "value", "source", "verified_at", "note"}],      # the facts registry
  "tone": {"text", "ai_patterns": [str]},
  "language": {"text", "spellings": [{"wrong", "right"}], "glossary": [{"term", "translations": {lang: str}}]},
- "headlines": {"text"}, "proof": {"text"}, "seo": {"text"}, "checklists": {"text"},
+ "headlines": {"text"}, "proof": {"text"}, "seo": {"text", "exclude_terms": [str]}, "checklists": {"text"},
  "visual": {"text", "never_show": [str]},
  "always_rules": [str],
  "rules": [{"id", "pattern", "flags", "message", "do", "dont", "active"}],   # deterministic lint (QA)
@@ -34,6 +34,11 @@ as a `ProfileVersion` (`version`, `data`, `note`, `created_by`); restore = save 
 markdown section replaces the instance's; the list sections add to it — `always_rules` are concatenated
 (deduplicated), `rules` and `facts` are joined by `id` with the overlay winning on the same id. A memory
 promotion into a channel overlay therefore never hides the instance rules or facts.
+
+**Never targeted.** `seo.exclude_terms` lists phrases and brand names the company never targets (a competitor's
+brand, a word it does not use). `seo_brief` drops every seed and keyword idea that contains one (whole words,
+case-insensitive) before its evaluation and from the evidence it shows; the text steps see the list under the SEO
+section ("Never target these phrases or brands").
 
 **Visual style.** `visual` describes how pictures look (photo or illustration, palette, people, framing) and what
 they never show. The `cover` kind appends it to every image prompt itself (`Style:` / `Never show:`), so a series stays

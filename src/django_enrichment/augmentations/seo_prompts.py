@@ -50,6 +50,9 @@ Method — intent before volume:
 5. Choose exactly one primary phrase and one or two secondary phrases, each a phrase the page can honestly
    deliver on; never a phrase the content does not cover.
 6. Note gaps: questions and subtopics the results or people-also-ask cover that the page should answer.
+7. Brand phrases: a candidate with another company's brand or product-line name belongs to that brand's searchers —
+   never choose it. The company's own brands (the context or company profile names them) are fine, unless the
+   context asks for no brand names at all.
 Explain in serp_notes which candidates you rejected and why (intent mismatch, winnability), briefly."""
 
 INTENTS = ["informational", "commercial", "transactional", "navigational"]

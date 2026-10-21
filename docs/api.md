@@ -147,7 +147,9 @@ block to its prompt — the model never calls a tool itself. Registry: `register
 `django_enrichment.augmentations`, `fn(*, task, subject_ref, context) -> AugmentResult(block, cost,
 memory_writes)`; `run_all` fences each block under its key and saves the memory writes. Built in: `seo_brief` and
 `cover_product` (the `build_context` facts of the product in `brief.cover_product`, none without one; an unknown
-product fails the subject `PRODUCT_NOT_FOUND`), registered in `EnrichmentConfig.ready()`.
+product fails the subject `PRODUCT_NOT_FOUND`), registered in `EnrichmentConfig.ready()`. The profile's
+`seo.exclude_terms` keep phrases out of `seo_brief` (seeds, keyword ideas, the shown evidence; a remembered brief is
+shown against the current list).
 
 - **Enabling:** `params.augment: [keys]` on `POST tasks/` or in a template's `params` (templates may preset it).
   Keys are validated against the registry — an unknown key → 400 (a template with one is refused too).

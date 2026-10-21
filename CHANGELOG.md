@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Profile `seo.exclude_terms`: phrases and brand names the company never targets; `seo_brief` leaves them out of the
+  seeds and keyword ideas (whole words, case-insensitive) and of the evidence a prompt shows, also for a remembered
+  brief. The evaluation prompt refuses another company's brand phrases (own brands stay unless the context forbids
+  brand names).
 - Questions with `min_answers` (> 0): approval needs that many answers to any of the questions; the model's
   `optional: false` no longer makes a question required (it did block an operator who wanted to leave it blank).
   `min_answers: 0` and artifacts made before `min_answers` keep the required questions.

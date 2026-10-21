@@ -44,6 +44,7 @@ _LISTS = {
     "brand": [("differentiators", "Differentiators"), ("never_say", "Never say")],
     "tone": [("ai_patterns", "Avoid")],
     "visual": [("never_show", "Never show")],
+    "seo": [("exclude_terms", "Never target these phrases or brands")],
 }
 _FACT_COLUMNS = ["id", "label", "value", "source", "verified_at"]
 
