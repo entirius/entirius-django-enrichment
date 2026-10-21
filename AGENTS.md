@@ -44,7 +44,7 @@ src/django_enrichment/
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
-│                       # cleanup_service, spawn_rule_service, csv_import, worker_service, runner_service,
+│                       # cleanup_service, spawn_rule_service (+ gap_params), csv_import, worker_service, runner_service,
 │                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
 │                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
 │                       # template_service, catalog_service, cost_service (cost ledger),
@@ -291,6 +291,10 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
   pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
   Details: `docs/api.md` § Costs.
+- **`limit` / `cooldown_days` / `spawn_rule` survive kind validation only because `task_service` carries them**
+  (`gap_params.carried_params`, validated). A spawn rule's run sets all three; without them the gap resolve sees no
+  budget and no cooldown ("Run now" takes every gap). A new bus-level param joins the carriers in
+  `task_service._carried_params`, never a special case in `spawn`.
 - **`params.augment` / `seo_scope` survive kind validation only because `task_service` re-adds them**
   (`augmentations.carried_params`, validated against the registry). `seo_brief` SEO calls go through
   `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.
