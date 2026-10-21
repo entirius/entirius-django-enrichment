@@ -9,11 +9,15 @@
 - `NUMBER_NOT_IN_FACTS`: a number that is neither in the profile facts registry nor in the task's source
   context — its params (prompt, brief, inputs) and the context numbers the kinds stored per subject
   (`params.context_numbers`, see `record_context`).
+- `FACT_NOT_IN_PROFILE`: a citation `(profile fact: <id>)` whose `<id>` is not an `id` of the merged profile's
+  facts registry, once per distinct id. The citation format is a contract with the workflow prompts that ask the
+  model to label claims with their source (the id column of the facts table, `profile_context`): a prompt that
+  changes it must change `FACT_CITATION` with it. Case and the whitespace around the colon and the id are free.
 
 A `{"data"}` value (a JSON step: metadata, search phrases) gets `LIMIT` warnings against the step's
 `params.json_schema` (`maxLength` / `minLength` of strings, `maxItems` of arrays — the provider only sees them as
-hints, so they are enforced here), then the rule and number checks on each of its text fields; its warnings carry the
-field's `path` (`faq[2].answer`) and a span inside that field.
+hints, so they are enforced here), then the rule, number and citation checks on each of its text fields; its
+warnings carry the field's `path` (`faq[2].answer`) and a span inside that field.
 
 `revision_service` runs `check` for every new revision; `recheck` re-runs it on demand. Other values (a select,
 media) have no warnings.
@@ -36,12 +40,14 @@ _logger = logging.getLogger("process")
 
 RULE = "rule"
 NUMBER_NOT_IN_FACTS = "NUMBER_NOT_IN_FACTS"
+FACT_NOT_IN_PROFILE = "FACT_NOT_IN_PROFILE"
 LIMIT = "LIMIT"
 CHECKLIST = "checklist"
 CONTEXT_NUMBERS = "context_numbers"
 SOURCE_PARAMS = ("prompt", "brief", "inputs")
 MAX_WARNINGS = 50
 _FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL, "x": re.VERBOSE}
+FACT_CITATION = re.compile(r"\(\s*profile\s+fact\s*:[^\S\n]*([^)\s][^)\n]*?)[^\S\n]*\)", re.IGNORECASE)
 
 
 def text_of(value: dict) -> str | None:
@@ -56,7 +62,7 @@ def check(proposal: ContentProposal, value: dict) -> list[dict]:
     profile = profile_service.merged(proposal_scope.channel_of(proposal))
     allowed = allowed_numbers(proposal, profile)
     if text is not None:
-        return [*rule_warnings(text, profile), *number_warnings(text, allowed)][:MAX_WARNINGS]
+        return list(text_warnings(text, profile, allowed))[:MAX_WARNINGS]
     return data_warnings(value["data"], _schema_of(proposal), profile, allowed)[:MAX_WARNINGS]
 
 
@@ -64,9 +70,15 @@ def data_warnings(data: dict, schema: dict, profile: dict, allowed: set[str]) ->
     """The schema limits of a data value, then the text checks of each of its text fields (with their path)."""
     warnings = list(limit_warnings(data, schema))
     for path, text in text_fields(data):
-        found = [*rule_warnings(text, profile), *number_warnings(text, allowed)]
-        warnings += [{**warning, "path": path} for warning in found]
+        warnings += [{**warning, "path": path} for warning in text_warnings(text, profile, allowed)]
     return warnings
+
+
+def text_warnings(text: str, profile: dict, allowed: set[str]) -> Iterator[dict]:
+    """The rule, number and fact-citation checks of one text."""
+    yield from rule_warnings(text, profile)
+    yield from number_warnings(text, allowed)
+    yield from fact_citation_warnings(text, profile)
 
 
 def limit_warnings(value: object, schema: dict, path: str = "") -> Iterator[dict]:
@@ -185,10 +197,32 @@ def number_warnings(text: str, allowed: set[str]) -> Iterator[dict]:
         yield {"code": NUMBER_NOT_IN_FACTS, "message": message, "span": _span(token.start, token.end, token.text)}
 
 
+def fact_citation_warnings(text: str, profile: dict) -> Iterator[dict]:
+    """One warning per distinct `(profile fact: <id>)` whose id is not in the profile's facts registry (quotes or
+    backticks around the id, as markdown output often has them, are not part of it)."""
+    known = {fact.get("id") for fact in profile.get("facts", [])}
+    seen: set[str] = set()
+    for match in FACT_CITATION.finditer(text):
+        cited = match.group(1).strip().strip("`'\"").strip()
+        if not cited or cited in known or cited in seen:
+            continue
+        seen.add(cited)
+        span = _span(match.start(), match.end(), match.group())
+        yield {"code": FACT_NOT_IN_PROFILE, "message": _fact_message(cited, empty=not known), "span": span}
+
+
+def _fact_message(cited: str, *, empty: bool) -> str:
+    if empty:
+        return f'The company profile has no facts; "{cited}" cannot be cited from it.'
+    return f'The profile fact "{cited}" is not in the company profile\'s facts registry.'
+
+
 def allowed_numbers(proposal: ContentProposal, profile: dict) -> set[str]:
     """Numbers of the facts registry, the task's source params (`SOURCE_PARAMS`, never its configuration)
     and the subject's stored context numbers."""
-    facts = " ".join(f"{fact.get('label', '')} {fact.get('value', '')}" for fact in profile.get("facts", []))
+    facts = " ".join(
+        f"{fact.get('id', '')} {fact.get('label', '')} {fact.get('value', '')}" for fact in profile.get("facts", [])
+    )
     params = (proposal.task.params if proposal.task else None) or {}
     source = json.dumps([params.get(key) for key in SOURCE_PARAMS], ensure_ascii=False)
     stored = params.get(CONTEXT_NUMBERS, {}).get(proposal.subject_ref, [])

@@ -25,6 +25,11 @@
   (`maxLength` / `minLength` / `maxItems`, which the provider only sees as hints), then the rule and number checks on
   every text field; warnings carry `path` (`faq[2].answer`, null for a text value) — a new nullable field of
   `QaWarning` in the API.
+- QA flags a profile fact citation that is not in the facts registry: `FACT_NOT_IN_PROFILE` for every
+  `(profile fact: <id>)` whose `<id>` is not an `id` of the merged profile's `facts` (once per distinct id, span on the
+  citation; with an empty registry every citation is flagged). The model had invented a "From the company profile"
+  section for an empty profile and downstream steps treated it as ground truth. The format is now a contract between
+  workflow prompts and QA (`docs/api.md` § QA checks).
 
 ## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
