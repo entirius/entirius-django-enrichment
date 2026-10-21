@@ -6,7 +6,9 @@
 
 One completion from the brief, the needed steps' values and the profile/augmentation context
 (`kinds.step`). `markdown` / `text` → value `{"text"}`; `json` → value `{"data"}` shaped by `json_schema`
-(an object; any object when absent). The draft is an artifact of the built-in `enrichment` adapter.
+(an object; any object when absent) with the strings' double-escaped quotes and newlines restored — the one place
+a model's JSON becomes a `{"data"}` value; `text` values are never touched. The draft is an artifact of the built-in
+`enrichment` adapter.
 """
 
 from typing import Any, Literal
@@ -16,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from django_enrichment.kinds.base import Kind, ProposalDraft, with_cost
 from django_enrichment.kinds.step import StepParams, build_prompt, locator
 from django_enrichment.services import toolbox_calls
+from django_enrichment.services.json_unescape import unescape_strings
 
 TARGET_KIND = "artifact"
 _TEXT_SCHEMA = {
@@ -76,4 +79,6 @@ def _schema(params: GenerateParams) -> dict:
 
 
 def _value(params: GenerateParams, answer: dict) -> dict:
-    return {"data": answer} if params.format == "json" else {"text": str(answer.get("text", ""))}
+    if params.format == "json":
+        return {"data": unescape_strings(answer)}
+    return {"text": str(answer.get("text", ""))}

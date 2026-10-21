@@ -89,5 +89,10 @@ def respond(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={**CANNED_COMPLETION, "parsed": parsed, "cost": COST})
 
 
+def respond_with(parsed: dict):
+    """A toolbox answer that always carries `parsed` (what a model wrote, escapes and all)."""
+    return lambda request: httpx.Response(200, json={**CANNED_COMPLETION, "parsed": parsed, "cost": COST})
+
+
 def sent(route) -> list[dict]:
     return [json.loads(call.request.content) for call in route.calls]
