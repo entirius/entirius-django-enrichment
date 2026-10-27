@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 — 2026-10-27
 - Kind `write`: a field value that repeats the whole answer object (`{"description": "<p>…</p>"}`, or with `text`
   as the key) is replaced by the string inside it, in the first answer and in the corrective rewrite, so the proposal
   and the `field_limits` check see the real text. Any other value, braces in a real text included, is left as it
@@ -97,17 +97,11 @@
   `field_rewrite_failed`. QA: a text proposal outside the range its field has in the producing worker's options gets a
   `LIMIT` warning (`195 characters, the limit is 160.`), on intake and on every revision, so review shows what the
   rewrite missed. Long fields (descriptions) are never rewritten.
-
-## 2.3.0rc3 — 2026-10-17
 - A toolbox image or video job that fails (`IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ...) fails the subject
   with the toolbox's code instead of `INTERNAL_ERROR`, so the CMS names the reason (e.g. the provider's safety filter).
-
-## 2.3.0rc2 — 2026-10-17
 - A task from a template whose run picks another image `operation` drops the template's `preset`: the toolbox
   refused a preset of another operation with `PRESET_NOT_FOUND` (e.g. "Enhance photo" run as a packshot); without a
   preset it takes the default of the chosen operation.
-
-## 2.3.0rc1 — 2026-10-16
 - Proposal status changes lock the row and refuse a status that moved meanwhile: a concurrent apply and reject
   can no longer both win (the loser gets a 400 and its write rolls back).
 - SEO brief: when every proposed seed phrase is over the toolbox keyword limit (80 characters), the phrases are cut
