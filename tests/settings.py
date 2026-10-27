@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import os
 import tempfile
 from importlib.util import find_spec
 
@@ -74,6 +75,12 @@ TEMPLATES = [
 DATABASES = {
     "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
 }
+# ENRICHMENT_TEST_DATABASE_URL=postgres://… runs the suite on postgres (pytest-django creates its own test_ database);
+# the concurrency tests in test_work_queue_pg.py only run there.
+if _url := os.environ.get("ENRICHMENT_TEST_DATABASE_URL"):
+    import dj_database_url
+
+    DATABASES["default"] = dj_database_url.parse(_url)
 
 AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.ModelBackend"]
 

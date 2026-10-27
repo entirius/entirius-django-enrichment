@@ -10,19 +10,32 @@ OpenAPI schema via drf-spectacular.
 """
 
 import json
+import uuid
 from decimal import Decimal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 
 class TaskSpawnRequest(BaseModel):
     """`POST /tasks/` — spawn a typed work order. `scope_spec` is opaque to the bus but the
     service validates `mode` + `module` (the adapter key)."""
 
-    type: str = Field(min_length=1, max_length=64, examples=["fix-attribute"])
+    type: str = Field(
+        "", max_length=64, description="Task type; blank when `template` is given", examples=["pim.writer"]
+    )
     scope_spec: dict = Field(examples=[{"mode": "list", "module": "pim", "channel": "default", "refs": ["SKU-1"]}])
-    params: dict = Field(default_factory=dict, examples=[{"feature": "description"}])
+    params: dict = Field(default_factory=dict, examples=[{"channel": "default", "languages": ["*"]}])
     batch_key: str = Field("", max_length=128, description="Analyzer coalescing key (find-or-append)")
+    template: str = Field(
+        "", max_length=64, description="Template key: sets `type`, presets params and rules", examples=["meta"]
+    )
+    lane: Literal["now", "queue"] | None = Field(
+        None,
+        description="`now` = run now (interactive lane, capped), `queue` = the queue; omitted = by size "
+        "(one subject → now, more → queue)",
+        examples=["now"],
+    )
 
 
 class TaskCSVImportRequest(BaseModel):
@@ -62,6 +75,12 @@ class TaskUpdateRequest(BaseModel):
 _MAX_PROPOSED_VALUE_BYTES = 65536  # 64 KiB
 
 
+def _check_proposed_value_size(v: dict) -> dict:
+    if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > _MAX_PROPOSED_VALUE_BYTES:
+        raise ValueError(f"proposed_value exceeds the {_MAX_PROPOSED_VALUE_BYTES}-byte limit")
+    return v
+
+
 class ProposalIntakeRequest(BaseModel):
     """`POST /proposals/` — a worker submits one proposal. Idempotent on `external_ref`."""
 
@@ -85,9 +104,18 @@ class ProposalIntakeRequest(BaseModel):
     @field_validator("proposed_value")
     @classmethod
     def _cap_proposed_value_size(cls, v: dict) -> dict:
-        if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > _MAX_PROPOSED_VALUE_BYTES:
-            raise ValueError(f"proposed_value exceeds the {_MAX_PROPOSED_VALUE_BYTES}-byte limit")
-        return v
+        return _check_proposed_value_size(v)
+
+
+class ProposalUpdateRequest(BaseModel):
+    """`PATCH /proposals/{id}/` — the operator edits a pending proposal's value before accepting it."""
+
+    proposed_value: dict = Field(description="Replacement value (opaque to the bus)", examples=[{"text": "Edited."}])
+
+    @field_validator("proposed_value")
+    @classmethod
+    def _cap_proposed_value_size(cls, v: dict) -> dict:
+        return _check_proposed_value_size(v)
 
 
 class ProposalMediaIntakeRequest(BaseModel):
@@ -121,6 +149,17 @@ class ProposalMediaIntakeRequest(BaseModel):
             except json.JSONDecodeError as exc:
                 raise ValueError(f"must be valid JSON: {exc}") from exc
         return v
+
+
+class ProposalAcceptRequest(BaseModel):
+    """`POST /proposals/{id}/accept/` — the body is optional."""
+
+    mode: Literal["add", "replace"] | None = Field(
+        None,
+        description="Media: add next to the original or replace it; only a mode in the proposal's `apply_modes` "
+        "is accepted. Blank = add",
+        examples=["add"],
+    )
 
 
 class RejectRequest(BaseModel):
@@ -201,3 +240,186 @@ class SpawnRuleUpdateRequest(BaseModel):
     cooldown_days: int | None = Field(None, ge=0)
     auto: bool | None = None
     active: bool | None = None
+
+
+QuickAction = Literal["shorten", "expand", "formal", "casual", "fit_limit", "variants"]
+# One proposal only: `check_standard` (checklist warnings, no revision) and `fix_warnings` (corrects its warnings).
+ProposalQuickAction = Literal[
+    "shorten", "expand", "formal", "casual", "fit_limit", "variants", "check_standard", "fix_warnings"
+]
+
+
+class ReviseScope(BaseModel):
+    type: Literal["all", "selection"] = Field("all", examples=["selection"])
+    text: str = Field("", max_length=20000, description="The selected fragment (selection scope)")
+
+
+class ReviseRequest(BaseModel):
+    """`POST proposals/{id}/revise/` — one AI correction (instruction and/or quick action)."""
+
+    instruction: str = Field("", max_length=2000, examples=["Mention the 2-year warranty."])
+    quick_action: ProposalQuickAction | None = Field(None, examples=["shorten"])
+    scope: ReviseScope | None = None
+
+
+class TaskReviseRequest(BaseModel):
+    """`POST tasks/{id}/revise/` — correct every pending proposal of a task (async)."""
+
+    instruction: str = Field("", max_length=2000, examples=["Use the informal 'you'."])
+    quick_action: QuickAction | None = Field(None, examples=["formal"])
+
+
+class FactSuggestRequest(BaseModel):
+    """`POST proposals/{id}/facts/suggest/` — the operator vouches for a number QA flagged ("Add to facts")."""
+
+    value: str = Field(min_length=1, max_length=200, examples=["12,5%"])
+    label: str = Field("", max_length=200, examples=["Energy saving"])
+
+
+class RulesUpdateRequest(BaseModel):
+    """`PUT proposals/{id}/rules/` — replace the proposal's correction rules (limits enforced by the service)."""
+
+    rules: list[str] = Field(examples=[["Never mention the price."]])
+
+
+class RulePromoteRequest(BaseModel):
+    """`POST proposals/{id}/rules/promote/` — copy one rule to the task's template or to the worker, or leave it
+    as a rule suggestion for the company profile (`profile`, memory)."""
+
+    rule: str = Field(min_length=1, examples=["Never mention the price."])
+    target: Literal["template", "worker", "profile"] = Field(examples=["worker"])
+
+
+class TemplateCreateRequest(BaseModel):
+    """`POST templates/` — a saved worker run; `params` are validated against the worker kind (channel optional)."""
+
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_.-]*$", examples=["meta"])
+    label: str = Field(min_length=1, max_length=128, examples=["Meta descriptions"])
+    worker_key: str = Field(min_length=1, max_length=64, examples=["pim.writer"])
+    params: dict = Field(default_factory=dict, examples=[{"fields": ["meta_title"], "languages": ["*"]}])
+    rules: list[str] = Field(default_factory=list, examples=[["Brand name first."]])
+    position: int = Field(0, examples=[10])
+    active: bool = True
+
+
+class TemplateUpdateRequest(BaseModel):
+    """`PATCH templates/{key}/` — all fields optional; `key` is immutable."""
+
+    label: str | None = Field(None, min_length=1, max_length=128)
+    worker_key: str | None = Field(None, min_length=1, max_length=64)
+    params: dict | None = None
+    rules: list[str] | None = None
+    position: int | None = None
+    active: bool | None = None
+
+
+class CatalogQuery(BaseModel):
+    """`GET fields/` and `GET languages/` query parameters."""
+
+    target_module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    language: str = Field("", max_length=8, description="Label language (fields only)", examples=["pl"])
+
+
+class SubjectResolveRequest(BaseModel):
+    """`POST subjects/resolve/` — which of the pasted refs (SKUs) exist in a module's channel."""
+
+    module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    refs: list[Annotated[str, Field(max_length=128)]] = Field(
+        min_length=1, max_length=500, examples=[["SKU-1", "SKU-2"]]
+    )
+
+
+class SubjectPicturesQuery(BaseModel):
+    """`GET subjects/pictures/` — the pictures of one subject (SKU) in a module's channel."""
+
+    module: str = Field(min_length=1, max_length=32, examples=["pim"])
+    channel: str = Field(min_length=1, max_length=64, examples=["default"])
+    ref: str = Field(min_length=1, max_length=128, examples=["SKU-1"])
+
+
+class RunStartRequest(BaseModel):
+    """`POST runs/` — start a workflow; `inputs` (the brief) is validated against the definition's `inputs_schema`."""
+
+    definition: str = Field(min_length=1, max_length=64, examples=["article"])
+    inputs: dict = Field(default_factory=dict, examples=[{"topic": "How to care for a linen sofa"}])
+    channel: str = Field("", max_length=64, examples=["default"])
+
+
+class StepRegenerateRequest(BaseModel):
+    """`POST runs/{uid}/steps/{key}/regenerate/` — optional operator instruction for the new version."""
+
+    instruction: str = Field("", max_length=2000, examples=["Shorter, and lead with the main benefit."])
+
+
+class ProfileUpdateRequest(BaseModel):
+    """`PUT profile/?channel=` — the scope's whole `data` (validated against the profile schema) as a new version."""
+
+    data: dict = Field(examples=[{"brand": {"differentiators": ["Made to order"]}, "always_rules": ["No prices."]}])
+    note: str = Field("", max_length=255, examples=["Added the warranty fact"])
+
+
+class ProfileSettingsRequest(BaseModel):
+    """`PUT profile/settings/` — the instance's AI settings that are not profile content."""
+
+    qa_check: StrictBool = Field(
+        description="Check every new AI text proposal against the checklists (a run may override it)", examples=[True]
+    )
+
+
+class MemoryUpdateRequest(BaseModel):
+    """`PATCH memory/{id}/` — dismiss or re-activate an entry."""
+
+    status: Literal["active", "dismissed"] = Field(examples=["dismissed"])
+
+
+class MemoryPromoteRequest(BaseModel):
+    """`POST memory/{id}/promote/` — rule → `always_rules` (default) or `rules`; fact → `facts` (default)."""
+
+    target: Literal["always_rules", "rules", "facts"] | None = Field(None, examples=["always_rules"])
+
+
+class ClaimRequest(BaseModel):
+    """`POST /workers/claim/` — ask for one unit of work."""
+
+    worker: str = Field(min_length=1, max_length=64, description="Worker key = task type", examples=["pim.writer"])
+    instance: str = Field(
+        min_length=1, max_length=128, description="Who asks (host + pid, an n8n id)", examples=["n8n-1"]
+    )
+    version: str = Field("", max_length=32, description="Version of the asking process", examples=["1.4.0"])
+    lane: Literal["", "now", "queue"] = Field("", description="Limit to one lane; blank = any, interactive first")
+
+
+class LeaseRequest(BaseModel):
+    """`POST /workers/heartbeat/` — keep a lease alive."""
+
+    token: uuid.UUID = Field(description="Lease token from claim")
+
+
+class DraftIn(BaseModel):
+    target_kind: str = Field(min_length=1, max_length=64, examples=["attribute_value"])
+    target_locator: dict = Field(examples=[{"channel": "default", "language": "pl", "feature_idx": "meta_title"}])
+    proposed_value: dict = Field(examples=[{"text": "New title"}])
+    subject_label: str = Field("", max_length=255)
+
+
+class SubjectResultIn(BaseModel):
+    subject_ref: str = Field(min_length=1, max_length=255, examples=["SKU-1"])
+    drafts: list[DraftIn] = Field(default_factory=list, max_length=50)
+    error_code: str = Field("", max_length=64, description="Set when this subject failed", examples=["TIMEOUT"])
+    error_id: str = Field("", max_length=64, description="Id of the worker's own log trace")
+
+
+class CompleteRequest(LeaseRequest):
+    """`POST /workers/complete/` — report the results of a unit; a subject without a result counts as failed."""
+
+    results: list[SubjectResultIn] = Field(max_length=100)
+
+
+class FailRequest(LeaseRequest):
+    """`POST /workers/fail/` — the unit could not be done."""
+
+    code: str = Field(pattern=r"^[A-Z0-9_]{1,64}$", examples=["TIMEOUT"])
+    message: str = Field(max_length=300, description="Plain words for the operator, never raw exception text")
+    retryable: bool = True

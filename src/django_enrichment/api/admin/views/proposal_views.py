@@ -8,10 +8,11 @@ Thin layer: parse → service → Response. ZERO Django models imported. Intake 
 path (throttled + idempotent on `external_ref`); accept routes through the drift-aware apply.
 """
 
+import uuid
 from decimal import Decimal, InvalidOperation
 
-from django.http import FileResponse
-from django_utils.api.v2_errors import raise_pydantic_as_drf
+from django.http import FileResponse, HttpResponse
+from django_utils.api.v2_errors import ErrorDetail, ErrorResponse, raise_pydantic_as_drf
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from pydantic import ValidationError
 from rest_framework import exceptions as drf_exceptions
@@ -24,13 +25,18 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_enrichment.api.admin.pagination import AdminPageNumberPagination
 from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import BulkActionThrottle, IntakeThrottle
-from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.api.admin.views._helpers import raise_as_drf, serialize_proposal
+from django_enrichment.enums import ProposalStatus
+from django_enrichment.kinds.cover import CoverNotChosenError
+from django_enrichment.kinds.questions import AnswersMissingError
 from django_enrichment.schemas.requests import (
     BulkAcceptRequest,
     BulkRejectRequest,
     BulkUndoRequest,
+    ProposalAcceptRequest,
     ProposalIntakeRequest,
     ProposalMediaIntakeRequest,
+    ProposalUpdateRequest,
     RejectRequest,
 )
 from django_enrichment.schemas.responses import (
@@ -40,7 +46,7 @@ from django_enrichment.schemas.responses import (
     ProposalListResponse,
     ProposalResponse,
 )
-from django_enrichment.services import proposal_service, staging_store, task_service
+from django_enrichment.services import image_bundle, proposal_service, staging_store, task_service
 
 _TAGS = ["Enrichment Proposals"]
 
@@ -52,7 +58,7 @@ _ALLOWED_ORDERING = frozenset(
 
 
 def _serialize(proposal) -> dict:
-    return ProposalResponse.model_validate(proposal).model_dump(mode="json")
+    return serialize_proposal(proposal)
 
 
 def _get_proposal_or_404(proposal_id: int):
@@ -60,6 +66,55 @@ def _get_proposal_or_404(proposal_id: int):
         return proposal_service.get_proposal(proposal_id)
     except ValueError as exc:
         raise_as_drf(exc)
+
+
+def _answers_missing(exc: AnswersMissingError) -> Response:
+    """400 `ANSWERS_MISSING` (v2 error shape): a questions step approved without its required answers, or with fewer
+    answers than its minimum (then every unanswered question is a candidate: `MIN_ANSWERS`)."""
+    issue, description = _answers_issue(exc.minimum)
+    details = [ErrorDetail(field=qid, issue=issue, description=description) for qid in exc.missing]
+    body = ErrorResponse(
+        error="ANSWERS_MISSING",
+        message=_answers_message(exc.minimum),
+        debug_id=uuid.uuid4().hex[:8],
+        details=details,
+    )
+    return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _cover_not_chosen(exc: CoverNotChosenError) -> Response:
+    """400 `COVER_NOT_CHOSEN` (v2 error shape): a cover step approved before one of its variants was picked."""
+    body = ErrorResponse(
+        error="COVER_NOT_CHOSEN",
+        message="Choose one of the cover variants before approving.",
+        debug_id=uuid.uuid4().hex[:8],
+        details=[],
+    )
+    return Response(body.model_dump(), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _variant_response(proposal, raw: str) -> HttpResponse:
+    """One picture of a cover's staged bundle; 404 for a bad index or a proposal that holds no bundle."""
+    if not raw.isdigit():
+        raise drf_exceptions.NotFound("no such variant")
+    with proposal.open_staged_file() as staged:
+        try:
+            image = image_bundle.read(staged, int(raw))
+        except LookupError as exc:
+            raise drf_exceptions.NotFound("no such variant") from exc
+    return HttpResponse(image, content_type="image/png")
+
+
+def _answers_issue(minimum: int) -> tuple[str, str]:
+    if not minimum:
+        return "REQUIRED", "This question needs an answer."
+    return "MIN_ANSWERS", f"Answer at least {minimum} of these questions."
+
+
+def _answers_message(minimum: int) -> str:
+    if not minimum:
+        return "Answer every required question before approving."
+    return f"Answer at least {minimum} question{'s' if minimum > 1 else ''} before approving."
 
 
 def _parse_confidence_min(raw: str | None) -> Decimal | None:
@@ -70,6 +125,24 @@ def _parse_confidence_min(raw: str | None) -> Decimal | None:
         return Decimal(raw)
     except (InvalidOperation, ValueError) as exc:
         raise drf_exceptions.ValidationError("confidence_min must be a decimal") from exc
+
+
+# `?status=all` lists every status; no status param keeps the review default (pending).
+_ALL_STATUSES = "all"
+
+
+def _parse_status(raw: str | None) -> str | None:
+    if raw is None:
+        return ProposalStatus.PENDING.value
+    return None if raw == _ALL_STATUSES else raw
+
+
+def _parse_task_id(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    if not raw.isdigit():
+        raise drf_exceptions.ValidationError("task must be an integer id")
+    return int(raw)
 
 
 class ProposalViewSet(viewsets.ViewSet):
@@ -166,14 +239,25 @@ class ProposalViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Stream a proposal's staged binary (CMS before/after preview)",
+        summary="Stream a proposal's staged binary (CMS before/after preview); `variant` = one picture of a cover",
+        parameters=[
+            OpenApiParameter(
+                "variant",
+                int,
+                OpenApiParameter.QUERY,
+                required=False,
+                description="Index of a cover variant (a cover artifact stages its pictures as one bundle)",
+            )
+        ],
         responses={200: None, 404: None},
     )
-    def staged_file(self, request: Request, pk: int) -> FileResponse:
+    def staged_file(self, request: Request, pk: int) -> HttpResponse:
         """Serve the staged binary for review (admin-only). The CMS fetches this as the 'after' image."""
         proposal = _get_proposal_or_404(pk)
         if not proposal.staged_file or not staging_store.exists(proposal.staged_file):
             raise drf_exceptions.NotFound("no staged file for this proposal")
+        if (variant := request.query_params.get("variant")) is not None:
+            return _variant_response(proposal, variant)
         # open_file owns the handle (and re-validates the ref); FileResponse closes it when streamed.
         return FileResponse(staging_store.open_file(proposal.staged_file))
 
@@ -181,13 +265,21 @@ class ProposalViewSet(viewsets.ViewSet):
         tags=_TAGS,
         summary="List proposals for review",
         parameters=[
-            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "status",
+                str,
+                OpenApiParameter.QUERY,
+                required=False,
+                description="Default `pending`; `all` = any status",
+            ),
             OpenApiParameter("target_module", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("target_kind", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("batch_id", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("source", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("confidence_min", float, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("subject_ref", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("task", int, OpenApiParameter.QUERY, required=False, description="Owning task id"),
             OpenApiParameter("ordering", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page", int, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page_size", int, OpenApiParameter.QUERY, required=False),
@@ -200,13 +292,15 @@ class ProposalViewSet(viewsets.ViewSet):
             raise drf_exceptions.ValidationError(f"ordering must be one of {sorted(_ALLOWED_ORDERING)}")
         qp = request.query_params
         qs = proposal_service.list_for_review(
-            status=qp.get("status", "pending"),
+            status=_parse_status(qp.get("status")),
             module=qp.get("target_module"),
             target_kind=qp.get("target_kind"),
             batch_id=qp.get("batch_id"),
             source=qp.get("source"),
             confidence_min=_parse_confidence_min(qp.get("confidence_min")),
             search=qp.get("search"),
+            subject_ref=qp.get("subject_ref"),
+            task_id=_parse_task_id(qp.get("task")),
             ordering=ordering,
         )
         paginator = AdminPageNumberPagination()
@@ -217,11 +311,42 @@ class ProposalViewSet(viewsets.ViewSet):
     def retrieve(self, request: Request, pk: int) -> Response:
         return Response(_serialize(_get_proposal_or_404(pk)))
 
-    @extend_schema(tags=_TAGS, summary="Accept proposal (drift-aware apply)", responses={200: ProposalResponse})
-    def accept(self, request: Request, pk: int) -> Response:
+    @extend_schema(
+        tags=_TAGS,
+        summary="Edit a pending proposal's value (new user revision)",
+        request=ProposalUpdateRequest,
+        responses={200: ProposalResponse, 400: None, 404: None},
+    )
+    def partial_update(self, request: Request, pk: int) -> Response:
+        try:
+            data = ProposalUpdateRequest(**request.data)
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
         proposal = _get_proposal_or_404(pk)
         try:
-            proposal = proposal_service.accept(proposal, user=request.user)
+            proposal = proposal_service.update_value(proposal, data.proposed_value, user=request.user)
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return Response(_serialize(proposal))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Accept proposal (drift-aware apply; approves a workflow step; `mode` add / replace for media)",
+        request=ProposalAcceptRequest,
+        responses={200: ProposalResponse, 400: ErrorResponse},
+    )
+    def accept(self, request: Request, pk: int) -> Response:
+        try:
+            data = ProposalAcceptRequest(**(request.data or {}))
+        except ValidationError as exc:
+            raise_pydantic_as_drf(exc)
+        proposal = _get_proposal_or_404(pk)
+        try:
+            proposal = proposal_service.accept(proposal, user=request.user, mode=data.mode)
+        except AnswersMissingError as exc:
+            return _answers_missing(exc)
+        except CoverNotChosenError as exc:
+            return _cover_not_chosen(exc)
         except ValueError as exc:
             raise_as_drf(exc)
         return Response(_serialize(proposal))

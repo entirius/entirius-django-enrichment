@@ -7,4 +7,20 @@ groups:
     models:
       - EnrichmentTask
       - ContentProposal
+      - ProposalRevision
       - SpawnRule
+      - TaskTemplate
+      - Worker
+      - WorkerInstance
+      - WorkUnit
+  - name: workflows
+    title: "Workflows"
+    models:
+      - WorkflowDefinition
+      - WorkflowRun
+  - name: profile
+    title: "Company profile and memory"
+    models:
+      - Profile
+      - ProfileVersion
+      - MemoryEntry

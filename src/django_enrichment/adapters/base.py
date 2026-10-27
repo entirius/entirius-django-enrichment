@@ -58,8 +58,11 @@ class EnrichmentAdapter(Protocol):
         """
         ...
 
-    def apply(self, proposal: Any) -> None:
+    def apply(self, proposal: Any) -> dict | None:
         """Write `proposal.proposed_value` into the source module (WRITE).
+
+        May return `{"subject_ref": <ref>}` when the write created a subject (a `document` of a workflow);
+        the bus keeps it in `proposal.result_ref`, which `revert` reads to undo the creation.
 
         The ONLY place enrichment writes back to a module. Body is module-specific and opaque
         to the bus. `apply_service` calls this after the drift check passes.
@@ -71,6 +74,18 @@ class EnrichmentAdapter(Protocol):
         `current_snapshot = {"sha1", "role", "position", "alt_t9n", "url"}` of the displaced main
         (empty `{}` when none). The bus drops the staged file after apply; the displaced source
         object (e.g. the old PIM `Picture`) is the undo anchor for `revert`.
+
+        Apply mode (plan 25, optional): when the adapter offers `apply_modes` for a target, the bus stores the
+        operator's choice in `proposal.apply_mode` (`"add"` | `"replace"`) before calling `apply`; `revert`
+        reads it too. Blank = no choice was offered — an adapter without `apply_modes` never sees a mode.
+        """
+        ...
+
+    def apply_modes(self, *, target_kind: str, target_locator: dict) -> list[str]:
+        """The ways `apply` can write this target — `["add", "replace"]` — or `[]` for one fixed way (OPTIONAL).
+
+        Looked up with `getattr`. The CMS asks "add next to the original / replace the original" only for a
+        target that offers `replace`; accept without a mode = `add`; bulk accept always adds.
         """
         ...
 

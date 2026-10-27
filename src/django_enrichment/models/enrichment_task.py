@@ -5,7 +5,7 @@
 from django.db import models
 from django_utils.models.base_model import BaseModel
 
-from django_enrichment.enums import TaskStatus
+from django_enrichment.enums import TaskLane, TaskStatus
 
 
 class EnrichmentTask(BaseModel):
@@ -22,8 +22,23 @@ class EnrichmentTask(BaseModel):
     scope_spec = models.JSONField(default=dict, blank=True)
     batch_key = models.CharField(max_length=128, blank=True, default="", db_index=True)
     status = models.CharField(max_length=20, choices=TaskStatus.choices, default=TaskStatus.OPEN, db_index=True)
+    # Celery lane of an internal run (`lane_service`): `now` = interactive, `queue` = bulk.
+    lane = models.CharField(max_length=8, choices=TaskLane.choices, default=TaskLane.QUEUE)
     requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     counts = models.JSONField(default=dict, blank=True)
+    # Why subjects failed: [{subject_ref, code, error_id[, message][, exception]}], capped (task_service.ERRORS_CAP).
+    # `code` is a stable error code (a toolbox error code); `message` (toolbox failures) is the toolbox's own capped
+    # reason; `error_id` finds the full trace in the log; `exception` (only `INTERNAL_ERROR`) is the exception class name.
+    errors = models.JSONField(default=list, blank=True)
+    # Cost ledger (contract A4 § 1), post factum from the toolbox's own cost fields — `cost_service` is the only
+    # writer. `cost_usd` sums the known costs (null = nothing known yet), `cost_breakdown` is the same per source
+    # `{completion, translate, seo, media}` as decimal strings, `cost_complete` turns false once a call came
+    # back without a cost (an unknown cost is never counted as 0).
+    cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+    cost_breakdown = models.JSONField(default=dict, blank=True)
+    cost_complete = models.BooleanField(default=True)
+    # `ProfileVersion` ids whose profile reached this task's prompts (instance + channel overlay, contract A4 § 2).
+    profile_versions = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "type"], name="enr_task_status_type_idx")]

@@ -19,20 +19,32 @@ in etap-02), so the bus reads it from `scope_spec`. `filter` is a simplified `ga
 check); `gap` routes to `adapter.find_gaps`, the rest to `adapter.resolve_targets`.
 """
 
+import json
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
-from django.db.models import QuerySet
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
+from django_enrichment import augmentations
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TASK_STATUS_TRANSITIONS, ProposalStatus, TaskStatus
 from django_enrichment.models import ContentProposal, EnrichmentTask
-from django_enrichment.services import csv_import
+from django_enrichment.services import (
+    csv_import,
+    gap_params,
+    lane_service,
+    qa_auto_check,
+    template_service,
+    worker_service,
+)
 
 VALID_SCOPE_MODES = frozenset({"filter", "csv", "list", "gap"})
+ERRORS_CAP = 20
+RETRY_OF = "retry_of"
 
 
 def _validate_scope_spec(scope_spec: dict) -> None:
@@ -50,7 +62,27 @@ def _append_refs(task: EnrichmentTask, new_refs: list[str]) -> EnrichmentTask:
     merged = list(dict.fromkeys([*task.scope_spec.get("refs", []), *new_refs]))
     task.scope_spec["refs"] = merged
     task.save(update_fields=["scope_spec", "modified_at"])
+    worker_service.dispatch(task)  # plans the new refs into units (a no-op when none are new)
     return task
+
+
+def _carried_params(params: dict) -> dict:
+    """The bus-level keys of `params`, each validated by its owner: augmentations, the QA check, the gap budget."""
+    carried: dict = {}
+    for carry in (augmentations.carried_params, qa_auto_check.carried_params, gap_params.carried_params):
+        carried.update(carry(params))
+    return carried
+
+
+def resolve_type_and_params(task_type: str, params: dict, template: str) -> tuple[str, dict]:
+    """Validated `(type, params)`; `params.augment` / `seo_scope` / `qa_check`, the gap budget (`limit`,
+    `cooldown_days`, `spawn_rule`) and a template's key survive kind validation."""
+    if template:
+        task_type, params = template_service.merge_into_task(template, task_type=task_type, params=params)
+    if not task_type:
+        raise ValueError("give a task type or a template")
+    params = {**worker_service.validate_params(task_type, params), **_carried_params(params)}
+    return task_type, {**params, "template": template} if template else params
 
 
 def spawn(
@@ -60,9 +92,23 @@ def spawn(
     params: dict | None = None,
     requested_by: AbstractBaseUser | None = None,
     batch_key: str = "",
+    template: str = "",
+    lane: str = "",
+    retry_of: int | None = None,
 ) -> EnrichmentTask:
-    """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task)."""
+    """Create a task, or coalesce into an open one sharing `batch_key` (analyzer rolling task).
+
+    When an active Worker owns `type`, `params` are validated by its kind and a new task is handed
+    to the internal runner after commit (`worker_service.dispatch`). With `template`, the
+    template decides `type` and presets params/rules (`template_service.merge_into_task`). `lane` is
+    `now` | `queue` | blank = by size (`lane_service.resolve`; `now` over the cap → `ValueError`). `retry_of` is the
+    id of the task this one retries (`retry_service`); it lands in `params.retry_of`, which kind validation would drop.
+    """
     _validate_scope_spec(scope_spec)
+    type, params = resolve_type_and_params(type, params or {}, template)
+    if retry_of is not None:
+        params = {**params, RETRY_OF: retry_of}
+    lane = lane_service.resolve(lane, scope_spec)
 
     if batch_key:
         open_task = EnrichmentTask.objects.filter(batch_key=batch_key, status=TaskStatus.OPEN.value).first()
@@ -71,9 +117,11 @@ def spawn(
                 return _append_refs(open_task, list(scope_spec.get("refs", [])))
             return open_task
 
-    return EnrichmentTask.objects.create(
-        type=type, scope_spec=scope_spec, params=params or {}, requested_by=requested_by, batch_key=batch_key
+    task = EnrichmentTask.objects.create(
+        type=type, scope_spec=scope_spec, params=params, requested_by=requested_by, batch_key=batch_key, lane=lane
     )
+    worker_service.dispatch(task)
+    return task
 
 
 def import_csv(
@@ -120,18 +168,41 @@ def list_open(type: str | None = None) -> QuerySet[EnrichmentTask]:
     return qs.order_by("created_at")
 
 
-def list_tasks(
-    *, type: str | None = None, status: str | None = None, batch_key: str | None = None
-) -> QuerySet[EnrichmentTask]:
+@dataclass(frozen=True)
+class TaskFilters:
+    """Admin task-list filters; `None` = no filter. `statuses` match any; `subject_ref` needs `refs` (list mode)."""
+
+    type: str | None = None
+    statuses: list[str] | None = None
+    batch_key: str | None = None
+    subject_ref: str | None = None
+    target_module: str | None = None
+
+
+def list_tasks(filters: TaskFilters | None = None) -> QuerySet[EnrichmentTask]:
     """Filtered task list for the admin API (any status, newest first)."""
+    f = filters or TaskFilters()
     qs = EnrichmentTask.objects.all()
-    if type is not None:
-        qs = qs.filter(type=type)
-    if status is not None:
-        qs = qs.filter(status=status)
-    if batch_key is not None:
-        qs = qs.filter(batch_key=batch_key)
+    if f.type is not None:
+        qs = qs.filter(type=f.type)
+    if f.statuses:
+        qs = qs.filter(status__in=f.statuses)
+    if f.batch_key is not None:
+        qs = qs.filter(batch_key=f.batch_key)
+    if f.target_module is not None:
+        qs = qs.filter(scope_spec__module=f.target_module)
+    if f.subject_ref:
+        qs = qs.filter(scope_spec__refs__icontains=_json_token(f.subject_ref))
     return qs.order_by("-created_at")
+
+
+def _json_token(ref: str) -> str:
+    """`"<ref>"` as it is serialised inside the `refs` JSON array — the quotes make the match whole-element.
+
+    A text match on the array, not JSON containment: `contains` on a JSON key is Postgres-only and the suite
+    runs on SQLite. Case-insensitive (`icontains`); SKUs differing only in case are not a real catalogue.
+    """
+    return json.dumps(ref, ensure_ascii=False)
 
 
 def get_task(task_id: int) -> EnrichmentTask:
@@ -173,7 +244,7 @@ def resolve_gap_page(scope_spec: dict, params: dict, counts: dict, page: int = 1
     ``counts["proposed"]`` reaches it, the queue reads empty and the worker marks the task done)
     and ``cooldown_days`` (see ``_filter_gap_candidates``).
     """
-    limit = params.get("limit")
+    limit = params.get(gap_params.LIMIT)
     proposed = counts.get("proposed", 0)
     if limit is not None and proposed >= limit:
         return []
@@ -213,7 +284,7 @@ def _filter_gap_candidates(candidates: list[Any], *, target_module: str, params:
     if not refs:
         return candidates
 
-    cooldown = timedelta(days=params.get("cooldown_days", _spawn_cooldown_days()))
+    cooldown = timedelta(days=params.get(gap_params.COOLDOWN_DAYS, _spawn_cooldown_days()))
     now = timezone.now()
     blocked: set[tuple[str, str]] = set()
     rows = ContentProposal.objects.filter(
@@ -249,8 +320,16 @@ def transition_status(
     allowed = TASK_STATUS_TRANSITIONS.get(task.status)
     if allowed is None or new_status not in allowed:
         raise ValueError(f"invalid task transition: {task.status} -> {new_status}")
-    task.status = new_status
-    task.save(update_fields=["status", "modified_at"])
+    now = timezone.now()
+    # Conditional on the status we read: a stale object must not overwrite a concurrent change.
+    updated = EnrichmentTask.objects.filter(pk=task.pk, status=task.status).update(status=new_status, modified_at=now)
+    if not updated:
+        raise ValueError(f"task {task.pk} is no longer {task.status} (changed concurrently)")
+    task.status, task.modified_at = new_status, now
+    if new_status in (TaskStatus.CANCELLED.value, TaskStatus.DONE.value, TaskStatus.FAILED.value):
+        from django_enrichment.services import task_progress_service
+
+        task_progress_service.cancel_units(task)
     return task
 
 
@@ -279,3 +358,32 @@ def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTa
         locked.save(update_fields=["counts", "modified_at"])
     task.counts = locked.counts
     return task
+
+
+def record_error(
+    task: EnrichmentTask, *, subject_ref: str, code: str, error_id: str, message: str = "", exception: str = ""
+) -> EnrichmentTask:
+    """Remember why a subject failed (the first `ERRORS_CAP` failures; the counter keeps the total).
+    A run-level stop carries a plain `message` too; an `INTERNAL_ERROR` carries the `exception` class name
+    (never its text), so it can be told apart without the log."""
+    task.refresh_from_db(fields=["errors"])
+    if len(task.errors) < ERRORS_CAP:
+        optional = {"message": message, "exception": exception}
+        entry = {"subject_ref": subject_ref, "code": code, "error_id": error_id}
+        task.errors.append({**entry, **{key: value for key, value in optional.items() if value}})
+        task.save(update_fields=["errors", "modified_at"])
+    return task
+
+
+def proposal_counts(task_ids: list[int]) -> dict[int, dict[str, int]]:
+    """{task_id: {proposal status: n}} for the given tasks — one grouped query."""
+    rows = (
+        ContentProposal.objects.filter(task_id__in=task_ids)
+        .values("task_id", "status")
+        .annotate(n=Count("id"))
+        .order_by()
+    )
+    counts: dict[int, dict[str, int]] = {task_id: {} for task_id in task_ids}
+    for row in rows:
+        counts[row["task_id"]][row["status"]] = row["n"]
+    return counts

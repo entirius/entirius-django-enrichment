@@ -28,9 +28,26 @@ Five callables are the contract; a sixth is optional.
 | `resolve_targets(scope_spec, page=1) -> list` | READ | A worker pulls a task's targets, one page at a time. |
 | `find_gaps(check, params, scope) -> list` | READ | `scope_spec.mode == "gap"` — a named quality check finds candidates. |
 | `read_current(*, subject_ref, target_kind, target_locator) -> dict` | READ | At intake (snapshot the truth) and again before apply (drift check). |
-| `apply(proposal) -> None` | WRITE | After review, once the drift check passes. The only write path. |
+| `apply(proposal) -> dict \| None` | WRITE | After review, once the drift check passes. The only write path. A `target_kind="document"` apply that creates a subject returns `{"subject_ref": <ref>}` → `proposal.result_ref` (read it in `revert`); see `docs/workflows.md`. |
 | `revert(proposal) -> None` | WRITE | Single-level undo — restore `current_snapshot`. |
 | `release_undo_anchor(proposal) -> int` | WRITE | Optional. Cleanup-time GC of an external undo anchor. |
+| `describe_fields(*, channel, language="") -> list[dict]` | READ | Optional. Field catalog for `write`/`pick`, corrections and `GET fields/` (contract A3 § 2). |
+| `channel_languages(*, channel) -> list[str]` | READ | Optional. Resolves `languages: ["*"]`; `GET languages/`. |
+| `subject_labels(*, refs, channel) -> dict[str, str]` | READ | Optional. `{ref: label}` of the refs that exist in the channel (unknown ones left out; unknown channel → `ObjectDoesNotExist`); `POST subjects/resolve/`. |
+| `list_pictures(*, subject_ref, channel) -> list[dict]` | READ | Optional. `[{ref, label, url, is_main}]` of the subject's pictures, main first (unknown subject → `ObjectDoesNotExist`); `GET subjects/pictures/`. |
+| `main_picture(*, subject_ref, channel) -> (bytes, mime)` | READ | Optional. Input of the `video` kind without `params.picture_ref`. A file that cannot be read → `OSError` (the subject fails `PICTURE_UNREADABLE`). |
+| `picture(*, subject_ref, channel, picture_ref) -> (bytes, mime)` | READ | Optional. Input of the `video` kind with `params.picture_ref` (a `list_pictures` ref); a ref that is not the subject's → `LookupError` (the subject fails `PICTURE_NOT_FOUND`); a file that cannot be read (gone from disk, not an image - PIL's `UnidentifiedImageError` is an `OSError`) → `OSError` (`PICTURE_UNREADABLE`). Also the input of the `image` kind. |
+| `make_locator(*, field_key, channel, language) -> dict` | READ | Optional. Locator of a catalog field (fallback `{channel, language, field}`). |
+| `field_key(*, locator) -> str \| None` | READ | Optional. Inverse of `make_locator`: the catalog field a locator points at, for correction field meta (fallback `locator["field"]`). |
+| `build_context(*, subject_ref, channel, language) -> dict` | READ | Optional. Item context for the AI kinds. |
+| `subject_languages(*, subject_ref) -> list[str]` | READ | Optional. Languages the subject exists in; `write` drops the others (none left → the subject is skipped, no AI call, no failure). |
+| `category_of(subject_ref, *, channel=None) -> str \| None` | READ | Optional. Memory ref of the subject's category in `channel` (recall, `seo_brief` category scope). |
+
+**Conformance kit:** subclass `django_enrichment.testing.adapter_conformance.AdapterConformance`
+(+ `FieldCatalogConformance`, `DocumentCreateConformance`) in your module's tests and provide the
+fixtures `adapter`, `conformance_case` (a seeded `ConformanceCase`, parametrise per target kind),
+`catalog_channel` and `document_case`. The module docstring has a worked example; `tests/test_adapter_conformance.py`
+runs it on the fake adapter.
 
 The exact signatures live in `django_enrichment/adapters/base.py`. The bus calls `resolve_targets`
 when a worker pulls targets, `read_current` at intake and again before apply (that second call is the

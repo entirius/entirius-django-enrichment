@@ -74,6 +74,19 @@ def test_transition_forbidden_from_terminal():
 
 
 @pytest.mark.django_db
+def test_a_concurrent_reject_stops_a_stale_accept(fake_adapter, admin_user):
+    proposal = _intake(fake_adapter, proposed={"text": "fresh"})
+    stale = ContentProposal.objects.get(pk=proposal.pk)
+    proposal_service.reject(proposal, "no")
+
+    with pytest.raises(ValueError, match="changed meanwhile"):
+        proposal_service.accept(stale, user=admin_user)
+
+    stale.refresh_from_db()
+    assert stale.status == ProposalStatus.REJECTED.value
+
+
+@pytest.mark.django_db
 def test_accept_writes_through_adapter_and_marks_applied(fake_adapter, admin_user):
     proposal = _intake(fake_adapter, proposed={"text": "fresh"})
 
@@ -273,3 +286,12 @@ def test_list_for_review_applies_filters(fake_adapter):
     result = proposal_service.list_for_review(module="pim", confidence_min=Decimal("0.50"))
 
     assert list(result) == [keep]  # default status=pending excludes the rejected one; low-conf filtered out
+
+
+@pytest.mark.django_db
+def test_search_matches_the_product_name_or_its_sku(fake_adapter):
+    orion = _intake(fake_adapter, subject_ref="ENT-S001", subject_label="Orion lamp")
+    _intake(fake_adapter, subject_ref="ENT-S002", subject_label="Vega chair")
+
+    assert list(proposal_service.list_for_review(search="orion")) == [orion]
+    assert list(proposal_service.list_for_review(search="s001")) == [orion]

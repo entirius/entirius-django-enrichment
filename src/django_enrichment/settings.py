@@ -56,3 +56,83 @@ ENRICHMENT_MAX_CSV_BYTES = getattr(settings, "ENRICHMENT_MAX_CSV_BYTES", 10 * 10
 #                                   new gap candidates (breaks the reject→respawn→reject loop).
 ENRICHMENT_SPAWN_DEFAULT_LIMIT = getattr(settings, "ENRICHMENT_SPAWN_DEFAULT_LIMIT", 200)
 ENRICHMENT_SPAWN_COOLDOWN_DAYS = getattr(settings, "ENRICHMENT_SPAWN_COOLDOWN_DAYS", 7)
+
+# Product video (Amendment A1). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_MAX_VIDEO_BYTES     — media intake cap for `target_kind="video"` (mp4 only, magic-byte sniffed).
+# ENRICHMENT_VIDEO_TIMEOUT_S     — how long the `video` kind polls a toolbox media job inside the Celery task.
+# ENRICHMENT_VIDEO_TOOLBOX_URL / _API_KEY / _CHANNEL — media job endpoint; each blank → the matching
+#                                  AI_TOOLBOX_* setting. POC escape hatch (Redmine #34464).
+ENRICHMENT_MAX_VIDEO_BYTES = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", 100 * 1024 * 1024)
+ENRICHMENT_VIDEO_TIMEOUT_S = getattr(settings, "ENRICHMENT_VIDEO_TIMEOUT_S", 900)
+# ENRICHMENT_IMAGE_TIMEOUT_S     — how long the `image` kind polls a toolbox image job (same media endpoint).
+ENRICHMENT_IMAGE_TIMEOUT_S = getattr(settings, "ENRICHMENT_IMAGE_TIMEOUT_S", 300)
+
+# Batch correction (contract A3 § 1). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_REVISE_BATCH_MAX   — most pending proposals one batch correction may cover (one paid completion each).
+# ENRICHMENT_REVISE_LOCK_SECONDS — how long a task's batch lock outlives a worker that died mid-batch.
+ENRICHMENT_REVISE_BATCH_MAX = getattr(settings, "ENRICHMENT_REVISE_BATCH_MAX", 200)
+ENRICHMENT_REVISE_LOCK_SECONDS = getattr(settings, "ENRICHMENT_REVISE_LOCK_SECONDS", 3600)
+
+# Run lanes (plan 22). Read at call time (host/test override wins), same pattern as above.
+#
+# ENRICHMENT_INTERACTIVE_QUEUE   — Celery queue of `lane=now` runs, workflow steps and corrections (a click waits on it).
+# ENRICHMENT_BULK_QUEUE          — Celery queue of `lane=queue` runs; the host wires a worker with concurrency 1 on it.
+# ENRICHMENT_RUN_NOW_MAX_SUBJECTS — most subjects one `lane=now` run may carry.
+ENRICHMENT_INTERACTIVE_QUEUE = getattr(settings, "ENRICHMENT_INTERACTIVE_QUEUE", "enrichment_interactive")
+ENRICHMENT_BULK_QUEUE = getattr(settings, "ENRICHMENT_BULK_QUEUE", "enrichment_bulk")
+ENRICHMENT_RUN_NOW_MAX_SUBJECTS = getattr(settings, "ENRICHMENT_RUN_NOW_MAX_SUBJECTS", 20)
+
+# Work queue (plan 23). Every knob is read at call time through `queue_config.get` (host/test override wins).
+#
+# ENRICHMENT_UNIT_SIZE              — subjects per work unit (small on purpose: a lost lease costs few paid calls).
+# ENRICHMENT_MAX_INFLIGHT_PER_WORKER — leases one worker may hold at once, per lane.
+# ENRICHMENT_LEASE_S                — lease length; a heartbeat extends it by the same amount.
+# ENRICHMENT_MAX_ATTEMPTS           — claims of one unit before it fails for good.
+# ENRICHMENT_RETRY_BACKOFF_S        — wait before a retried unit is claimable again (× attempt).
+# ENRICHMENT_INSTANCE_ONLINE_S      — an instance is online when seen within this many seconds.
+# ENRICHMENT_STALE_QUEUE_S          — queued longer than this with no online instance → "nobody is taking work".
+# ENRICHMENT_PAUSE_AFTER_FAILURES   — consecutive failed units of one worker that pause it.
+# ENRICHMENT_AUTO_PAUSE             — False = only notify, never pause.
+# ENRICHMENT_BUDGET_ERROR_CODES     — toolbox error codes that pause the worker at once (budget / hard cap).
+# ENRICHMENT_NOTIFY_CHANNEL         — django_notifications channel idx for escalations (missing → log only).
+# ENRICHMENT_NOTIFY_ROLE            — recipient role of escalations.
+# ENRICHMENT_PLAN_BATCH             — units created per insert while planning a task.
+# ENRICHMENT_EVENTS_CAP             — events kept per unit.
+# ENRICHMENT_CONSUME_MAX_UNITS      — units one consume run handles before re-queueing itself (bounds a Celery slot).
+ENRICHMENT_UNIT_SIZE = 5
+ENRICHMENT_MAX_INFLIGHT_PER_WORKER = 2
+ENRICHMENT_LEASE_S = 300
+ENRICHMENT_MAX_ATTEMPTS = 3
+ENRICHMENT_RETRY_BACKOFF_S = 60
+ENRICHMENT_INSTANCE_ONLINE_S = 120
+ENRICHMENT_STALE_QUEUE_S = 900
+ENRICHMENT_PAUSE_AFTER_FAILURES = 5
+ENRICHMENT_AUTO_PAUSE = True
+ENRICHMENT_BUDGET_ERROR_CODES = ("BUDGET_EXCEEDED", "HARD_CAP_REACHED", "SPEND_CAP_EXCEEDED", "QUOTA_EXCEEDED")
+ENRICHMENT_NOTIFY_CHANNEL = "default-europe"
+ENRICHMENT_NOTIFY_ROLE = "operator"
+ENRICHMENT_PLAN_BATCH = 200
+ENRICHMENT_EVENTS_CAP = 20
+ENRICHMENT_CONSUME_MAX_UNITS = 10
+
+# Guards on a run's size and cost (review E1). Read at call time through `queue_config.get`.
+#
+# ENRICHMENT_QUEUE_MAX_SUBJECTS — most subjects one run may carry (checked at spawn for a list scope, and
+#                                 enforced by the planner for every scope).
+# ENRICHMENT_TASK_MAX_COST_USD  — a task whose known cost reached this stops handing out units (queued ones are
+#                                 cancelled, the operator is notified once).
+ENRICHMENT_QUEUE_MAX_SUBJECTS = 500
+ENRICHMENT_TASK_MAX_COST_USD = "5.00"
+
+# Transient toolbox failures (an edge 502, a timeout) retried in place for one subject before it counts as failed.
+#
+# ENRICHMENT_TRANSIENT_RETRIES     — extra attempts per subject (0 = none).
+# ENRICHMENT_TRANSIENT_ERROR_CODES — failure codes treated as transient.
+ENRICHMENT_TRANSIENT_RETRIES = 1
+ENRICHMENT_TRANSIENT_ERROR_CODES = ("TOOLBOX_HTTP_502", "TOOLBOX_HTTP_503", "TOOLBOX_HTTP_504", "TIMEOUT")
+
+# Completion output budget, sent as `max_tokens` on every completion (the toolbox default of 1024 truncates an
+# article draft, which the toolbox answers with 502 PROVIDER_ERROR). Billing follows the real output.
+ENRICHMENT_COMPLETION_MAX_TOKENS = 8192

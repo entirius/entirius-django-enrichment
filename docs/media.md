@@ -36,13 +36,35 @@ flat `<uuid>.<ext>` filenames; `open_file`/`delete`/`exists` reject any ref with
   `proposed_value` (JSON string, `{"op":"replace_main","alt_t9n":{...}}`), plus the usual
   `source` / `external_ref` / `confidence` / `batch_id` / `task_id` metadata.
 
-`target_kind` is forced to `"picture"`. The service (`proposal_service.intake_media`) validates the
+The upload endpoint always intakes `target_kind="picture"`. The service (`proposal_service.intake_media`) validates the
 file at the boundary — **size cap** (`ENRICHMENT_MAX_IMAGE_BYTES`, 25 MB) and a **magic-byte MIME
 allowlist** (`ENRICHMENT_ALLOWED_IMAGE_MIME`: jpeg/png/webp/gif/avif). The MIME check sniffs the
 actual leading bytes, never the client-declared `content_type` (which is spoofable). Throttled by the
 same `enrichment_intake` scope as text intake.
 
 `current_snapshot` is read authoritatively from the adapter at intake (the displaced main, or `{}`).
+
+### Video (`target_kind="video"`, Amendment A1)
+
+`intake_media(..., target_kind="video")` accepts **mp4 only** (`ftyp` at offset 4, AVIF excluded) up to
+`ENRICHMENT_MAX_VIDEO_BYTES` (100 MB); any other `target_kind` is a `ValueError`. Only the internal
+runner calls it today: the `video` kind returns a draft carrying `media_file` and the runner stages it
+through `intake_media` (locator `{channel}`, `proposed_value` `{preset, duration_s, aspect}`). The staged
+ref keeps the `.mp4` suffix, so `staged-file/` streams it as `video/mp4`.
+
+### Image processing (kind `image`, plan 25)
+
+The `image` kind sends one of the subject's pictures (`params.picture_ref`, blank = the one `list_pictures` marks
+main; read through the adapter extras `list_pictures` / `picture`) to the toolbox image job
+(`POST images/` with `operation` packshot | lifestyle | enhance | instruct, optional `preset`, `prompt`, `n` 1–4;
+poll `images/{id}/`, download `images/{id}/outputs/{k}/download/`). Each output is one picture proposal staged
+through `intake_media`: locator `{channel, source_picture_ref, operation, variant}`, value
+`{op: "derived", operation, preset, variant, of}`. The job's cost is split over its outputs. On accept the operator
+picks `add` (next to the original, the default and the only bulk mode) or `replace` (in place of the original,
+whose file stays the undo anchor) — see `docs/api.md` § Accept / drift.
+
+A subject that fails (unreadable picture, toolbox unreachable, blocked job) is recorded in `task.errors` with a stable
+code - the list is in `docs/api.md` § Failure codes.
 
 ## Review (CMS)
 

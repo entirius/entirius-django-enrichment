@@ -17,12 +17,15 @@ the size of the catalogue.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `type` | Char (indexed) | Category label for display/reporting (`fix-attribute`, `translate`, …). Does not constrain which fields proposals touch. |
-| `params` | JSON | Opaque instruction for the worker (n8n). The bus never interprets it. |
+| `params` | JSON | Opaque instruction for the worker (n8n). The bus never interprets it — except `context_numbers` `{subject_ref: [values]}`, which the internal kinds add for the QA number check. |
 | `scope_spec` | JSON | Three modes: `{mode:"filter",…}`, `{mode:"csv",file:…}`, `{mode:"list",refs:[…]}`. |
 | `batch_key` | Char (indexed) | Find-or-append: the analyzer coalesces per run instead of one task per product. |
 | `status` | Char (indexed) | `open → in_progress → done \| cancelled \| failed`. |
+| `lane` | Char | `now` (interactive Celery queue) \| `queue` (bulk queue, default); set at spawn by `lane_service.resolve` (migration `0013`). |
 | `requested_by` | FK User (SET_NULL) | Who spawned it. |
 | `counts` | JSON | Progress `{targets, proposed, applied, rejected}`. |
+| `cost_usd` / `cost_breakdown` / `cost_complete` | Decimal (null) / JSON / Bool | Cost ledger (contract A4 § 1), written only by `cost_service.charge`: sum of the costs the toolbox reported, per source `{completion, translate, seo, media}` (decimal strings); `cost_complete` turns false once a call reported no cost or failed after its request left. Null = nothing known — an unknown cost is never counted as 0. |
+| `errors` | JSON | Why subjects failed: `[{subject_ref, code, error_id, message?, exception?}]`, first 20 (`task_service.ERRORS_CAP`). `code` = a stable code (toolbox error code, `TIMEOUT`, `PICTURE_UNREADABLE`, ... - `docs/api.md` § Failure codes) or `INTERNAL_ERROR`, never exception text; `error_id` finds the trace in the `process` log; `exception` (only with `INTERNAL_ERROR`) is the exception class name. |
 
 `in_progress` is a soft anti-dup marker (worker claimed it) — **not** a lease. No retry, dead-letter,
 DAG or priorities. The moment it needs those it's `django_workflows`, a separate module.
@@ -38,6 +41,10 @@ shape; it never reads the content.
 | Target | `target_module` (indexed), `target_type`, `subject_ref` (indexed), `subject_label`, `subject_url`, `target_kind`, `target_locator`, `locator_hash` (indexed) | `target_module` keys the adapter in the registry. `subject_label`/`subject_url` are denormalised so the review queue needs no joins. `target_locator` holds the precise address (PIM `{channel,language,feature_idx}`; CDB `{block,lang}`). |
 | Value | `proposed_value`, `staged_file`, `current_snapshot` | Opaque to the bus — only the adapter writer reads them. `staged_file` references a staging store for media; `current_snapshot` powers diff / drift / undo. |
 | Metadata | `status` (indexed), `source`, `confidence` (Decimal 0.000–1.000), `batch_id` (indexed), `external_ref` (indexed), `reviewed_by/at`, `applied_at`, `reject_reason` | `external_ref` (worker execution id) gives idempotency. |
+| Cost | `cost_usd` (Decimal, null) | Cost of the toolbox call that produced the proposal, split evenly across that call's drafts; null = unknown. `ProposalRevision.cost_usd` is the cost of the completion behind a revision (revision 1 = the proposal's cost; user edits and restores have none). |
+
+| Result | `result_ref` | What applying it created when the adapter's `apply` returned `{"subject_ref"}` (a workflow document); blank otherwise. |
+| QA | `warnings` (JSON list) | QA warnings of the current value `[{code, message, span}]` (contract A4 § 4) — equal to the latest `ProposalRevision.warnings`; written by `revision_service` / `qa_service` only. |
 
 ### `locator_hash` — why a column
 
@@ -82,9 +89,32 @@ routes by `target_module` to the registered adapter — never `if target_module 
 `SpawnRule` is standalone operator config (no FK to either model above — it references tasks only through the
 deterministic `gaprule:` batch_key). Fields and semantics: `docs/spawn-rules.md`.
 
+## WorkflowDefinition / WorkflowRun
+
+A definition lists steps (templates) with `needs` and gates; a run freezes them in `steps_state` (ordered list
+with `status`, `task_id`, `proposal_id`), keeps the brief (`inputs`), the created `subject_ref` and the summed
+`cost_usd` / `cost_complete`. Step outputs are ordinary proposals on the subject `run:<uid>`. Flow, validation
+and API: `docs/workflows.md`.
+
+## Profile / ProfileVersion / MemoryEntry
+
+`Profile` is one row per scope (`channel` blank = instance, else an overlay) with schema-validated `data` and a
+`version`; every save adds a `ProfileVersion` snapshot. `EnrichmentTask.profile_versions` and
+`ProposalRevision.profile_versions` hold the `ProfileVersion` ids behind their prompts. `MemoryEntry` is what the
+studio remembers (`seo_brief | answer | rule_suggestion | fact_suggestion`), indexed by
+`(channel, subject_module, subject_ref, kind)`. Details: `docs/profile.md`.
+
 ## Indexes
 
 Sized for a million-row proposal table: task `(status, type)` + `batch_key`; proposal `(status, subject_ref)`,
 `(target_module, subject_ref, target_kind, locator_hash)`, `(status, applied_at)` + `subject_ref` /
 `target_module` / `batch_id` / `external_ref`. No partitioning yet (deferred); `(status, applied_at)`
 keeps the cleanup beat and a future partition cheap.
+
+## Work queue (plan 23)
+
+| Model | Key fields |
+|---|---|
+| `WorkUnit` | `task` (related name `work_units`), `worker_key`, `subject_refs` (≤ `ENRICHMENT_UNIT_SIZE`), `lane`, `status` (queued / leased / done / failed / cancelled), `attempts`, `lease_token` (unique, cleared on a lost lease), `leased_by`, `lease_until`, `not_before` (backoff), `last_error` `{code, message}`, `outcome`, `events` (last 20) |
+| `WorkerInstance` | `worker`, `instance`, `version`, `last_seen`, `units_done`, `units_failed`, `consecutive_failures` — unique (worker, instance) |
+| `Worker` (added) | `paused_reason` (blank = running), `paused_at` |

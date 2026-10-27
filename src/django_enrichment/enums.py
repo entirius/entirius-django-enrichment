@@ -13,6 +13,26 @@ class TaskStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
+class TaskLane(models.TextChoices):
+    """Which Celery lane runs an internal task: `now` = the interactive lane, `queue` = the bulk lane."""
+
+    NOW = "now", "Run now"
+    QUEUE = "queue", "Queue"
+
+
+class UnitStatus(models.TextChoices):
+    """One `WorkUnit` of the work queue: queued → leased → done | failed; cancelled with its task."""
+
+    QUEUED = "queued", "Queued"
+    LEASED = "leased", "Leased"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+TERMINAL_UNIT_STATUSES = frozenset({UnitStatus.DONE.value, UnitStatus.FAILED.value, UnitStatus.CANCELLED.value})
+
+
 class ProposalStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPLIED = "applied", "Applied"
@@ -55,3 +75,82 @@ PROPOSAL_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     ProposalStatus.SUPERSEDED.value: frozenset(),
     ProposalStatus.REVERTED.value: frozenset(),
 }
+
+
+class ApplyMode(models.TextChoices):
+    """How an accepted media proposal lands next to its source (plan 25): beside it, or in its place."""
+
+    ADD = "add", "Add"
+    REPLACE = "replace", "Replace"
+
+
+class WorkerMode(models.TextChoices):
+    INTERNAL = "internal", "Internal (our runner)"
+    EXTERNAL = "external", "External (n8n etc. via the API)"
+
+
+class RevisionAuthor(models.TextChoices):
+    AI = "ai", "AI"
+    USER = "user", "User"
+    RESTORE = "restore", "Restore"
+
+
+# Proposals that still accept new revisions (correction, manual edit, restore).
+REVISABLE_STATUSES = frozenset({ProposalStatus.PENDING.value, ProposalStatus.DRIFTED.value})
+
+
+class RunStatus(models.TextChoices):
+    """`WorkflowRun.status` — derived from its steps by `workflow_service` (cancelled is final)."""
+
+    RUNNING = "running", "Running"
+    WAITING = "waiting", "Waiting for review"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class StepStatus(models.TextChoices):
+    """One step of a run: waiting (needs not approved yet) → running → review → approved | failed."""
+
+    WAITING = "waiting", "Waiting"
+    RUNNING = "running", "Running"
+    REVIEW = "review", "Needs review"
+    APPROVED = "approved", "Approved"
+    FAILED = "failed", "Failed"
+
+
+class StepGate(models.TextChoices):
+    REVIEW = "review", "Operator approves"
+    AUTO = "auto", "Approved automatically"
+
+
+class StepOutput(models.TextChoices):
+    """What a step produces; each output is made by the kinds in `STEP_OUTPUT_KINDS`."""
+
+    ARTIFACT = "artifact", "Artifact (text or data)"
+    QUESTIONS = "questions", "Questions for the operator"
+    DOCUMENT = "document", "Document in the target module"
+    IMAGE = "image", "Image variants to pick from"
+
+
+STEP_OUTPUT_KINDS: dict[str, tuple[str, ...]] = {
+    StepOutput.ARTIFACT.value: ("generate", "sections"),
+    StepOutput.QUESTIONS.value: ("questions",),
+    StepOutput.DOCUMENT.value: ("compose",),
+    StepOutput.IMAGE.value: ("cover",),
+}
+
+
+class MemoryKind(models.TextChoices):
+    """`MemoryEntry.kind` (contract A4 § 3)."""
+
+    SEO_BRIEF = "seo_brief", "SEO brief"
+    ANSWER = "answer", "Operator answer"
+    RULE_SUGGESTION = "rule_suggestion", "Rule suggestion"
+    FACT_SUGGESTION = "fact_suggestion", "Fact suggestion"
+
+
+class MemoryStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISMISSED = "dismissed", "Dismissed"
+    PROMOTED = "promoted", "Promoted to the profile"

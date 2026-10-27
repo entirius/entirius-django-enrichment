@@ -5,10 +5,13 @@
 # Shared pytest fixtures for django-enrichment.
 # Auth fixtures for the API land in etap-05; here we only need the test adapter + a review user.
 
+import io
+
 import pytest
 from django.test import override_settings
 
 from django_enrichment.adapters import clear_cache
+from django_enrichment.kinds import extras
 
 
 @pytest.fixture(autouse=True)
@@ -33,10 +36,12 @@ def fake_adapter():
 
     module.reset()
     clear_cache()
+    extras.clear_cache()
     with override_settings(ENRICHMENT_ADAPTERS={"pim": "tests.fake_adapter"}):
         yield module
     module.reset()
     clear_cache()
+    extras.clear_cache()
 
 
 @pytest.fixture
@@ -72,3 +77,40 @@ def regular_client(api_client, regular_user):
     """Authenticated non-admin — must be rejected (403) by IsAdminUser."""
     api_client.force_authenticate(user=regular_user)
     return api_client
+
+
+@pytest.fixture
+def toolbox_settings(settings):
+    """Point the toolbox client at a fake host; requests are answered by `mock_toolbox` (respx)."""
+    settings.AI_TOOLBOX_BASE_URL = "http://toolbox.test"
+    settings.AI_TOOLBOX_API_KEY = "test-key"
+    settings.AI_TOOLBOX_CHANNEL = "shop"
+    return settings
+
+
+@pytest.fixture
+def make_worker(db):
+    """Create a Worker through the service (validation + versioning), defaults overridable."""
+    from django_enrichment.models import Worker
+    from django_enrichment.services import worker_service
+
+    def _make(**over):
+        fields = {"key": "pim.translate", "label": "Translate", "kind": "translate", "target_module": "pim"}
+        fields["options"] = {"fields": ["description"]}
+        fields.update(over)
+        return worker_service.save_worker(Worker(**fields))
+
+    return _make
+
+
+@pytest.fixture
+def corrupt_picture():
+    """A picture reader that fails like the PIM adapter on a stored file that is not an image (PIL cannot tell what
+    it is: `UnidentifiedImageError`, an `OSError`)."""
+    image_module = pytest.importorskip("PIL.Image")
+
+    def read(**_kw):
+        with image_module.open(io.BytesIO(b"not an image")) as image:
+            return b"not an image", image.format
+
+    return read

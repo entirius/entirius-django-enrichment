@@ -9,7 +9,7 @@ contract every field is always present (null when empty) — the field set never
 values do. Standard pagination shape (count/next/previous/results) for both resources (PO decision).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -26,9 +26,41 @@ class TaskResponse(BaseModel):
     params: dict
     batch_key: str
     counts: dict
+    errors: list[dict] = Field(
+        description="Why subjects failed, first 20: `{subject_ref, code, error_id, message?, exception?}`. `code` is "
+        "a stable code, `error_id` finds the log trace, `message` is the toolbox's own reason, `exception` the "
+        "exception class name of an `INTERNAL_ERROR` (never its text)",
+        examples=[[{"subject_ref": "SKU-1", "code": "PICTURE_UNREADABLE", "error_id": "3fa9c1d2b4e7"}]],
+    )
+    cost_usd: Decimal | None = Field(
+        description="Sum of the known toolbox costs; null = none known", examples=["0.0042"]
+    )
+    cost_breakdown: dict[str, Decimal] = Field(
+        description="Known cost per source: completion | translate | seo | media", examples=[{"completion": "0.0042"}]
+    )
+    cost_complete: bool = Field(description="False once a toolbox call reported no cost", examples=[True])
+    profile_versions: list[int] = Field(description="Profile version ids its prompts used", examples=[[4, 9]])
+    lane: str = Field(description="now = interactive lane, queue = bulk lane", examples=["now"])
+    queued_ahead: int | None = Field(
+        None, description="Open runs of its lane created before it; null once running or for an external worker"
+    )
+    units: dict[str, int] = Field(
+        default_factory=dict, description="Work units by status: queued | leased | done | failed | cancelled"
+    )
+    failed_units: list[dict] = Field(
+        default_factory=list, description="Retrieve only: latest failed units with their error and last events"
+    )
+    # {proposal status: n} of the task's proposals — filled by the list/retrieve views, not an ORM attribute.
+    proposal_counts: dict[str, int] = {}
     requested_by_id: int | None
     created_at: datetime
     modified_at: datetime
+
+
+class TaskSpawnResponse(TaskResponse):
+    """`POST /tasks/` — the spawned task plus the subjects left out because the same run is already in flight."""
+
+    skipped_in_flight: list[str] = Field(default_factory=list, examples=[["SKU-2"]])
 
 
 class TaskListResponse(BaseModel):
@@ -57,6 +89,31 @@ class CSVImportResponse(BaseModel):
     tasks: list[TaskResponse]
 
 
+class QaSpan(BaseModel):
+    start: int = Field(description="Offset of the first character in the text", examples=[14])
+    end: int = Field(description="Offset after the last character", examples=[18])
+    text: str = Field(examples=["25%"])
+
+
+class QaWarning(BaseModel):
+    """A QA warning of a text or data value (contract A4 § 4)."""
+
+    code: str = Field(
+        description="rule | NUMBER_NOT_IN_FACTS | FACT_NOT_IN_PROFILE | checklist | LIMIT",
+        examples=["NUMBER_NOT_IN_FACTS"],
+    )
+    message: str = Field(examples=["The number 25% is not in the facts registry or the source context."])
+    span: QaSpan | None = Field(None, description="Where in the text (in the field of a data value); null when unknown")
+    path: str | None = Field(None, description="The field of a data value (`faq[2].answer`); null for a text value")
+
+
+class WarningsResponse(BaseModel):
+    """`POST proposals/{id}/revise/` with `check_standard` — the proposal's warnings, no revision saved."""
+
+    warnings: list[QaWarning]
+    standard_checked_at: datetime | None = Field(description="When the value was checked against the checklists")
+
+
 class ProposalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,6 +140,23 @@ class ProposalResponse(BaseModel):
     reviewed_at: datetime | None
     applied_at: datetime | None
     reject_reason: str
+    rules: list[str]
+    cost_usd: Decimal | None = Field(
+        description="Share of the producing call's cost; null = unknown", examples=["0.0014"]
+    )
+    result_ref: str = Field(
+        description="What applying it created (a document ref, an added gallery link); blank otherwise", examples=[""]
+    )
+    apply_mode: str = Field(description="How it was applied (`add` | `replace`); blank = no choice", examples=[""])
+    apply_modes: list[str] = Field(
+        default_factory=list,
+        description="Ways it can be applied (`add`, `replace`); empty = one fixed way, accept takes no mode",
+        examples=[["add", "replace"]],
+    )
+    warnings: list[QaWarning] = Field(description="QA warnings of the current value")
+    standard_checked_at: datetime | None = Field(
+        None, description="When the current value was checked against the checklists; null = not checked"
+    )
     created_at: datetime
     modified_at: datetime
 
@@ -151,3 +225,315 @@ class SpawnRuleRunResponse(BaseModel):
 
     status: str = Field(examples=["spawned", "already_running", "no_candidates"])
     task: TaskResponse | None = None
+
+
+class WorkerResponse(BaseModel):
+    """`GET /workers/` item — an active worker the CMS can spawn tasks for (`type` = `key`). The
+    endpoint returns a plain list (a handful of workers per module, no pagination)."""
+
+    key: str = Field(description="Worker key = task type", examples=["pim.translate"])
+    label: str = Field(description="Human label", examples=["Translate descriptions"])
+    kind: str = Field(description="Kind of work", examples=["translate"])
+    target_module: str = Field(description="Adapter key", examples=["pim"])
+    mode: str = Field(description="internal | external", examples=["internal"])
+    model: str = Field(description="AI model of its calls; blank = the toolbox default", examples=[""])
+    params_schema: dict = Field(description="JSON schema of the task params", examples=[{"type": "object"}])
+
+
+class RevisionResponse(BaseModel):
+    """One version of a proposal's value (`GET proposals/{id}/revisions/` item, revise/restore result)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    number: int = Field(examples=[2])
+    value: dict = Field(examples=[{"text": "Shorter copy."}])
+    instruction: str = Field(examples=["Make the text noticeably shorter; keep the key information."])
+    scope: dict = Field(examples=[{"type": "all"}])
+    author_kind: str = Field(description="ai | user | restore", examples=["ai"])
+    author: int | None = Field(validation_alias="author_id", description="User id", examples=[1])
+    cost_usd: Decimal | None = Field(
+        description="Cost of the completion behind it; null = unknown or none", examples=["0.0007"]
+    )
+    profile_versions: list[int] = Field(description="Profile version ids in its prompt", examples=[[4, 9]])
+    warnings: list[QaWarning] = Field(description="QA warnings of this value")
+    created_at: datetime
+
+
+class VariantsResponse(BaseModel):
+    """`POST proposals/{id}/revise/` with `variants` — candidate values, nothing saved."""
+
+    candidates: list[dict] = Field(examples=[[{"text": "Variant A"}, {"text": "Variant B"}]])
+
+
+class RulePromoteResponse(BaseModel):
+    target: str = Field(examples=["worker"])
+    rules: list[str] = Field(
+        description="The target's rules after the promotion", examples=[["Never mention the price."]]
+    )
+
+
+class TaskReviseResponse(BaseModel):
+    queued: int = Field(description="Pending proposals queued for correction", examples=[12])
+
+
+class TemplateResponse(BaseModel):
+    """`GET templates/` item — a saved worker run the CMS offers before "Custom…"."""
+
+    key: str = Field(examples=["meta"])
+    label: str = Field(examples=["Meta descriptions"])
+    worker_key: str = Field(examples=["pim.writer"])
+    worker_label: str = Field(examples=["Writer"])
+    kind: str = Field(examples=["write"])
+    target_module: str = Field(examples=["pim"])
+    params: dict = Field(examples=[{"fields": ["meta_title", "meta_description"], "languages": ["*"]}])
+    rules: list[str] = Field(examples=[["Brand name first."]])
+    position: int = Field(examples=[10])
+    active: bool
+
+
+class FieldOptionResponse(BaseModel):
+    value: str = Field(examples=["red"])
+    label: str = Field(examples=["Red"])
+
+
+class FieldResponse(BaseModel):
+    """`GET fields/` item — one writable field of the adapter's catalog (contract A3 § 2)."""
+
+    key: str = Field(examples=["meta_title"])
+    label: str = Field(examples=["Meta title"])
+    type: str = Field(description="text | html | select | multiselect", examples=["text"])
+    max_length: int | None = Field(None, examples=[60])
+    translatable: bool = True
+    options: list[FieldOptionResponse] | None = None
+    options_truncated: bool | None = None
+
+
+class KnownSubjectResponse(BaseModel):
+    ref: str = Field(examples=["SKU-1"])
+    label: str = Field(description="The subject's name; blank when it has none", examples=["Linen sofa"])
+
+
+class SubjectResolveResponse(BaseModel):
+    """`POST subjects/resolve/` — the refs split into known (with a label) and unknown, request order kept."""
+
+    known: list[KnownSubjectResponse]
+    unknown: list[str] = Field(examples=[["SKU-404"]])
+
+
+class SubjectPictureResponse(BaseModel):
+    """`GET subjects/pictures/` item — one picture of the subject, main first."""
+
+    ref: str = Field(description="Stable picture id; goes to `params.picture_ref`", examples=["412"])
+    label: str = Field(description="The picture's name or alt text; blank when it has none", examples=["Front view"])
+    url: str = Field(description="Image URL the CMS can show", examples=["/media/image/ab/cd/abcd.jpg"])
+    is_main: bool = Field(examples=[True])
+
+
+class WorkflowStepResponse(BaseModel):
+    """One step of a workflow definition."""
+
+    key: str = Field(examples=["outline"])
+    label: str = Field(examples=["Outline"])
+    template: str = Field(examples=["article.outline"])
+    needs: list[str] = Field(examples=[["keywords"]])
+    gate: str = Field(description="review | auto", examples=["review"])
+    output: str = Field(description="artifact | questions | document", examples=["artifact"])
+
+
+class WorkflowDefinitionResponse(BaseModel):
+    """`GET workflows/` item — an active workflow the CMS can start."""
+
+    key: str = Field(examples=["article"])
+    label: str = Field(examples=["Article"])
+    target_module: str = Field(examples=["contentdb"])
+    inputs_schema: dict = Field(description="JSON Schema of the brief", examples=[{"type": "object"}])
+    steps: list[WorkflowStepResponse]
+
+
+class RunStepResponse(WorkflowStepResponse):
+    """A step of a run with its state; the output is the proposal `proposal_id` (`GET proposals/{id}/`)."""
+
+    status: str = Field(description="waiting | running | review | approved | failed", examples=["review"])
+    task_id: int | None = Field(examples=[42])
+    proposal_id: int | None = Field(examples=[310])
+
+
+class RunResponse(BaseModel):
+    """A workflow run (`GET runs/{uid}/`, list item, start / regenerate / cancel result)."""
+
+    uid: str = Field(examples=["3f2a9c0d4b6e4f1a8c7d2e5b9a0c1d3e"])
+    definition: str = Field(examples=["article"])
+    definition_label: str = Field(examples=["Article"])
+    channel: str = Field(examples=["default"])
+    inputs: dict = Field(examples=[{"topic": "How to care for a linen sofa"}])
+    subject_ref: str = Field(description="What the final step created; blank before", examples=[""])
+    status: str = Field(description="running | waiting | done | failed | cancelled", examples=["waiting"])
+    current_step: str | None = Field(description="First step not approved yet", examples=["outline"])
+    steps: list[RunStepResponse]
+    cost_usd: Decimal | None = Field(description="Sum of the known costs of the run's tasks", examples=["0.0123"])
+    cost_complete: bool = Field(description="False once one of its tasks has an unknown cost", examples=[True])
+    created_by_id: int | None
+    created_at: datetime
+    modified_at: datetime
+
+
+class RunListResponse(BaseModel):
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[RunResponse]
+
+
+class ProfileSettingsResponse(BaseModel):
+    """`GET/PUT profile/settings/` — the instance's AI settings that are not profile content."""
+
+    qa_check: bool = Field(
+        description="New AI text proposals are checked against the checklists unless a run says otherwise",
+        examples=[False],
+    )
+
+
+class ProfileResponse(BaseModel):
+    """`GET/PUT profile/?channel=` — one scope's own data (blank channel = the instance)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel: str = Field(description="Blank = the whole instance, else a channel overlay", examples=[""])
+    data: dict = Field(examples=[{"brand": {"text": "We build modular sofas.", "differentiators": ["Made to order"]}}])
+    version: int = Field(description="0 = never saved", examples=[3])
+    schema_version: int = Field(examples=[1])
+    updated_by_id: int | None
+    modified_at: datetime | None
+
+
+class ProfileVersionResponse(BaseModel):
+    """`GET profile/versions/` item — a snapshot of the data after one save."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version: int = Field(examples=[2])
+    note: str = Field(examples=["restored version 1"])
+    data: dict
+    created_by_id: int | None
+    created_at: datetime
+
+
+class ProfileSectionStatus(BaseModel):
+    key: str = Field(examples=["facts"])
+    complete: bool = Field(examples=[False])
+    minimum: str = Field(examples=["at least 3 verified facts"])
+
+
+class ProfileStatusResponse(BaseModel):
+    """`GET profile/status/?channel=` — completeness of the effective (merged) profile."""
+
+    channel: str = Field(examples=["default"])
+    complete: bool = Field(examples=[False])
+    sections: list[ProfileSectionStatus]
+
+
+class ProfileSchemaResponse(BaseModel):
+    """`GET profile/schema/` — the JSON Schema `PUT profile/` validates against."""
+
+    schema_version: int = Field(examples=[1])
+    json_schema: dict = Field(description="JSON Schema (draft 2020-12) of `data`")
+
+
+class MemoryEntryResponse(BaseModel):
+    """`GET memory/` item, `PATCH memory/{id}/` result."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    channel: str = Field(examples=[""])
+    subject_module: str = Field(examples=["pim"])
+    subject_ref: str = Field(examples=["SKU-1"])
+    kind: str = Field(description="seo_brief | answer | rule_suggestion | fact_suggestion", examples=["answer"])
+    title: str = Field(examples=["Since when do you make sofas?"])
+    text: str = Field(examples=["Since 1999."])
+    data: dict
+    source: str = Field(examples=["run:3f2a/ask"])
+    status: str = Field(description="active | dismissed | promoted", examples=["active"])
+    expires_at: datetime | None
+    created_by_id: int | None
+    created_at: datetime
+
+
+class MemoryListResponse(BaseModel):
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[MemoryEntryResponse]
+
+
+class MemoryPromoteResponse(BaseModel):
+    """`POST memory/{id}/promote/` — the promoted entry and the profile version it created."""
+
+    entry: MemoryEntryResponse
+    profile: ProfileResponse
+
+
+class AIUsageMonthResponse(BaseModel):
+    """This month's AI usage of the instance's toolbox client (the CMS header counter)."""
+
+    period: str = Field(description="UTC month `YYYY-MM` (the toolbox tracker's month)")
+    tokens: int = Field(description="LLM tokens (input + output) of completion and token-billed translation calls")
+    cost_usd: Decimal | None = Field(
+        description="Billed amount (provider cost plus the toolbox markup), rounded to cents; "
+        "null while the toolbox has billing off for this client"
+    )
+    cost_since: date | None = Field(description="Billing started inside the month: the cost covers only from here")
+    currency: str
+
+
+class ClaimedUnitResponse(BaseModel):
+    """`POST /workers/claim/` 200 — one leased unit and everything needed to do it."""
+
+    unit_id: int
+    token: str = Field(description="Lease token; send it with heartbeat / complete / fail")
+    lease_until: datetime
+    attempt: int
+    task_id: int
+    type: str = Field(description="Task type = worker key")
+    params: dict
+    scope_module: str
+    subject_refs: list[str]
+    context: dict = Field(description="The worker's calibration: kind, version, system_prompt, model, options")
+
+
+class HeartbeatResponse(BaseModel):
+    lease_until: datetime
+
+
+class UnitOutcomeResponse(BaseModel):
+    """`POST /workers/complete/` — how the unit's subjects ended."""
+
+    succeeded: int
+    failed: int
+    kept_edited: int
+    discarded: bool = Field(False, description="True when the task was cancelled before the results arrived")
+
+
+class FailedUnitResponse(BaseModel):
+    unit_id: int
+    status: str
+    attempts: int
+    not_before: datetime | None
+
+
+class WorkerStatusResponse(BaseModel):
+    """`GET /workers/status/` item — the state of one active worker's queue."""
+
+    key: str
+    label: str
+    mode: str
+    state: str = Field(description="running | paused", examples=["running"])
+    paused_reason: str
+    paused_at: datetime | None
+    online_instances: int
+    queued_units: int
+    oldest_queued_age_s: int | None
+    leased_units: int
+    failed_units_24h: int
+    nobody_taking: bool = Field(description="Work waits past the stale limit and no instance is online")

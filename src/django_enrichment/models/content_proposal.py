@@ -8,7 +8,7 @@ import json
 from django.db import models
 from django_utils.models.base_model import BaseModel
 
-from django_enrichment.enums import ProposalStatus
+from django_enrichment.enums import ApplyMode, ProposalStatus
 
 
 def compute_locator_hash(target_locator: dict | None) -> str:
@@ -70,6 +70,22 @@ class ContentProposal(BaseModel):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     applied_at = models.DateTimeField(null=True, blank=True)
     reject_reason = models.CharField(max_length=512, blank=True, default="")
+    # Operator rules for corrections of this proposal (≤ 20 strings, ≤ 200 chars — `rules_service`).
+    rules = models.JSONField(default=list, blank=True)
+    # Cost of the toolbox call that produced this proposal, split evenly across that call's drafts; null = unknown.
+    cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+    # What applying this proposal created, when the adapter's `apply` returned `{"subject_ref"}` (a document
+    # created from a workflow) or `{"ref"}` (another object, e.g. the gallery link of an added picture) — blank
+    # otherwise. Revert of a created subject / object reads it.
+    result_ref = models.CharField(max_length=255, blank=True, default="")
+    # How the operator chose to apply it (`add` | `replace`) when the adapter offers a choice (`apply_modes`); blank
+    # = no choice offered. Set by `apply_service` before the write; the adapter's `apply` and `revert` read it.
+    apply_mode = models.CharField(max_length=16, choices=ApplyMode.choices, blank=True, default="")
+    # QA warnings of the current value `[{code, message, span}]` (`qa_service`) — equal to the latest revision's.
+    warnings = models.JSONField(default=list, blank=True)
+    # When the AI last checked the current value against the profile's checklists (`qa_checklist`); null = not
+    # checked. Any new revision clears it, so it always speaks for the current value.
+    standard_checked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [

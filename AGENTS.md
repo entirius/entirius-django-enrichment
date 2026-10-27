@@ -3,8 +3,8 @@
 `entirius-django-enrichment` (Django app `django_enrichment`).
 
 Horizontal content-quality bus of Entirius — an accept-before-write enrichment loop for product
-content (descriptions, attributes, SEO, media). The CMS spawns typed tasks, an external worker
-(n8n) generates proposals, an operator reviews them, and accepted proposals are written back to the
+content (descriptions, attributes, SEO, media). The CMS spawns typed tasks, a worker — external (n8n) or
+the internal AI runner — generates proposals, an operator reviews them, and accepted proposals are written back to the
 source module (PIM first) through a per-module adapter.
 
 ## Commands
@@ -33,17 +33,38 @@ source module (PIM first) through a per-module adapter.
 
 ```
 src/django_enrichment/
-├── models/             # EnrichmentTask, ContentProposal, SpawnRule
-├── enums.py            # TaskStatus, ProposalStatus + *_STATUS_TRANSITIONS tables
+├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker,
+│                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
+├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
+├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
+│                       # generate / sections / questions / compose / image / cover, extras.py, step.py (step params),
+│                       # seams.py, field_limits.py (leaf: the `{min, max}` character range of a `write` field)
+├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
+│   ├── profile.py      # PROFILE_SCHEMA (profile_schema.json) + validation_errors with paths
 │   ├── requests.py     # Pydantic request schemas (with the API)
 │   └── responses.py    # Pydantic response schemas (with the API)
 ├── services/           # task_service, proposal_service, apply_service, undo_service, staging_store,
-│                       # cleanup_service, spawn_rule_service, csv_import
-├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol)
-├── tasks/              # apply_tasks (Celery canvas) + cleanup (retention beat) + gap_autospawn (beat)
-├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, spawn_rule), urls, throttling, pagination
-├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin
+│                       # cleanup_service, spawn_rule_service (+ gap_params), csv_import, worker_service, runner_service,
+│                       # toolbox_calls (the only AI toolbox door), revision_service, revise_service
+│                       # (+ revise_prompt, revise_values), rules_service (+ rule_limits), revise_batch_service,
+│                       # template_service, catalog_service, cost_service (cost ledger),
+│                       # lane_service + run_service (run lanes, in-flight dedupe), retry_service (retry a finished task),
+│                       # workflow_service (+ workflow_steps, workflow_queries),
+│                       # profile_service (+ profile_context, profile_status), memory_service (+ memory_promotion),
+│                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
+│                       # json_unescape (leaf: the double-escaped `\"` / `\n` of a JSON step's strings, applied in kind generate),
+│                       # ai_usage_service (this month's toolbox usage, CMS header counter),
+│                       # image_bundle (a cover's variants as one staged zip)
+├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts),
+│                       # cover_product
+├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
+├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
+├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
+│                       # workflow, profile, memory, usage), urls, throttling, pagination
+├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
+│                       # WorkflowDefinitionAdmin, WorkflowRunAdmin (read-only)
+├── testing/            # adapter_conformance — shared adapter test kit other modules subclass
 ├── management/commands/# prune_enrichment (retention), seed_demo_proposals
 ├── migrations/
 ├── apps.py             # EnrichmentConfig (name="django_enrichment", is_volkanos=True)
@@ -90,6 +111,42 @@ reject and apply both drop the staged file; the displaced source object (the old
 the undo anchor. The adapter reads the bytes via `proposal.open_staged_file()` so a source module
 never imports `staging_store` (decision D1). Full flow: `docs/media.md`.
 
+**AI workers (internal runner):** a `Worker` row (Django admin only) configures the executor of one
+task type — `key == task.type`, a `kind`, `mode` (`internal` | `external`), `system_prompt`, `model`
+(blank = the toolbox channel's first catalogue model), `options` (validated by the kind's `Options` in
+`clean()`; the admin's `save_model` goes through `worker_service.save_worker` → `full_clean`). `version`
+bumps when `system_prompt`/`model`/`options` change and is stamped into every proposal's `source`
+(`worker:<key>@v<version>`). A kind (`kinds/`) is code: `Options`, `Params` (validates `task.params`),
+`run(worker, task, subject_ref) -> list[ProposalDraft]`; it never writes proposals — the runner hands
+drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_file`). Base kinds
+`translate` / `field` / `video` register in `EnrichmentConfig.ready()`;
+other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
+the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit on the task's lane.
+Adapter extras `build_context` (field kind), `main_picture` / `picture` (video kind, the latter for `params.picture_ref`; absent → subject fails),
+`list_pictures` + `picture` (image kind) and `apply_modes` (add / replace on accept, `docs/api.md` § Accept / drift) are
+optional (`getattr`). Worker keys allow dots (`pim.translate`).
+
+**Revisions & corrections:** `proposed_value` always equals the latest `ProposalRevision`; only
+`revision_service.add_revision` writes both (intake writes revision 1). A correction is one stateless
+completion (`revise_service`); the answer schema depends on the value shape (`revise_values`). Full
+flow: `docs/api.md` § Revisions and corrections.
+
+**Generic kinds & templates:** `write` (text fields, one call per subject × language) and `pick` (select
+values, one call per subject) read the optional adapter extras through `kinds/extras.py` (`describe_fields`,
+`channel_languages`, `make_locator`, `field_key`, `build_context`, each with a fallback; catalog memoised per task); a kind refuses a subject with
+`SubjectError(code)` → `task.errors`. `TaskTemplate` presets a worker's params/rules; `POST tasks/` with
+`template` merges them (`template_service.merge_into_task`). `write` takes `options.field_limits` (a `{min, max}` character
+range per field, `kinds/field_limits.py`): shown in the prompt, one corrective call for a short field outside it, `LIMIT`
+warning from QA (`docs/api.md` § Field length). Details: `docs/api.md` § Generic kinds, § Templates.
+
+**Workflows:** a `WorkflowDefinition` lists steps (templates) with `needs` and gates (`review` | `auto`); a
+`WorkflowRun` freezes them in `steps_state`. Each step is a task on the subject `run:<uid>`; its output is a
+proposal — an artifact of the built-in `"enrichment"` adapter, or a document for the target module.
+Approving = accepting that proposal (`apply_service` → `workflow_service.on_proposal_applied` spawns the next
+steps); the runner hands finished step tasks to `on_task_finished`. Kinds `generate` / `sections` / `questions` /
+`compose` / `cover` (step output `image`: picture variants in one staged bundle, the operator picks one); profile, memory and augmentations reach prompts through `kinds/seams.py`. `adapter.apply` may
+return `{"subject_ref"}` → `ContentProposal.result_ref`. Full flow: `docs/workflows.md`.
+
 Tests: `tests/settings.py` is a standalone Django config (sqlite in-memory); `tests/fake_adapter.py` is the
 module-as-adapter that lets the whole bus flow run without a source module.
 
@@ -100,6 +157,9 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Endpoint table, worker pull-loop, idempotency, filters, drift, errors | `docs/api.md` |
 | Per-service contract, `scope_spec` shape, the `filter ⇄ gap` decision | `docs/services.md` |
 | Writing an adapter | `docs/adapter-guide.md` |
+| Workflows, artifacts, kinds generate / sections / questions / compose, seams | `docs/workflows.md` |
+| Augmentations (`params.augment`), `seo_brief` | `docs/api.md` § Augmentations |
+| Company profile (schema, versions, prompt context, status) and memory (recall, writers, promotion) | `docs/profile.md` |
 | Media staging flow | `docs/media.md` |
 | Async apply, undo, retention | `docs/scale-and-undo.md` |
 | Spawn rules, spawn surfaces (CSV, gap, list) | `docs/spawn-rules.md`, `docs/spawn-surfaces.md` |
@@ -117,15 +177,41 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_ADAPTERS` | `{}` | adapter key → dotted module path (`{"pim": "django_pim.services.enrichment_adapter"}`) |
 | `ENRICHMENT_MAX_IMAGE_BYTES` | 25 MB | media intake size cap |
 | `ENRICHMENT_ALLOWED_IMAGE_MIME` | jpeg, png, webp, gif, avif | media intake MIME allowlist |
+| `ENRICHMENT_MAX_VIDEO_BYTES` | 100 MB | video intake size cap (mp4 only) |
+| `ENRICHMENT_VIDEO_TIMEOUT_S` | `900` | how long the `video` kind polls a toolbox media job |
+| `ENRICHMENT_IMAGE_TIMEOUT_S` | `300` | how long the `image` kind polls a toolbox image job |
+| `ENRICHMENT_VIDEO_TOOLBOX_URL` / `_API_KEY` / `_CHANNEL` | the `AI_TOOLBOX_*` value | toolbox media job endpoint (POC) |
 | `ENRICHMENT_ASYNC_APPLY_THRESHOLD` | `50` | bulk accept/undo above this size goes to Celery |
 | `ENRICHMENT_APPLY_BATCH_SIZE` | `500` | batch size of the async apply |
 | `ENRICHMENT_CELERY_QUEUE` | `"enrichment"` | queue of the bulk apply / undo canvas |
+| `ENRICHMENT_INTERACTIVE_QUEUE` | `"enrichment_interactive"` | runner queue of `lane=now` runs, workflow steps, batch corrections |
+| `ENRICHMENT_BULK_QUEUE` | `"enrichment_bulk"` | runner queue of `lane=queue` runs (worker concurrency 1) |
+| `ENRICHMENT_RUN_NOW_MAX_SUBJECTS` | `20` | most subjects of one `lane=now` run |
+| `ENRICHMENT_UNIT_SIZE` | `5` | subjects per work unit |
+| `ENRICHMENT_MAX_INFLIGHT_PER_WORKER` | `2` | leases one worker may hold (per lane for a lane-scoped claim) |
+| `ENRICHMENT_LEASE_S` | `300` | lease length (a heartbeat extends it) |
+| `ENRICHMENT_MAX_ATTEMPTS` | `3` | claims of a unit before it fails for good |
+| `ENRICHMENT_RETRY_BACKOFF_S` | `60` | wait before a retried unit, × attempt |
+| `ENRICHMENT_INSTANCE_ONLINE_S` | `120` | an instance is online when seen within this |
+| `ENRICHMENT_STALE_QUEUE_S` | `900` | queued this long with nobody online → "Nobody is taking work" |
+| `ENRICHMENT_PAUSE_AFTER_FAILURES` | `5` | failed units in a row (one instance) that pause the worker |
+| `ENRICHMENT_AUTO_PAUSE` | `True` | `False` = notify only |
+| `ENRICHMENT_BUDGET_ERROR_CODES` | 4 toolbox codes | error codes that pause the worker at once |
+| `ENRICHMENT_NOTIFY_CHANNEL` / `_ROLE` | `"default-europe"` / `"operator"` | `django_notifications` channel idx and recipient role (missing → log only) |
+| `ENRICHMENT_PLAN_BATCH` / `_EVENTS_CAP` / `_CONSUME_MAX_UNITS` | `200` / `20` / `10` | units per insert, events kept per unit, units per consume run |
+| `ENRICHMENT_QUEUE_MAX_SUBJECTS` | `500` | most subjects of one run (list scope refused at spawn, planner caps all scopes) |
+| `ENRICHMENT_TASK_MAX_COST_USD` | `"5.00"` | a task at this cost stops (queued units cancelled, notification) |
 | `ENRICHMENT_RETENTION_DAYS` | `30` | undo window = retention |
 | `ENRICHMENT_MAX_CSV_BYTES` | 10 MB | CSV import size cap |
 | `ENRICHMENT_SPAWN_DEFAULT_LIMIT` | `200` | gap-task budget when a rule sets no `limit` |
 | `ENRICHMENT_SPAWN_COOLDOWN_DAYS` | `7` | gap cooldown when a rule sets no `cooldown_days` |
 
 ## Gotchas
+
+- Work queue (plan 23): a task becomes `WorkUnit`s (`work_units`) after commit; internal and external workers use
+  the same `work_queue_service`. The host MUST schedule `enrichment.reap` (60 s) and run workers on both lane
+  queues. A lost lease clears `lease_token`; a done unit keeps it (idempotent `complete`). Details in
+  `docs/services.md` § Work queue and `docs/api.md`.
 
 - The PIM adapter does NOT live here — it lives in `django-pim` (`services/enrichment_adapter.py`),
   duck-typed, self-registering. The bus never imports a source module directly.
@@ -175,5 +261,61 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   GapDefinition hit. The scope_spec key stays `"check"` (cross-module contract, a dict key).
 - **The PIM adapter ignores `SpawnRule.params`** — PIM's rule parameters live on the
   `GapDefinition` row keyed by `check_key`; `params` is forwarded per the contract but reserved.
+- **The internal runner runs on two lanes** (`lane_service`): `task.lane` `now` → `enrichment_interactive`, `queue` →
+  `enrichment_bulk` (worker with concurrency 1); never the default `celery` queue or `enrichment` (apply canvas). A host
+  without a worker on both lanes leaves tasks `open` forever. Workflow steps and batch corrections are always `now`.
+- **In-flight dedupe lives in `run_service`, not `task_service.spawn`** — only `POST tasks/` (and `tasks/{id}/retry/`,
+  which spawns through it) dedupes; internal spawns (workflow steps, spawn rules, CSV import) and `batch_key` calls
+  must keep spawning unchanged. Details: `docs/api.md` § Run lanes.
+- **A key the bus writes into `task.params` while a run goes must be listed in `retry_service.RUNTIME_PARAMS`** —
+  `context_numbers` today. A retry copies the original's params and would carry the key into the new run. `retry_of`
+  survives kind validation only because `task_service.spawn(retry_of=)` adds it after.
+  Details: `docs/api.md` § Retry a task.
+- **Runner paging:** gap tasks re-pull page 1 (work queue), others page++; a seen-set stops the loop
+  when a page brings no new subject (a failed gap subject never drops off the queue). A target is a SKU
+  string or a dict with `subject_ref`. Per-subject failure → `counts.failed`, logged with an error id;
+  every subject failed (or resolve itself failed) → task `failed`. No retry, no budget logic. The reason lands in
+  `task.errors` as a stable code (`toolbox_calls.failure_code`) + error id — never `str(exc)`; an `INTERNAL_ERROR` adds the
+  exception class name (`failure_exception`), still never the text. Codes: `docs/api.md` § Failure codes.
+- **`translate` posts via `ToolboxClient._post`/`_url`** (`retry=False`) — the client has no translator
+  method. Tests: `mock_toolbox` plus a respx route for `ai-translator/.../translate/`.
+- **Video toolbox endpoint is a POC escape hatch** — `ENRICHMENT_VIDEO_TOOLBOX_*` let media jobs hit a
+  local toolbox while text uses the shared test toolbox; remove once ai-toolbox-test has django-ai-media
+  (Redmine #34464). Video and image calls use plain httpx (not `ToolboxClient`, which is pinned to `AI_TOOLBOX_*`), so
+  `_toolbox_transport_errors` turns httpx timeouts and connection errors into the typed toolbox errors a text call raises.
+- **The `video` kind blocks a Celery worker** — it polls the media job (10 s interval) up to
+  `ENRICHMENT_VIDEO_TIMEOUT_S` inside `run_task`. Tests patch `toolbox_calls.time.sleep`.
+- **Accept mode is stored, not passed** — `apply_service` sets `proposal.apply_mode` (`add` | `replace`, blank = no
+  choice offered) before `adapter.apply`; `revert` reads the same field. Bulk accept never passes a mode → add.
+- **`tasks/?subject_ref=` sees list-mode tasks only** — a text match of `"<ref>"` in `scope_spec.refs`
+  (SQLite-safe, no JSON containment); filter/gap/csv tasks carry no refs. Full note: `docs/api.md` § Per-product view.
+- **Never write `proposed_value` directly** — go through `revision_service.add_revision`, or the
+  revision history drifts from the value.
+- **`params.template` survives kind validation only because `task_service.spawn` re-adds it** — kind
+  `Params` drop unknown keys; corrections find the template's rules through that key.
+- **Every toolbox call returns `toolbox_calls.Costed(value, cost)` and charges its task** (`cost_service`);
+  pass `task=` and (completions) `kind=` so the call is tagged and costed. `None` cost never becomes 0.
+  Details: `docs/api.md` § Costs.
+- **`limit` / `cooldown_days` / `spawn_rule` survive kind validation only because `task_service` carries them**
+  (`gap_params.carried_params`, validated). A spawn rule's run sets all three; without them the gap resolve sees no
+  budget and no cooldown ("Run now" takes every gap). A new bus-level param joins the carriers in
+  `task_service._carried_params`, never a special case in `spawn`.
+- **`params.augment` / `seo_scope` survive kind validation only because `task_service` re-adds them**
+  (`augmentations.carried_params`, validated against the registry). `seo_brief` SEO calls go through
+  `toolbox_calls.seo`; tests mock `ai-seo/.../search-volume|keyword-ideas|serp/` with respx next to `mock_toolbox`.
+- **Step params ride on `StepParams`** — kind `Params` drop unknown keys, so `run` / `step` / `inputs` survive
+  only on the four step kinds; a definition step must use one of them (`clean()` enforces it).
+- **A long subject keeps its lease through `lease_keepalive`** — every toolbox call beats first; `runner_service`
+  lets `LeaseLost` through (never a subject failure). A kind that waits without toolbox calls must call
+  `lease_keepalive.beat()` itself.
+- **Never move a run by hand** — `steps_state` and `status` change only in `workflow_service`, under the run's
+  row lock; an approved step cannot be regenerated or undone (artifact `revert` refuses).
+- **The profile is written only by `profile_service`** (validate → version bump → `ProfileVersion` snapshot);
+  operator text goes to the system message, facts and memory to fenced data blocks. Rule promotion target
+  `profile` writes a memory `rule_suggestion`, never the profile — `POST memory/{id}/promote/` does that.
+- **QA warnings ride on revisions** — `revision_service` runs `qa_service.check` for every new revision and copies
+  the result to `proposal.warnings`; never write `warnings` elsewhere (`qa_service.store` keeps both equal). Numbers
+  from a subject's source context reach the check only through `seams.record_context` (`params.context_numbers`).
+  Details: `docs/api.md` § QA checks.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

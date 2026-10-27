@@ -24,14 +24,53 @@ from django_enrichment.api.admin.permissions import IsAdminUser
 from django_enrichment.api.admin.throttling import SpawnThrottle
 from django_enrichment.api.admin.views._helpers import raise_as_drf
 from django_enrichment.schemas.requests import TaskCSVImportRequest, TaskSpawnRequest, TaskUpdateRequest
-from django_enrichment.schemas.responses import CSVImportResponse, TargetsResponse, TaskListResponse, TaskResponse
-from django_enrichment.services import task_service
+from django_enrichment.schemas.responses import (
+    CSVImportResponse,
+    TargetsResponse,
+    TaskListResponse,
+    TaskResponse,
+    TaskSpawnResponse,
+)
+from django_enrichment.services import (
+    lane_service,
+    retry_service,
+    run_service,
+    task_progress_service,
+    task_service,
+)
 
 _TAGS = ["Enrichment Tasks"]
 
 
 def _serialize(task) -> dict:
     return TaskResponse.model_validate(task).model_dump(mode="json")
+
+
+def _serialize_with_proposals(tasks: list) -> list[dict]:
+    """Tasks plus the status counts of their proposals (what the operator still has to review) and queue position."""
+    counts = task_service.proposal_counts([t.pk for t in tasks])
+    ahead = lane_service.queued_ahead(tasks)
+    units = task_progress_service.unit_summary([t.pk for t in tasks])
+    return [
+        {**_serialize(t), "proposal_counts": counts[t.pk], "queued_ahead": ahead[t.pk], "units": units[t.pk]}
+        for t in tasks
+    ]
+
+
+class AlreadyRunning(drf_exceptions.APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "already_running"
+
+
+class NotRetryable(drf_exceptions.APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "not_retryable"
+
+
+def _spawned(result: run_service.SpawnResult) -> Response:
+    """201 with the spawned task (`TaskSpawnResponse`) — `POST tasks/` and `POST tasks/{id}/retry/` answer alike."""
+    body = {**_serialize_with_proposals([result.task])[0], "skipped_in_flight": result.skipped_in_flight}
+    return Response(TaskSpawnResponse.model_validate(body).model_dump(mode="json"), status=status.HTTP_201_CREATED)
 
 
 def _get_task_or_404(task_id: int):
@@ -50,9 +89,9 @@ class TaskViewSet(viewsets.ViewSet):
     serializer_class = None
 
     def get_throttles(self):
-        # Task spawning (single spawn + CSV import) is the analyzer/ops traffic path — capped so a
+        # Task spawning (single spawn, CSV import, retry) is the analyzer/ops traffic path — capped so a
         # leaked service-account token or a runaway loop can't spam it. Reads/status-PATCH are not.
-        if self.action in ("create", "import_csv"):
+        if self.action in ("create", "import_csv", "retry"):
             return [SpawnThrottle()]
         return []
 
@@ -61,44 +100,80 @@ class TaskViewSet(viewsets.ViewSet):
         summary="List enrichment tasks",
         parameters=[
             OpenApiParameter("type", str, OpenApiParameter.QUERY, required=False),
-            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "status", str, OpenApiParameter.QUERY, required=False, description="one status or a comma list"
+            ),
             OpenApiParameter("batch_key", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                "subject_ref", str, OpenApiParameter.QUERY, required=False, description="list-mode tasks naming it"
+            ),
+            OpenApiParameter("target_module", str, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page", int, OpenApiParameter.QUERY, required=False),
             OpenApiParameter("page_size", int, OpenApiParameter.QUERY, required=False),
         ],
         responses={200: TaskListResponse},
     )
     def list(self, request: Request) -> Response:
+        qp = request.query_params
+        status_param = qp.get("status")
         qs = task_service.list_tasks(
-            type=request.query_params.get("type"),
-            status=request.query_params.get("status"),
-            batch_key=request.query_params.get("batch_key"),
+            task_service.TaskFilters(
+                type=qp.get("type"),
+                statuses=status_param.split(",") if status_param else None,
+                batch_key=qp.get("batch_key"),
+                subject_ref=qp.get("subject_ref"),
+                target_module=qp.get("target_module"),
+            )
         )
         paginator = AdminPageNumberPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response([_serialize(t) for t in page])
+        return paginator.get_paginated_response(_serialize_with_proposals(list(page)))
 
     @extend_schema(tags=_TAGS, summary="Retrieve task", responses={200: TaskResponse, 404: None})
     def retrieve(self, request: Request, pk: int) -> Response:
-        return Response(_serialize(_get_task_or_404(pk)))
+        body = _serialize_with_proposals([_get_task_or_404(pk)])[0]
+        return Response({**body, "failed_units": task_progress_service.failed_units(pk)})
 
-    @extend_schema(tags=_TAGS, summary="Spawn task", request=TaskSpawnRequest, responses={201: TaskResponse, 400: None})
+    @extend_schema(
+        tags=_TAGS,
+        summary="Spawn task",
+        request=TaskSpawnRequest,
+        responses={201: TaskSpawnResponse, 400: None, 409: None},
+    )
     def create(self, request: Request) -> Response:
         try:
             data = TaskSpawnRequest(**request.data)
         except ValidationError as exc:
             raise_pydantic_as_drf(exc)
         try:
-            task = task_service.spawn(
-                type=data.type,
-                scope_spec=data.scope_spec,
-                params=data.params,
-                requested_by=request.user,
-                batch_key=data.batch_key,
-            )
+            result = run_service.spawn(data, requested_by=request.user)
+        except run_service.AlreadyRunningError as exc:
+            raise AlreadyRunning(str(exc)) from exc
         except ValueError as exc:
             raise_as_drf(exc)
-        return Response(_serialize(task), status=status.HTTP_201_CREATED)
+        return _spawned(result)
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Retry the failed subjects of a task as a new task",
+        request=None,
+        responses={201: TaskSpawnResponse, 400: None, 404: None, 409: None},
+    )
+    def retry(self, request: Request, pk: int) -> Response:
+        """Spawn a new task for the subjects the task failed on (a failed task that names none: its whole scope),
+        with the same type, template and operator params and `params.retry_of` = this task. 409 `NOT_RETRYABLE`
+        while the task runs or when nothing failed, 409 `ALREADY_RUNNING` when those subjects are in flight again,
+        400 for a workflow step; everything else a spawn refuses (run lane cap, params) is the `POST tasks/` answer."""
+        task = _get_task_or_404(pk)
+        try:
+            result = retry_service.retry(task, user=request.user)
+        except retry_service.NotRetryableError as exc:
+            raise NotRetryable(str(exc)) from exc
+        except run_service.AlreadyRunningError as exc:
+            raise AlreadyRunning(str(exc)) from exc
+        except ValueError as exc:
+            raise_as_drf(exc)
+        return _spawned(result)
 
     @extend_schema(
         tags=_TAGS,

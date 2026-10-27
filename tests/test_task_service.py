@@ -105,6 +105,18 @@ def test_list_open_filters_status_and_type():
 
 
 @pytest.mark.django_db
+def test_transition_from_stale_object_does_not_overwrite():
+    task = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))
+    task_service.mark_in_progress(task)
+    task_service.transition_status(task_service.get_task(task.pk), TaskStatus.CANCELLED.value)
+
+    with pytest.raises(ValueError, match="changed concurrently"):
+        task_service.mark_done(task)
+    task.refresh_from_db()
+    assert task.status == TaskStatus.CANCELLED.value
+
+
+@pytest.mark.django_db
 def test_resolve_targets_filter_mode_uses_resolve_targets(fake_adapter):
     task = task_service.spawn(type="x", scope_spec=_scope("filter", refs=["SKU-1", "SKU-2"]))
     assert task_service.resolve_targets(task) == ["SKU-1", "SKU-2"]
@@ -230,9 +242,81 @@ def test_list_tasks_filters_by_batch_key():
     match = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]), batch_key="gaprule:r1")
     task_service.spawn(type="x", scope_spec=_scope("list", refs=["B"]), batch_key="other")
 
-    result = list(task_service.list_tasks(batch_key="gaprule:r1"))
+    result = list(task_service.list_tasks(task_service.TaskFilters(batch_key="gaprule:r1")))
 
     assert [t.pk for t in result] == [match.pk]
+
+
+@pytest.mark.django_db
+def test_list_tasks_filters_by_subject_ref_whole_element():
+    match = task_service.spawn(type="x", scope_spec=_scope("list", refs=["ENT-1", "ENT-2"]))
+    task_service.spawn(type="x", scope_spec=_scope("list", refs=["ENT-10"]))  # prefix of no element match
+    task_service.spawn(type="x", scope_spec=_scope("filter"))  # no refs at all
+
+    result = list(task_service.list_tasks(task_service.TaskFilters(subject_ref="ENT-1")))
+
+    assert [t.pk for t in result] == [match.pk]
+
+
+@pytest.mark.django_db
+def test_list_tasks_filters_by_statuses_and_module():
+    running = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))
+    task_service.mark_in_progress(running)
+    task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))  # open
+    done = task_service.mark_done(
+        task_service.mark_in_progress(task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"])))
+    )
+    task_service.spawn(type="x", scope_spec={"mode": "list", "module": "contentdb", "refs": ["A"]})
+
+    filters = task_service.TaskFilters(statuses=["in_progress", "done"], target_module="pim", subject_ref="A")
+    result = list(task_service.list_tasks(filters))
+
+    assert [t.pk for t in result] == [done.pk, running.pk]  # newest first
+
+
+@pytest.mark.django_db
+def test_record_error_is_capped():
+    task = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))
+    for n in range(task_service.ERRORS_CAP + 5):
+        task_service.record_error(task, subject_ref=f"S{n}", code="X", error_id=str(n))
+    task.refresh_from_db()
+    assert len(task.errors) == task_service.ERRORS_CAP
+    assert task.errors[0] == {"subject_ref": "S0", "code": "X", "error_id": "0"}
+
+
+@pytest.mark.django_db
+def test_record_error_keeps_message_and_exception_only_when_given():
+    task = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A"]))
+    task_service.record_error(task, subject_ref="A", code="X", error_id="1", message="why", exception="OSError")
+    task_service.record_error(task, subject_ref="B", code="X", error_id="2")
+    task.refresh_from_db()
+    assert task.errors == [
+        {"subject_ref": "A", "code": "X", "error_id": "1", "message": "why", "exception": "OSError"},
+        {"subject_ref": "B", "code": "X", "error_id": "2"},
+    ]
+
+
+@pytest.mark.django_db
+def test_proposal_counts_groups_by_task_and_status(fake_adapter):
+    from django_enrichment.services import proposal_service
+
+    task = task_service.spawn(type="x", scope_spec=_scope("list", refs=["A", "B"]))
+    idle = task_service.spawn(type="x", scope_spec=_scope("list", refs=["C"]))
+    locator = {"channel": "default", "language": "pl", "feature_idx": "description"}
+    for ref in ("A", "B"):
+        proposal_service.intake(
+            target_module="pim",
+            subject_ref=ref,
+            target_kind="attribute_value",
+            target_locator=locator,
+            proposed_value={"text": ref},
+            task=task,
+        )
+    proposal_service.reject(task.proposals.order_by("pk").first(), "x")
+
+    counts = task_service.proposal_counts([task.pk, idle.pk])
+
+    assert counts == {task.pk: {"pending": 1, "rejected": 1}, idle.pk: {}}
 
 
 @pytest.mark.django_db

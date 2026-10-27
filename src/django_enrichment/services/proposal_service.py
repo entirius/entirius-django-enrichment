@@ -19,14 +19,15 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
-from django.db.models import QuerySet
+from django.db import transaction
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 
 from django_enrichment import settings as enrichment_settings
 from django_enrichment.adapters import get_adapter
-from django_enrichment.enums import PROPOSAL_STATUS_TRANSITIONS, ProposalStatus
+from django_enrichment.enums import PROPOSAL_STATUS_TRANSITIONS, ProposalStatus, RevisionAuthor
 from django_enrichment.models import ContentProposal, EnrichmentTask, compute_locator_hash
-from django_enrichment.services import apply_service, staging_store, task_service
+from django_enrichment.services import apply_service, image_bundle, revision_service, staging_store, task_service
 
 _logger = logging.getLogger("process")
 
@@ -38,7 +39,22 @@ def transition_status(
     allowed = PROPOSAL_STATUS_TRANSITIONS.get(proposal.status)
     if allowed is None or new_status not in allowed:
         raise ValueError(f"invalid proposal transition: {proposal.status} -> {new_status}")
+    with transaction.atomic():
+        _lock_unchanged(proposal)
+        return _write_transition(proposal, new_status, user=user, reason=reason)
 
+
+def _lock_unchanged(proposal: ContentProposal) -> None:
+    """Row-lock the proposal and refuse when its stored status moved since it was read (a concurrent apply and
+    reject must not both win); held until the caller's transaction ends."""
+    stored = ContentProposal.objects.select_for_update().values_list("status", flat=True).get(pk=proposal.pk)
+    if stored != proposal.status:
+        raise ValueError(f"proposal changed meanwhile: it is {stored} now")
+
+
+def _write_transition(
+    proposal: ContentProposal, new_status: str, *, user: AbstractBaseUser | None, reason: str
+) -> ContentProposal:
     update_fields = ["status", "modified_at"]
     proposal.status = new_status
 
@@ -79,8 +95,13 @@ def intake(
     batch_id: str = "",
     external_ref: str = "",
     staged_file: str = "",
+    cost_usd: Decimal | None = None,
+    keep_edited: bool = False,
 ) -> ContentProposal:
-    """Ingest one worker proposal: idempotent on `external_ref`, snapshot live, supersede older."""
+    """Ingest one worker proposal: idempotent on `external_ref`, snapshot live, supersede older.
+
+    `keep_edited`: a pending proposal the operator already edited is never superseded — `KeptEdited` is raised
+    from inside the transaction (the check and the supersede see the same locked rows) and nothing is stored."""
     if external_ref:
         existing = ContentProposal.objects.filter(external_ref=external_ref).first()
         if existing is not None:
@@ -91,38 +112,52 @@ def intake(
         subject_ref=subject_ref, target_kind=target_kind, target_locator=target_locator
     )
 
-    _supersede_pending(target_module, subject_ref, target_kind, target_locator)
-
-    proposal = ContentProposal.objects.create(
-        task=task,
-        target_module=target_module,
-        target_type=target_type,
-        subject_ref=subject_ref,
-        subject_label=subject_label,
-        subject_url=subject_url,
-        target_kind=target_kind,
-        target_locator=target_locator,
-        proposed_value=proposed_value,
-        current_snapshot=current_snapshot,
-        source=source,
-        confidence=confidence,
-        batch_id=batch_id,
-        external_ref=external_ref,
-        staged_file=staged_file,
-    )
+    with transaction.atomic():
+        _supersede_pending(target_module, subject_ref, target_kind, target_locator, keep_edited)
+        proposal = _create_with_revision(
+            task=task,
+            target_module=target_module,
+            target_type=target_type,
+            subject_ref=subject_ref,
+            subject_label=subject_label,
+            subject_url=subject_url,
+            target_kind=target_kind,
+            target_locator=target_locator,
+            proposed_value=proposed_value,
+            current_snapshot=current_snapshot,
+            source=source,
+            confidence=confidence,
+            batch_id=batch_id,
+            external_ref=external_ref,
+            staged_file=staged_file,
+            cost_usd=cost_usd,
+        )
     if task is not None:
         task_service.increment_count(task, "proposed")
     return proposal
 
 
-def _sniff_image_mime(head: bytes) -> str | None:
-    """Detect image type from leading magic bytes — authoritative, never the client's declared type.
+def _create_with_revision(**fields: Any) -> ContentProposal:
+    """Create the proposal and its revision 1 (`revision_service` keeps value == latest revision)."""
+    proposal = ContentProposal.objects.create(**fields)
+    revision_service.record_initial(proposal)
+    return proposal
+
+
+_ZIP_MIME = "application/zip"
+_MP4_BRANDS = frozenset({b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"avc1", b"dash", b"M4V "})
+
+
+def _sniff_media_mime(head: bytes) -> str | None:
+    """Detect image / mp4 type from leading magic bytes — authoritative, never the client's declared type.
 
     Trusting the multipart `content_type` would let a worker (or a leaked key) stage an executable
     behind an `image/png` label. Sniffing the actual bytes is the security-correct gate.
     """
     if head[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
+    if head[:4] == b"PK\x03\x04":
+        return _ZIP_MIME  # allowed for an image bundle only
     if head[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if head[:6] in (b"GIF87a", b"GIF89a"):
@@ -131,28 +166,44 @@ def _sniff_image_mime(head: bytes) -> str | None:
         return "image/webp"
     if head[4:8] == b"ftyp" and b"avif" in head[8:20]:
         return "image/avif"
+    if head[4:8] == b"ftyp" and head[8:12] in _MP4_BRANDS:  # not HEIC, QuickTime, M4A, 3GP
+        return "video/mp4"
     return None
 
 
-def _validate_media(file) -> None:
-    """Boundary validation for a staged image — size cap + magic-byte MIME allowlist. Raises ValueError.
+def _media_rules(target_kind: str) -> tuple[str, int, frozenset[str]]:
+    """(label, size cap, MIME allowlist) per media kind. Raises ValueError for any other kind.
 
-    The service owns this (not just the view): a management command or bridge that calls
-    `intake_media` directly gets the same guarantee.
+    django.conf.settings is checked first so a host override / test fixture wins; the module-settings
+    value is the single source of the literal defaults (no duplicated constants here).
     """
-    # django.conf.settings checked first so a host override / test fixture wins; the module-settings
-    # value is the single source of the literal defaults (no duplicated constants here).
-    max_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
-    allowed = getattr(settings, "ENRICHMENT_ALLOWED_IMAGE_MIME", enrichment_settings.ENRICHMENT_ALLOWED_IMAGE_MIME)
+    image_bytes = getattr(settings, "ENRICHMENT_MAX_IMAGE_BYTES", enrichment_settings.ENRICHMENT_MAX_IMAGE_BYTES)
+    if target_kind in ("picture", "document"):  # a document's binary is its cover picture
+        allowed = getattr(settings, "ENRICHMENT_ALLOWED_IMAGE_MIME", enrichment_settings.ENRICHMENT_ALLOWED_IMAGE_MIME)
+        return "image", image_bytes, frozenset(allowed)
+    if target_kind == "artifact":  # the picture variants of a `cover` step, one zip (`image_bundle`)
+        return "image bundle", image_bytes * image_bundle.MAX_VARIANTS, frozenset({_ZIP_MIME})
+    if target_kind == "video":
+        max_bytes = getattr(settings, "ENRICHMENT_MAX_VIDEO_BYTES", enrichment_settings.ENRICHMENT_MAX_VIDEO_BYTES)
+        return "video", max_bytes, frozenset({"video/mp4"})
+    raise ValueError(f"unsupported media target_kind {target_kind!r} (allowed: picture, video, document, artifact)")
+
+
+def _validate_media(file, target_kind: str = "picture") -> None:
+    """Boundary validation for a staged binary — size cap + magic-byte MIME allowlist. Raises ValueError.
+
+    The service owns this (not just the view): a management command, bridge or the internal runner
+    that calls `intake_media` directly gets the same guarantee.
+    """
+    label, max_bytes, allowed = _media_rules(target_kind)
     size = getattr(file, "size", None)
     if size is not None and size > max_bytes:
         raise ValueError(f"file exceeds the {max_bytes}-byte cap")
     file.seek(0)
     head = file.read(32)
     file.seek(0)
-    mime = _sniff_image_mime(head)
-    if mime is None or mime not in allowed:
-        raise ValueError(f"unsupported image type (allowed: {sorted(allowed)})")
+    if _sniff_media_mime(head) not in allowed:
+        raise ValueError(f"unsupported {label} type (allowed: {sorted(allowed)})")
 
 
 def intake_media(
@@ -170,20 +221,23 @@ def intake_media(
     confidence: Decimal | None = None,
     batch_id: str = "",
     external_ref: str = "",
+    target_kind: str = "picture",
+    cost_usd: Decimal | None = None,
+    keep_edited: bool = False,
 ) -> ContentProposal:
     """Intake a media proposal: validate + stage the binary, then create the proposal (etap-08).
 
-    The binary lands in the bus's staging-store (NOT the target module). `target_kind` is forced to
-    `"picture"`. Cleans up the staged file if proposal creation fails, or if `external_ref`
+    The binary lands in the bus's staging-store (NOT the target module). `target_kind` is `"picture"`
+    (default) or `"video"` (mp4, Amendment A1); each has its own size cap and MIME allowlist. Cleans up the staged file if proposal creation fails, or if `external_ref`
     idempotency returns a pre-existing proposal (our freshly staged copy would otherwise orphan).
     """
-    _validate_media(file)
+    _validate_media(file, target_kind)
     ref = staging_store.save(file)
     try:
         proposal = intake(
             target_module=target_module,
             subject_ref=subject_ref,
-            target_kind="picture",
+            target_kind=target_kind,
             target_locator=target_locator,
             proposed_value=proposed_value,
             task=task,
@@ -195,6 +249,8 @@ def intake_media(
             batch_id=batch_id,
             external_ref=external_ref,
             staged_file=ref,
+            cost_usd=cost_usd,
+            keep_edited=keep_edited,
         )
     except Exception:
         staging_store.delete(ref)
@@ -205,21 +261,59 @@ def intake_media(
     return proposal
 
 
-def _supersede_pending(target_module: str, subject_ref: str, target_kind: str, target_locator: dict) -> None:
+class KeptEdited(Exception):
+    """The target has a pending proposal the operator edited; intake with `keep_edited` leaves it alone."""
+
+
+def _supersede_pending(
+    target_module: str, subject_ref: str, target_kind: str, target_locator: dict, keep_edited: bool = False
+) -> None:
     """Mark older pending proposals on the same target as superseded.
 
     Single `.update()`, not per-row `transition_status`: superseding is a pure status flip with no
     audit, the filter guarantees the source is `pending`, and `pending → superseded` is always legal.
-    `locator_hash` computed explicitly (the model `save()` is bypassed by `.update()`).
+    `locator_hash` computed explicitly (the model `save()` is bypassed by `.update()`). With `keep_edited` the
+    pending rows are locked first and an operator-edited one aborts the intake (`KeptEdited`); the UPDATE itself
+    also excludes edited rows, so an edit saved in between is never superseded.
     """
-    locator_hash = compute_locator_hash(target_locator)
-    ContentProposal.objects.filter(
+    pending = ContentProposal.objects.filter(
         target_module=target_module,
         subject_ref=subject_ref,
         target_kind=target_kind,
-        locator_hash=locator_hash,
+        locator_hash=compute_locator_hash(target_locator),
         status=ProposalStatus.PENDING.value,
-    ).update(status=ProposalStatus.SUPERSEDED.value, modified_at=timezone.now())
+    )
+    if keep_edited:
+        list(pending.select_for_update().values_list("pk", flat=True))
+        if pending.filter(revisions__number__gt=1).exists():
+            raise KeptEdited
+        pending = pending.exclude(revisions__number__gt=1)
+    pending.update(status=ProposalStatus.SUPERSEDED.value, modified_at=timezone.now())
+
+
+def subject_has_operator_edits(target_module: str, subject_ref: str, source_prefix: str) -> bool:
+    """True when the subject has a pending proposal of this worker (`source` prefix) the operator already
+    edited — checked before the paid call, so a kept target costs nothing."""
+    return ContentProposal.objects.filter(
+        target_module=target_module,
+        subject_ref=subject_ref,
+        source__startswith=source_prefix,
+        status=ProposalStatus.PENDING.value,
+        revisions__number__gt=1,
+    ).exists()
+
+
+def has_operator_edits(target_module: str, subject_ref: str, target_kind: str, target_locator: dict) -> bool:
+    """True when the target has a pending proposal the operator already worked on (any revision after the first:
+    an edit, an AI correction they asked for, a restore). The runner keeps such a proposal instead of superseding it."""
+    return ContentProposal.objects.filter(
+        target_module=target_module,
+        subject_ref=subject_ref,
+        target_kind=target_kind,
+        locator_hash=compute_locator_hash(target_locator),
+        status=ProposalStatus.PENDING.value,
+        revisions__number__gt=1,
+    ).exists()
 
 
 def list_for_review(
@@ -231,6 +325,8 @@ def list_for_review(
     source: str | None = None,
     confidence_min: Decimal | None = None,
     search: str | None = None,
+    subject_ref: str | None = None,
+    task_id: int | None = None,
     ordering: str = "-created_at",
 ) -> QuerySet[ContentProposal]:
     """Server-side filtered/ordered review queue."""
@@ -248,7 +344,11 @@ def list_for_review(
     if confidence_min is not None:
         qs = qs.filter(confidence__gte=confidence_min)
     if search:
-        qs = qs.filter(subject_label__icontains=search)
+        qs = qs.filter(Q(subject_label__icontains=search) | Q(subject_ref__icontains=search))
+    if subject_ref:
+        qs = qs.filter(subject_ref=subject_ref)
+    if task_id is not None:
+        qs = qs.filter(task_id=task_id)
     return qs.order_by(ordering)
 
 
@@ -261,9 +361,20 @@ def get_proposal(proposal_id: int) -> ContentProposal:
         raise ValueError(f"Proposal {proposal_id} not found") from exc
 
 
-def accept(proposal: ContentProposal, *, user: AbstractBaseUser | None = None) -> ContentProposal:
-    """Accept a single proposal — drift-aware write via the adapter."""
-    return apply_service.apply(proposal, user=user)
+def update_value(
+    proposal: ContentProposal, proposed_value: dict, *, user: AbstractBaseUser | None = None
+) -> ContentProposal:
+    """Operator edit before accept — recorded as a `user` revision (pending / drifted only)."""
+    revision_service.add_revision(proposal, proposed_value, author_kind=RevisionAuthor.USER.value, author=user)
+    return proposal
+
+
+def accept(
+    proposal: ContentProposal, *, user: AbstractBaseUser | None = None, mode: str | None = None
+) -> ContentProposal:
+    """Accept a single proposal — drift-aware write via the adapter; `mode` = add / replace (media, see
+    `apply_service.apply_modes`)."""
+    return apply_service.apply(proposal, user=user, mode=mode)
 
 
 def reject(proposal: ContentProposal, reason: str, *, user: AbstractBaseUser | None = None) -> ContentProposal:
