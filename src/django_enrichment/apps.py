@@ -35,6 +35,7 @@ class EnrichmentConfig(AppConfig):
     @staticmethod
     def _register_kinds() -> None:
         from django_enrichment.kinds import register_kind
+        from django_enrichment.kinds.comfy import ComfyKind
         from django_enrichment.kinds.compose import ComposeKind
         from django_enrichment.kinds.cover import CoverKind
         from django_enrichment.kinds.field import FieldKind
@@ -58,3 +59,4 @@ class EnrichmentConfig(AppConfig):
         register_kind("questions", QuestionsKind)
         register_kind("compose", ComposeKind)
         register_kind("cover", CoverKind)
+        register_kind("comfy", ComfyKind)

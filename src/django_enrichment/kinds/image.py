@@ -70,8 +70,8 @@ class ImageKind(Kind):
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         params = ImageParams.model_validate(task.params)
         adapter = get_adapter(worker.target_module)
-        source_ref = params.picture_ref or _main_ref(adapter, subject_ref, params.channel)
-        image, mime = _read_picture(adapter, subject_ref, params.channel, source_ref)
+        source_ref = params.picture_ref or main_picture_ref(adapter, subject_ref, params.channel)
+        image, mime = read_picture(adapter, subject_ref, params.channel, source_ref)
         result = toolbox_calls.generate_image(image=image, mime=mime, form=_form(worker, params), task=task)
         drafts = [_draft(params, source_ref, index, png, len(result.value)) for index, png in enumerate(result.value)]
         return with_cost(drafts, result.cost)
@@ -83,14 +83,14 @@ def _extra(adapter: Any, name: str) -> Any:
     return extra
 
 
-def _main_ref(adapter: Any, subject_ref: str, channel: str) -> str:
+def main_picture_ref(adapter: Any, subject_ref: str, channel: str) -> str:
     pictures = _extra(adapter, "list_pictures")(subject_ref=subject_ref, channel=channel)
     if main := next((item["ref"] for item in pictures if item.get("is_main")), None):
         return main
     raise SubjectError("NO_PICTURE", f"{subject_ref!r} has no main picture")
 
 
-def _read_picture(adapter: Any, subject_ref: str, channel: str, picture_ref: str) -> tuple[bytes, str]:
+def read_picture(adapter: Any, subject_ref: str, channel: str, picture_ref: str) -> tuple[bytes, str]:
     try:
         return _extra(adapter, "picture")(subject_ref=subject_ref, channel=channel, picture_ref=picture_ref)
     except LookupError as exc:

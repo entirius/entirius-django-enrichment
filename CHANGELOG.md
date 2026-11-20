@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Kind `comfy`: a ComfyUI workflow on every main picture of a channel, once per file (`docs/comfy.md`). One `Worker`
+  per workflow; `options` name the `workflow.json` (its sha256 is the workflow version), the `LoadImage` node, the
+  output (`metrics` or `picture`), a metric and an optional prefilter registered by the host
+  (`register_comfy_metric`, `register_comfy_prefilter`), the thresholds (`set` / `review` / `escalate`), the BOOL and
+  escalation features and `dry_run`. Verdicts become a flag applied at once (`set`), a pending flag (`review`), a
+  pending `false` over a true flag (`pass`), an escalation option applied at once (and put back to `escalate_ok` when
+  the picture is fine again), or a pending derived picture (`output: picture`).
+- `ComfyResult` (migration `0006`): what a `comfy` worker found per (product, file sha1, worker, workflow sha256).
+  Written only after ComfyUI answered; a stored score is judged again against new thresholds without the GPU, and a
+  file shared by two products runs once. Read-only in Django admin.
+- `enrichment.comfy_spawn` beat: per active `comfy` worker, the next `ENRICHMENT_COMFY_SPAWN_LIMIT` (100) unchecked
+  main pictures as one `list` task on the bulk lane, only when ComfyUI answers and no task of the worker runs. Reads
+  the adapter's new optional extra `main_pictures(channel, page)` (PIM 3.9.0). The host's beat schedule is the window.
+- `ProposalDraft.auto_apply`: the runner applies the proposal right after intake (source, drift check, undo as
+  usual); a refused write leaves it pending. A media draft can never be applied automatically.
+- Settings `ENRICHMENT_COMFYUI_URL`, `ENRICHMENT_COMFYUI_TIMEOUT_S` (180), `ENRICHMENT_COMFY_SPAWN_LIMIT` (100).
+
+### Changed
+
+- Kind `image`: the helpers that pick and read the main picture are public (`main_picture_ref`, `read_picture`), shared
+  with kind `comfy`. No behaviour change.
+
 ## 2.3.0 — 2026-10-27
 - Kind `write`: a field value that repeats the whole answer object (`{"description": "<p>…</p>"}`, or with `text`
   as the key) is replaced by the string inside it, in the first answer and in the corrective rewrite, so the proposal
