@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ("modified_at", models.DateTimeField(auto_now=True)),
                 ("input_sha1", models.CharField(max_length=40)),
                 ("worker_key", models.CharField(max_length=64)),
-                ("workflow_hash", models.CharField(max_length=64)),
+                ("run_hash", models.CharField(max_length=64)),
                 ("subject_ref", models.CharField(max_length=255)),
                 ("source", models.CharField(max_length=16)),
                 ("metrics", models.JSONField(blank=True, default=dict)),
@@ -29,12 +29,12 @@ class Migration(migrations.Migration):
             ],
             options={
                 "indexes": [
-                    models.Index(fields=["input_sha1", "worker_key", "workflow_hash"], name="enr_comfy_file_idx"),
+                    models.Index(fields=["worker_key", "run_hash", "input_sha1"], name="enr_comfy_run_idx"),
                     models.Index(fields=["worker_key", "verdict"], name="enr_comfy_worker_verdict_idx"),
                 ],
                 "constraints": [
                     models.UniqueConstraint(
-                        fields=("subject_ref", "input_sha1", "worker_key", "workflow_hash"), name="enr_comfy_result_key"
+                        fields=("subject_ref", "input_sha1", "worker_key", "run_hash"), name="enr_comfy_result_key"
                     )
                 ],
             },

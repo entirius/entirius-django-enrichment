@@ -9,9 +9,10 @@ the worker version. The host owns the domain: the workflow file, and the metric 
 by name from its own `AppConfig.ready()` (`register_comfy_metric`, `register_comfy_prefilter`) — the bus knows no
 metric.
 
-Per subject: the main picture (adapter `list_pictures` + `picture`) → its sha1 → the stored `ComfyResult` of (sha1,
-worker, workflow file hash), else the prefilter (no GPU), else the workflow on ComfyUI (`comfyui_client`) and the metric
-on its output. The verdict is the first threshold the score reaches (highest first), else `pass`; a stored result is
+Per subject: the main picture (adapter `list_pictures` + `picture`) → its sha1 → the stored `ComfyResult` of (product,
+sha1, worker, run hash), else the prefilter (no GPU), else the workflow on ComfyUI (`comfyui_client`) and the metric on
+its output. The run hash covers the workflow file and the options that shape a result (`RUN_FIELDS`), so changing any of
+them runs again. The verdict is the first threshold the score reaches (highest first), else `pass`; a stored result is
 re-judged against the current thresholds without running the workflow again.
 
 Verdict → drafts (none with `dry_run`; none when the value is already there):
@@ -20,8 +21,10 @@ Verdict → drafts (none with `dry_run`; none when the value is already there):
 - `pass`: `feature` = false, pending — only when it is true now (a flag the worker no longer supports goes back to a
   person, whoever set it);
 - `escalate`: `escalate_feature` = the reason (an option of that select), applied at once; any other verdict puts
-  `escalate_ok` back the same way when the feature holds another option (a replaced picture clears its escalation);
-- `propose_picture` (`output: picture`): the workflow's output as a derived picture of the main one, always pending.
+  `escalate_ok` back the same way, but only over an option this worker applied itself (a replaced picture clears its
+  own escalation, never a person's or another worker's);
+- `propose_picture` (`output: picture`): the workflow's output as a derived picture of the main one, always pending;
+  the workflow runs again for a picture whose proposal never landed.
 
 ComfyUI down or failing raises (a subject failure with a stable code): no result, no draft, the next spawn tries the
 file again. Nothing is ever judged without an answer.
@@ -38,10 +41,13 @@ from pydantic import BaseModel, Field, model_validator
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import extras
 from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError
-from django_enrichment.kinds.image import main_picture_ref, read_picture
+from django_enrichment.kinds.image import DERIVED_OP, main_picture_ref, read_picture
 from django_enrichment.services import comfy_result_service, comfyui_client
 
+KIND = "comfy"
 SET, REVIEW, ESCALATE, PASS, PROPOSE_PICTURE = "set", "review", "escalate", "pass", "propose_picture"
+# The options that shape a stored result: a change runs the workflow again (thresholds and features only re-judge).
+RUN_FIELDS = frozenset({"input_node", "output", "metric", "score", "prefilter"})
 SOURCE_PREFILTER, SOURCE_WORKFLOW = "prefilter", "workflow"
 FLAG_KIND, PICTURE_KIND = "attribute_value", "picture"
 NO_SCORE = "COMFY_NO_SCORE"
@@ -96,8 +102,8 @@ class ComfyOptions(BaseModel):
     def _consistent(self) -> "ComfyOptions":
         _check_registered(self)
         actions = {threshold.action for threshold in self.thresholds}
-        if self.output == "picture" and actions:
-            raise ValueError("a picture workflow takes no thresholds (its output is always proposed)")
+        if self.output == "picture" and (actions or self.dry_run):
+            raise ValueError("a picture workflow takes no thresholds and no dry run (its output is always proposed)")
         if actions & {SET, REVIEW} and not self.feature:
             raise ValueError("`set` / `review` thresholds need `feature`")
         if ESCALATE in actions and not self.escalate_feature:
@@ -142,22 +148,26 @@ class ComfyKind(Kind):
         adapter = get_adapter(worker.target_module)
         picture_ref = main_picture_ref(adapter, subject_ref, options.channel)
         subject = Subject(subject_ref, picture_ref, *read_picture(adapter, subject_ref, options.channel, picture_ref))
-        workflow, workflow_hash = comfy_result_service.load_workflow(options.workflow)
-        if options.input_node not in workflow:
-            raise SubjectError(comfy_result_service.WORKFLOW_INVALID, f"no node {options.input_node!r}")
+        workflow, run_hash = load_run(options)
         sha1 = hashlib.sha1(subject.image, usedforsecurity=False).hexdigest()
-        key = comfy_result_service.ResultKey(subject_ref, sha1, worker.key, workflow_hash)
+        key = comfy_result_service.ResultKey(subject_ref, sha1, worker.key, run_hash)
         outcome = _outcome(worker, options, key, subject, workflow)
         return [] if options.dry_run else _drafts(adapter, worker, options, subject, outcome)
 
 
+def load_run(options: ComfyOptions) -> tuple[dict, str]:
+    """The workflow and the run hash results are keyed by: the workflow file and the options in `RUN_FIELDS`."""
+    workflow, run_hash = comfy_result_service.load_workflow(options.workflow, options.model_dump(include=RUN_FIELDS))
+    if options.input_node not in workflow:
+        raise SubjectError(comfy_result_service.WORKFLOW_INVALID, f"no node {options.input_node!r}")
+    return workflow, run_hash
+
+
 def _outcome(worker: Any, options: ComfyOptions, key: Any, subject: Subject, workflow: dict) -> Outcome:
-    """The stored result re-judged (this product's, else the same file's on another product), else a new one
-    (prefilter, else the workflow); stored before any draft."""
+    """The stored result re-judged, else a new one (prefilter, else the workflow); stored before any draft. A stored
+    picture whose proposal never landed (an intake that failed) runs again: the output itself is not kept."""
     stored = comfy_result_service.find(key)
-    if stored is None and (shared := comfy_result_service.find_same_file(key)) and shared.verdict != PROPOSE_PICTURE:
-        stored = shared  # another product's output picture was not kept, so only a judged file is shared
-    if stored is not None:
+    if stored is not None and (stored.verdict != PROPOSE_PICTURE or _picture_proposed(worker, options, subject)):
         return _rejudge(worker, options, key, stored)
     if options.prefilter and (decision := _PREFILTERS[options.prefilter](subject.image)):
         outcome = Outcome(decision.action, decision.reason)
@@ -171,7 +181,7 @@ def _rejudge(worker: Any, options: ComfyOptions, key: Any, stored: Any) -> Outco
     if stored.source == SOURCE_WORKFLOW and options.output == "metrics":
         outcome = _judge(options, stored.metrics)
     else:
-        outcome = Outcome(stored.verdict, stored.reason)  # a picture is not kept: it is not proposed twice
+        outcome = Outcome(stored.verdict, stored.reason)
     _store(worker, key, outcome, source=stored.source, metrics=stored.metrics)
     return outcome
 
@@ -211,7 +221,10 @@ def _store(worker: Any, key: Any, outcome: Outcome, *, source: str, metrics: dic
 def _drafts(adapter: Any, worker: Any, options: ComfyOptions, subject: Subject, outcome: Outcome) -> list:
     if outcome.verdict == PROPOSE_PICTURE:
         return [_picture_draft(worker, options, subject, outcome.picture)] if outcome.picture else []
-    drafts = (_flag_draft(adapter, options, subject, outcome), _escalation_draft(adapter, options, subject, outcome))
+    drafts = (
+        _flag_draft(adapter, options, subject, outcome),
+        _escalation_draft(adapter, worker, options, subject, outcome),
+    )
     return [draft for draft in drafts if draft is not None]
 
 
@@ -226,14 +239,24 @@ def _flag_draft(adapter: Any, options: ComfyOptions, subject: Subject, outcome: 
     return None
 
 
-def _escalation_draft(adapter: Any, options: ComfyOptions, subject: Subject, outcome: Outcome) -> ProposalDraft | None:
+def _escalation_draft(
+    adapter: Any, worker: Any, options: ComfyOptions, subject: Subject, outcome: Outcome
+) -> ProposalDraft | None:
+    """The escalation option, or `escalate_ok` back over an option this worker applied itself."""
     wanted = outcome.reason if outcome.verdict == ESCALATE else options.escalate_ok
     if not (options.escalate_feature and wanted):
         return None
     locator, current = _current(adapter, options, subject, options.escalate_feature)
-    if current.get("option") == wanted or (outcome.verdict != ESCALATE and not current.get("option")):
-        return None  # already so, or nothing to put back
+    if current.get("option") == wanted:
+        return None
+    if outcome.verdict != ESCALATE and not _applied_by(worker, subject, locator, current):
+        return None  # empty, or set by a person or another worker: not ours to put back
     return ProposalDraft(FLAG_KIND, locator, {"option": wanted}, auto_apply=True)
+
+
+def _applied_by(worker: Any, subject: Subject, locator: dict, current: dict) -> bool:
+    last = comfy_result_service.last_applied(worker.target_module, subject.ref, FLAG_KIND, locator)
+    return last is not None and last.source.startswith(f"worker:{worker.key}@") and last.proposed_value == current
 
 
 def _current(adapter: Any, options: ComfyOptions, subject: Subject, feature: str) -> tuple[dict, dict]:
@@ -242,12 +265,21 @@ def _current(adapter: Any, options: ComfyOptions, subject: Subject, feature: str
     return locator, current
 
 
-def _picture_draft(worker: Any, options: ComfyOptions, subject: Subject, png: bytes) -> ProposalDraft:
-    locator = {
+def _picture_locator(worker: Any, options: ComfyOptions, subject: Subject) -> dict:
+    return {
         "channel": options.channel,
         "source_picture_ref": subject.picture_ref,
         "operation": worker.key,
         "variant": 1,
     }
-    value = {"op": "derived", "operation": worker.key, "preset": "", "variant": 1, "of": 1}
+
+
+def _picture_proposed(worker: Any, options: ComfyOptions, subject: Subject) -> bool:
+    locator = _picture_locator(worker, options, subject)
+    return comfy_result_service.proposal_exists(worker.target_module, subject.ref, PICTURE_KIND, locator)
+
+
+def _picture_draft(worker: Any, options: ComfyOptions, subject: Subject, png: bytes) -> ProposalDraft:
+    value = {"op": DERIVED_OP, "operation": worker.key, "preset": "", "variant": 1, "of": 1}
+    locator = _picture_locator(worker, options, subject)
     return ProposalDraft(PICTURE_KIND, locator, value, media_file=ContentFile(png, name=f"{worker.key}.png"))

@@ -209,12 +209,22 @@ class TestClient:
                 comfyui_client.run(_WORKFLOW, input_node="1", image=_PNG, filename="x.png")
         assert toolbox_calls.failure_code(caught.value) == code
 
-    def test_a_prompt_that_never_finishes_times_out(self, settings):
+    def test_a_prompt_that_never_finishes_times_out_and_leaves_the_queue(self, settings):
         settings.ENRICHMENT_COMFYUI_TIMEOUT_S = 0
         with respx.mock(assert_all_called=False) as router:
             _mock_comfy(router)
+            delete = router.post(f"{COMFY}/queue").mock(return_value=httpx.Response(200, json={}))
             with pytest.raises(TimeoutError):
                 comfyui_client.run(_WORKFLOW, input_node="1", image=_PNG, filename="x.png")
+        assert json.loads(delete.calls[0].request.content) == {"delete": ["abc"]}
+
+    def test_an_answer_of_the_wrong_shape_has_a_stable_code(self):
+        with respx.mock(assert_all_called=False) as router:
+            _mock_comfy(router)
+            router.post(f"{COMFY}/prompt").mock(return_value=httpx.Response(200, text="<html>proxy</html>"))
+            with pytest.raises(SubjectError) as caught:
+                comfyui_client.run(_WORKFLOW, input_node="1", image=_PNG, filename="x.png")
+        assert caught.value.code == "COMFYUI_BAD_RESPONSE"
 
     def test_not_configured(self, settings):
         settings.ENRICHMENT_COMFYUI_URL = ""
@@ -251,6 +261,7 @@ class TestOptions:
                 {"output": "picture", "metric": "", "thresholds": [{"min": 0.3, "action": "review"}], "feature": "f"},
                 "no thresholds",
             ),
+            ({"output": "picture", "metric": "", "dry_run": True}, "no dry run"),
         ],
     )
     def test_inconsistent_options_are_refused(self, over, message):
@@ -376,6 +387,17 @@ class TestPrefilterAndEscalation:
             ("packshot_check", {"option": "ok"}, "applied"),
         ]
 
+    def test_an_option_a_person_set_is_never_put_back(self, make_comfy, catalogue, scores, fake_adapter):
+        by_image, _ = scores
+        catalogue["SKU"] = _picture(1)
+        by_image[_picture(1)] = 0.01
+        fake_adapter.set_current("SKU", "attribute_value", _CHECK, {"option": "replace_background"})
+        worker = make_comfy(prefilter="format", escalate_feature="packshot_check", escalate_ok="ok")
+        with respx.mock() as router:
+            _mock_comfy(router)
+            _run(worker, "SKU")
+        assert _proposals() == []
+
 
 @pytest.mark.django_db
 class TestFailuresAndCache:
@@ -412,19 +434,33 @@ class TestFailuresAndCache:
         result = ComfyResult.objects.get()
         assert (result.verdict, result.worker_version) == ("set", worker.version)
 
-    def test_the_same_file_on_two_products_runs_once_and_flags_both(self, make_comfy, catalogue, scores):
+    def test_the_same_file_on_two_products_flags_both(self, make_comfy, catalogue, scores):
         by_image, _ = scores
         catalogue.update({"GIFT-50": _picture(1), "GIFT-100": _picture(1)})
         by_image[_picture(1)] = 0.9
         worker = make_comfy()
         with respx.mock() as router:
-            _, prompt, _ = _mock_comfy(router)
+            _mock_comfy(router)
             _run(worker, "GIFT-50")
             assert comfy_spawn_service.unchecked_refs(worker, limit=10) == ["GIFT-100"]
             _run(worker, "GIFT-100")
-        assert prompt.call_count == 1
         assert [(p.subject_ref, p.status) for p in _proposals()] == [("GIFT-50", "applied"), ("GIFT-100", "applied")]
         assert comfy_spawn_service.unchecked_refs(worker, limit=10) == []
+
+    def test_a_changed_metric_or_score_runs_again(self, make_comfy, catalogue, scores):
+        by_image, _ = scores
+        catalogue["EDGE"] = _picture(1)
+        by_image[_picture(1)] = 0.2
+        comfy.register_comfy_metric("other", lambda image, output: {"loss": 0.5})
+        worker = make_comfy()
+        with respx.mock() as router:
+            _, prompt, _ = _mock_comfy(router)
+            _run(worker, "EDGE")
+            worker.options = {**worker.options, "metric": "other", "score": "loss"}
+            task = _run(worker_service.save_worker(worker), "EDGE")
+        assert prompt.call_count == 2
+        assert task.counts.get("failed", 0) == 0
+        assert sorted(ComfyResult.objects.values_list("verdict", flat=True)) == ["review", "set"]
 
     def test_an_edited_workflow_runs_again(self, make_comfy, catalogue, scores, comfy_settings):
         by_image, _ = scores
@@ -462,6 +498,17 @@ class TestPictureOutput:
         assert proposal.proposed_value["op"] == "derived"
         assert proposal.open_staged_file().read() == _OUT
         assert ComfyResult.objects.get().verdict == "propose_picture"
+
+    def test_a_picture_whose_proposal_never_landed_runs_again(self, make_comfy, catalogue, scores):
+        catalogue["SMALL"] = _picture(1)
+        worker = make_comfy(output="picture", metric="", thresholds=[], feature="")
+        with respx.mock() as router:
+            _, prompt, _ = _mock_comfy(router)
+            _run(worker, "SMALL")
+            ContentProposal.objects.all().delete()  # an intake that failed after the result was stored
+            _run(worker, "SMALL")
+        assert prompt.call_count == 2
+        assert len(_proposals()) == 1
 
 
 # ── spawn ───────────────────────────────────────────────────────────────────────────────────
@@ -505,19 +552,20 @@ class TestSpawn:
         worker = worker_service.save_worker(worker)
         assert comfy_spawn_service.unchecked_refs(worker, limit=10) == ["A"]
 
-    def test_the_cursor_walks_on_and_wraps(self, make_comfy, catalogue, fake_adapter, monkeypatch):
+    def test_the_previous_tasks_failures_go_last(self, make_comfy, catalogue, fake_adapter, monkeypatch):
         for n, sku in enumerate(["A", "B", "C", "D", "E"], start=1):
             catalogue[sku] = _picture(n)
         rows = fake_adapter.main_pictures
-        monkeypatch.setattr(
-            fake_adapter,
-            "main_pictures",
-            lambda **kw: [{**r, "sha1": r["sha1"] if r["subject_ref"] != "E" else ""} for r in rows(**kw)],
-        )
+
+        def _e_without_sha1(**kw):
+            return [{**r, "sha1": "" if r["subject_ref"] == "E" else r["sha1"]} for r in rows(**kw)]
+
+        monkeypatch.setattr(fake_adapter, "main_pictures", _e_without_sha1)
         worker = make_comfy()
         assert comfy_spawn_service.unchecked_refs(worker, limit=2) == ["A", "B"]
-        assert comfy_spawn_service.unchecked_refs(worker, limit=2) == ["C", "D"]  # E has no sha1: left out
-        assert comfy_spawn_service.unchecked_refs(worker, limit=3) == ["A", "B", "C"]
+        EnrichmentTask.objects.create(type=worker.key, status="done", scope_spec={"refs": ["A", "B"]})  # both failed
+        assert comfy_spawn_service.unchecked_refs(worker, limit=2) == ["C", "D"]
+        assert comfy_spawn_service.unchecked_refs(worker, limit=10) == ["C", "D", "A", "B"]  # E has no sha1
 
     def test_the_beat_spawns_every_worker_and_survives_a_broken_one(self, make_comfy, catalogue, comfy_settings):
         catalogue["A"] = _picture(1)

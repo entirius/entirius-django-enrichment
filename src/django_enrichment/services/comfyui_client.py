@@ -7,9 +7,11 @@ kind's only transport, next to the AI toolbox, not through it: ComfyUI runs in t
 
 One run = upload the input (`/upload/image`), queue the workflow (`/prompt`), poll `/history/<id>` until it is there,
 download the first output image (`/view`). Every failure is a `SubjectError` with a stable code, a timeout is a
-`TimeoutError` (`TIMEOUT`, transient); nothing here ever answers in ComfyUI's place.
+`TimeoutError` (`TIMEOUT`, transient) and takes its prompt off ComfyUI's queue first; nothing here ever answers in
+ComfyUI's place.
 """
 
+import contextlib
 import time
 import uuid
 from collections.abc import Iterator
@@ -28,6 +30,7 @@ NOT_CONFIGURED = "COMFYUI_NOT_CONFIGURED"
 UNAVAILABLE = "COMFYUI_UNAVAILABLE"
 FAILED = "COMFYUI_FAILED"
 NO_OUTPUT = "COMFYUI_NO_OUTPUT"
+BAD_RESPONSE = "COMFYUI_BAD_RESPONSE"
 
 
 def run(workflow: dict, *, input_node: str, image: bytes, filename: str) -> bytes:
@@ -67,6 +70,8 @@ def _errors() -> Iterator[None]:
         raise TimeoutError(f"ComfyUI timed out: {type(exc).__name__}") from exc
     except httpx.HTTPError as exc:
         raise SubjectError(UNAVAILABLE, f"ComfyUI not reachable: {type(exc).__name__}") from exc
+    except (ValueError, KeyError, TypeError) as exc:  # a 2xx body that is not JSON, or not the shape ComfyUI sends
+        raise SubjectError(BAD_RESPONSE, f"unexpected ComfyUI answer: {type(exc).__name__}") from exc
 
 
 def _ok(response: httpx.Response) -> httpx.Response:
@@ -96,7 +101,15 @@ def _wait(client: httpx.Client, prompt_id: str) -> dict:
                 raise SubjectError(FAILED, f"ComfyUI prompt {prompt_id} failed")
             return entry
         time.sleep(POLL_INTERVAL_S)
+    _cancel(client, prompt_id)
     raise TimeoutError(f"ComfyUI prompt {prompt_id} not done after {timeout_s}s")
+
+
+def _cancel(client: httpx.Client, prompt_id: str) -> None:
+    """Best effort: take a timed-out prompt off the queue, so a retry does not leave it there twice. A prompt already
+    running finishes: `/interrupt` would stop whatever runs, maybe another user's job on a shared GPU."""
+    with contextlib.suppress(httpx.HTTPError):
+        client.post("queue", json={"delete": [prompt_id]})
 
 
 def _first_image(entry: dict) -> dict:
