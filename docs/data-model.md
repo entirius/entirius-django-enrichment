@@ -118,3 +118,9 @@ keeps the cleanup beat and a future partition cheap.
 | `WorkUnit` | `task` (related name `work_units`), `worker_key`, `subject_refs` (≤ `ENRICHMENT_UNIT_SIZE`), `lane`, `status` (queued / leased / done / failed / cancelled), `attempts`, `lease_token` (unique, cleared on a lost lease), `leased_by`, `lease_until`, `not_before` (backoff), `last_error` `{code, message}`, `outcome`, `events` (last 20) |
 | `WorkerInstance` | `worker`, `instance`, `version`, `last_seen`, `units_done`, `units_failed`, `consecutive_failures` — unique (worker, instance) |
 | `Worker` (added) | `paused_reason` (blank = running), `paused_at` |
+
+## ComfyUI results (kind `comfy`)
+
+| Model | Key fields |
+|---|---|
+| `ComfyResult` | `subject_ref`, `input_sha1`, `worker_key`, `run_hash` (sha256 of `workflow.json` and the run-shaping options) — unique together; `source` (prefilter / workflow), `metrics`, `verdict`, `reason`, `worker_version`. Only `comfy_result_service` writes it; a row exists only after an answer (`docs/comfy.md`) |

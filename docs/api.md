@@ -415,6 +415,8 @@ log. `message` is the toolbox's own capped reason; for a failure with no HTTP an
 | `IMAGE_BLOCKED`, `VIDEO_BLOCKED`, `PROVIDER_ERROR`, ... | the toolbox job failed with its own code |
 | `INTERNAL_ERROR` | anything else; `exception` names the class |
 
+Kind `comfy` has its own codes (`COMFYUI_*`, `COMFY_*`): `docs/comfy.md` § Failure codes.
+
 ## Costs (contract A4 § 1)
 
 Post factum only — no estimates, no markup. Task responses carry `cost_usd` (sum of the known toolbox

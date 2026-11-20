@@ -1,3 +1,4 @@
+from django_enrichment.models.comfy_result import ComfyResult
 from django_enrichment.models.content_proposal import ContentProposal, compute_locator_hash
 from django_enrichment.models.enrichment_task import EnrichmentTask
 from django_enrichment.models.memory_entry import MemoryEntry
@@ -12,6 +13,7 @@ from django_enrichment.models.workflow_definition import WorkflowDefinition
 from django_enrichment.models.workflow_run import WorkflowRun
 
 __all__ = [
+    "ComfyResult",
     "ContentProposal",
     "EnrichmentTask",
     "MemoryEntry",
