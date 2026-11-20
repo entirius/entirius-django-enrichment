@@ -34,10 +34,10 @@ source module (PIM first) through a per-module adapter.
 ```
 src/django_enrichment/
 ├── models/             # EnrichmentTask, ContentProposal, ProposalRevision, SpawnRule, TaskTemplate, Worker,
-│                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry
+│                       # WorkflowDefinition, WorkflowRun, Profile, ProfileVersion, MemoryEntry, ComfyResult
 ├── enums.py            # TaskStatus, ProposalStatus, WorkerMode, RunStatus, StepStatus + *_STATUS_TRANSITIONS
 ├── kinds/              # Kind contract + registry, kinds translate / field / video / write / pick /
-│                       # generate / sections / questions / compose / image / cover, extras.py, step.py (step params),
+│                       # generate / sections / questions / compose / image / cover / comfy, extras.py, step.py (step params),
 │                       # seams.py, field_limits.py (leaf: the `{min, max}` character range of a `write` field)
 ├── workflow_spec.py    # workflow definition shape + validation (WorkflowDefinition.clean)
 ├── schemas/
@@ -55,11 +55,13 @@ src/django_enrichment/
 │                       # qa_service (+ qa_numbers, qa_checklist) — QA warnings,
 │                       # json_unescape (leaf: the double-escaped `\"` / `\n` of a JSON step's strings, applied in kind generate),
 │                       # ai_usage_service (this month's toolbox usage, CMS header counter),
-│                       # image_bundle (a cover's variants as one staged zip)
+│                       # image_bundle (a cover's variants as one staged zip),
+│                       # comfyui_client (the only ComfyUI door) + comfy_result_service + comfy_spawn_service
 ├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts),
 │                       # cover_product
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
-├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn (beats), worker_runner (run_task), revise_tasks
+├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn + comfy_tasks (beats), worker_runner (run_task),
+│                       # revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
 │                       # workflow, profile, memory, usage), urls, throttling, pagination
 ├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
@@ -123,7 +125,7 @@ drafts to `proposal_service.intake` (`intake_media` when a draft carries `media_
 other modules register theirs from their own `ready()`. `task_service.spawn` validates `params` against
 the active Worker's kind and, for an active internal one, queues `enrichment.run_task` on commit on the task's lane.
 Adapter extras `build_context` (field kind), `main_picture` / `picture` (video kind, the latter for `params.picture_ref`; absent → subject fails),
-`list_pictures` + `picture` (image kind) and `apply_modes` (add / replace on accept, `docs/api.md` § Accept / drift) are
+`list_pictures` + `picture` (image and comfy kinds), `main_pictures` (comfy spawn) and `apply_modes` (add / replace on accept, `docs/api.md` § Accept / drift) are
 optional (`getattr`). Worker keys allow dots (`pim.translate`).
 
 **Revisions & corrections:** `proposed_value` always equals the latest `ProposalRevision`; only
@@ -161,6 +163,7 @@ module-as-adapter that lets the whole bus flow run without a source module.
 | Augmentations (`params.augment`), `seo_brief` | `docs/api.md` § Augmentations |
 | Company profile (schema, versions, prompt context, status) and memory (recall, writers, promotion) | `docs/profile.md` |
 | Media staging flow | `docs/media.md` |
+| Kind `comfy`: ComfyUI picture checks, `ComfyResult`, the spawn beat | `docs/comfy.md` |
 | Async apply, undo, retention | `docs/scale-and-undo.md` |
 | Spawn rules, spawn surfaces (CSV, gap, list) | `docs/spawn-rules.md`, `docs/spawn-surfaces.md` |
 | Management commands, Celery beat | `docs/commands.md` |
@@ -202,6 +205,8 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_QUEUE_MAX_SUBJECTS` | `500` | most subjects of one run (list scope refused at spawn, planner caps all scopes) |
 | `ENRICHMENT_TASK_MAX_COST_USD` | `"5.00"` | a task at this cost stops (queued units cancelled, notification) |
 | `ENRICHMENT_RETENTION_DAYS` | `30` | undo window = retention |
+| `ENRICHMENT_COMFYUI_URL` / `_TIMEOUT_S` | `""` / `180` | ComfyUI of the `comfy` kind (blank = off) and how long one prompt may take |
+| `ENRICHMENT_COMFY_SPAWN_LIMIT` | `100` | pictures per task the `enrichment.comfy_spawn` beat spawns |
 | `ENRICHMENT_MAX_CSV_BYTES` | 10 MB | CSV import size cap |
 | `ENRICHMENT_SPAWN_DEFAULT_LIMIT` | `200` | gap-task budget when a rule sets no `limit` |
 | `ENRICHMENT_SPAWN_COOLDOWN_DAYS` | `7` | gap cooldown when a rule sets no `cooldown_days` |
@@ -317,5 +322,11 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
   the result to `proposal.warnings`; never write `warnings` elsewhere (`qa_service.store` keeps both equal). Numbers
   from a subject's source context reach the check only through `seams.record_context` (`params.context_numbers`).
   Details: `docs/api.md` § QA checks.
+- **`auto_apply` is the only write without a person** — a `ProposalDraft` flag the runner applies right after intake
+  (kind `comfy`'s `set` / `escalate`); a media draft refuses it. A refused write leaves the proposal pending. Never
+  apply from a kind.
+- **Kind `comfy` writes `ComfyResult` only after ComfyUI answered** — a failure leaves no row so the spawn retries;
+  the bus knows no metric, the host registers it (`register_comfy_metric`) before any comfy `Worker` is saved
+  (options validation checks the name). Details: `docs/comfy.md`.
 - **`run_rule` dedups against `open` AND `in_progress`** — the generic `spawn()` coalesces only
   `open`; a claimed gap task can run for hours and the beat must not stack a second one behind it.

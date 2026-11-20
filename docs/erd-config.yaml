@@ -13,6 +13,7 @@ groups:
       - Worker
       - WorkerInstance
       - WorkUnit
+      - ComfyResult
   - name: workflows
     title: "Workflows"
     models:

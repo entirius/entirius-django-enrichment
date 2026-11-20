@@ -12,10 +12,13 @@ supersede and keep-edited rules live in `proposal_service`, unchanged.
 import logging
 import uuid
 
+from django.db import transaction
+
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import Kind, ProposalDraft, extras
 from django_enrichment.models import ContentProposal, EnrichmentTask, Worker
 from django_enrichment.services import (
+    apply_service,
     proposal_service,
     qa_auto_check,
     queue_config,
@@ -69,7 +72,20 @@ def intake_subject(worker: Worker, task: EnrichmentTask, subject_ref: str, draft
     automatic checklist check of the new proposals when the run asks for it (`qa_auto_check`)."""
     label = _subject_label(worker, task, subject_ref) if any(not d.subject_label for d in drafts) else ""
     proposals = [_intake(worker, task, subject_ref, draft, label) for draft in drafts]
+    for draft, proposal in zip(drafts, proposals, strict=True):
+        if draft.auto_apply and proposal is not None:
+            _auto_apply(proposal)
     qa_auto_check.schedule(task, [p for p in proposals if p is not None])
+
+
+def _auto_apply(proposal: ContentProposal) -> None:
+    """Apply a draft marked `auto_apply` at once. A refused or failing write leaves the proposal pending (or drifted)
+    for a person — logged, never a subject failure: the proposal itself is already taken."""
+    try:
+        with transaction.atomic():
+            apply_service.apply(proposal)
+    except Exception:  # noqa: BLE001 — an opaque adapter write must not lose the subject's other drafts
+        _logger.exception("auto apply of proposal %s failed; it waits for review", proposal.pk)
 
 
 def _subject_label(worker: Worker, task: EnrichmentTask, subject_ref: str) -> str:

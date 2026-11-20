@@ -12,6 +12,7 @@ from django_enrichment.tasks.apply_tasks import (
     finalize_batch_task,
 )
 from django_enrichment.tasks.cleanup import prune_task
+from django_enrichment.tasks.comfy_tasks import comfy_spawn_task
 from django_enrichment.tasks.gap_autospawn import gap_autospawn_task
 from django_enrichment.tasks.qa_tasks import qa_check_task
 from django_enrichment.tasks.revise_tasks import revise_task
@@ -20,6 +21,7 @@ from django_enrichment.tasks.worker_runner import consume, plan_task, reap, run_
 __all__ = [
     "apply_chunk_task",
     "apply_proposals_task",
+    "comfy_spawn_task",
     "consume",
     "dispatch_canvas",
     "finalize_batch_task",

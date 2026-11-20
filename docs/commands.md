@@ -14,3 +14,6 @@ per-rule batch_key dedup + page-1 probe make an idle pass one cheap query per ru
 `enrichment` queue
 (`CELERY_BEAT_SCHEDULE` in the service settings). One knob `ENRICHMENT_RETENTION_DAYS` (default 30) =
 undo window = retention = storage upper bound. Full design: `docs/scale-and-undo.md` § Retention.
+
+A host with `comfy` workers also schedules `enrichment.comfy_spawn`; its crontab is the time window the shared GPU
+may be used in (`docs/comfy.md` § Spawn).

@@ -29,6 +29,13 @@ class ProposalDraft:
     subject_label: str = field(default="")
     media_file: File | None = field(default=None)  # binary of a media draft (video) → staged at intake
     cost_usd: Decimal | None = field(default=None)  # this draft's share of its toolbox call's cost (None = unknown)
+    # Applied right after intake (`runner_service.intake_subject`), like a workflow step behind an `auto` gate: the
+    # proposal keeps its source, drift check and undo. Never for a media draft — a new file always waits for a person.
+    auto_apply: bool = field(default=False)
+
+    def __post_init__(self) -> None:
+        if self.auto_apply and self.media_file is not None:
+            raise ValueError("a media draft is never applied automatically")
 
 
 class SubjectError(Exception):
