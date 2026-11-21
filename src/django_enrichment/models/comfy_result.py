@@ -45,6 +45,7 @@ class ComfyResult(BaseModel):
         indexes = [
             models.Index(fields=["worker_key", "run_hash", "input_sha1"], name="enr_comfy_run_idx"),
             models.Index(fields=["worker_key", "verdict"], name="enr_comfy_worker_verdict_idx"),
+            models.Index(fields=["worker_key", "subject_ref"], name="enr_comfy_worker_subject_idx"),
         ]
 
     def __str__(self) -> str:

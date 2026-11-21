@@ -7,6 +7,9 @@
 Read-only: results are written by the kind only. Thin layer: ZERO Django models imported.
 """
 
+import csv
+
+from django.http import StreamingHttpResponse
 from django_utils.api.v2_errors import raise_pydantic_as_drf
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from pydantic import ValidationError
@@ -27,8 +30,9 @@ from django_enrichment.schemas.responses import (
 from django_enrichment.services import comfy_results_query
 
 _TAGS = ["Enrichment Comfy Results"]
+_TYPES = {"task": int, "score_min": float, "score_max": float, "latest": bool}
 _PARAMS = [
-    OpenApiParameter(name, int if name == "task" else str, OpenApiParameter.QUERY, required=False)
+    OpenApiParameter(name, _TYPES.get(name, str), OpenApiParameter.QUERY, required=False)
     for name in ComfyResultsQuery.model_fields
 ]
 
@@ -76,6 +80,40 @@ class ComfyResultViewSet(viewsets.ViewSet):
         responses={200: ComfyVerdictTotalsResponse, 400: None},
     )
     def verdicts(self, request: Request) -> Response:
-        totals = comfy_results_query.verdict_totals(_filter(_query(request)))
+        try:
+            totals = comfy_results_query.verdict_totals(_filter(_query(request)))
+        except ValueError as exc:
+            raise_as_drf(exc)
         body = ComfyVerdictTotalsResponse(total=sum(totals.values()), verdicts=totals)
         return Response(body.model_dump(mode="json"))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Comfy results as CSV (the whole filtered list, at most 50 000 rows)",
+        parameters=_PARAMS,
+        responses={(200, "text/csv"): str, 400: None},
+    )
+    def export(self, request: Request) -> StreamingHttpResponse:
+        query = _query(request)
+        try:
+            rows = comfy_results_query.export_rows(_filter(query), query.ordering)
+            first = next(rows)  # validates the filters before the response starts
+        except ValueError as exc:
+            raise_as_drf(exc)
+        writer = csv.writer(_Echo())
+        lines = (writer.writerow(row) for row in _chain(first, rows))
+        response = StreamingHttpResponse(lines, content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = 'attachment; filename="comfy-results.csv"'
+        return response
+
+
+class _Echo:
+    """A file-like object whose `write` hands the line back: `csv.writer` over a streamed response."""
+
+    def write(self, value: str) -> str:
+        return value
+
+
+def _chain(first: list, rest):
+    yield first
+    yield from rest

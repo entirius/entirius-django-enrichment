@@ -34,6 +34,11 @@ urlpatterns = [
     # Workers
     path("comfy-results/", ComfyResultViewSet.as_view({"get": "list"}), name="admin-comfy-results-list"),
     path(
+        "comfy-results/export/",
+        ComfyResultViewSet.as_view({"get": "export"}),
+        name="admin-comfy-results-export",
+    ),
+    path(
         "comfy-results/verdicts/",
         ComfyResultViewSet.as_view({"get": "verdicts"}),
         name="admin-comfy-results-verdicts",

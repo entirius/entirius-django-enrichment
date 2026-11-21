@@ -147,16 +147,21 @@ the next spawn takes the picture again. Nothing is judged without an answer.
 
 Review → **Picture checks** lists the results (enrichment 2.5.0+): a thumbnail of the very file that was checked, the
 verdict, the score and the other metrics, the product, the task. Filter by worker, verdict (chips with totals), source,
-reason, SKU and task (the Runs list links a `comfy` task to its results); sort by score when one worker is chosen. That
-is the threshold review of a dry run: sort by score, look where `review` should start, set the thresholds, re-judge
-without the GPU.
+reason, SKU, task (the Runs list links a `comfy` task to its results) and a score range; sort by score when one worker
+is chosen; export the list as CSV. A row links to the product's proposals of that worker in Review, applied ones too,
+to undo a wrong `set` or escalation. That is the threshold review of a dry run: narrow to a score range, look where
+`review` should start, set the thresholds, re-judge without the GPU.
 
 API (`IsAdminUser`, area `enrichment.proposals`):
 
 | Endpoint | Meaning |
 |---|---|
-| `GET comfy-results/` | paginated; `worker`, `verdict`, `source`, `reason`, `subject_ref`, `task`, `ordering` (`-checked_at` default, `checked_at`, `score`, `-score`; score needs `worker`) |
+| `GET comfy-results/` | paginated; `worker`, `verdict`, `source`, `reason`, `subject_ref` (exact), `search` (part of the SKU), `task`, `score_min` / `score_max`, `latest` (default true), `ordering` (`-checked_at` default, `checked_at`, `score`, `-score`); a score order or range needs `worker` |
 | `GET comfy-results/verdicts/` | `{total, verdicts: {verdict: n}}` under the same filters, the verdict filter ignored |
+| `GET comfy-results/export/` | the whole filtered list as CSV (at most 50 000 rows): worker, SKU, verdict, reason, score, source, worker version, task, checked at, sha1, then one column per metric; a text cell starting like a formula gets a leading `'` |
+
+`latest` (default) lists only the newest check of each product per worker: a product whose main picture was replaced,
+or that ran again under an edited workflow, keeps its older results as history (`latest=false`).
 
 Each item has `score` (`metrics[<worker's score>]`) and `thumbnail_url` from the adapter's optional extra
 `pictures_by_sha1(*, sha1s) -> {sha1: url}` (PIM 3.10.0), one call per page; blank without the extra or once the file

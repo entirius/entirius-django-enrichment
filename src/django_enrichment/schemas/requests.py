@@ -432,8 +432,12 @@ class ComfyResultsQuery(BaseModel):
     verdict: str = Field("", max_length=32, description="set | review | escalate | pass | propose_picture")
     source: Literal["", "prefilter", "workflow"] = ""
     reason: str = Field("", max_length=64, description="Escalation reason", examples=["replace_size"])
-    subject_ref: str = Field("", max_length=255, examples=["SKU-1"])
+    subject_ref: str = Field("", max_length=255, description="Exact SKU", examples=["SKU-1"])
+    search: str = Field("", max_length=255, description="Part of the SKU", examples=["GIFT"])
     task: int | None = Field(None, ge=1, description="Task that judged the file last")
+    score_min: float | None = Field(None, description="Score at least (needs `worker`)", examples=[0.12])
+    score_max: float | None = Field(None, description="Score at most (needs `worker`)", examples=[0.18])
+    latest: bool = Field(True, description="Only the latest check of each product; false = the history too")
     ordering: Literal["-checked_at", "checked_at", "score", "-score"] = Field(
         "-checked_at", description="`score` / `-score` need `worker`"
     )

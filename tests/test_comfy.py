@@ -6,8 +6,10 @@
 work queue, `auto_apply`, stored results and their re-judging, and the spawn (`enrichment.comfy_spawn`)."""
 
 import base64
+import csv
 import datetime
 import hashlib
+import io
 import json
 
 import httpx
@@ -815,3 +817,77 @@ class TestResultsApiEdges:
         for ordering, expected in (("-score", ["HIGH", "LOW", "NONE"]), ("score", ["LOW", "HIGH", "NONE"])):
             body = admin_client.get(RESULTS, {"worker": worker.key, "ordering": ordering}).json()
             assert [r["subject_ref"] for r in body["results"]] == expected
+
+
+@pytest.mark.django_db
+class TestResultsListing:
+    """`latest`, the SKU search, the score range and the CSV export of `comfy-results/`."""
+
+    @pytest.fixture
+    def rows(self, make_comfy):
+        worker = make_comfy()
+
+        def _row(ref, sha1, score, **extra):
+            return ComfyResult.objects.create(
+                subject_ref=ref,
+                input_sha1=sha1.ljust(40, "0"),
+                worker_key=worker.key,
+                run_hash="h",
+                source="workflow",
+                metrics={"score": score, "white": 0.5},
+                verdict="pass",
+                worker_version=worker.version,
+                **extra,
+            )
+
+        _row("GIFT-50", "a", 0.10)  # the product's old main picture
+        _row("GIFT-50", "b", 0.16)
+        _row("GIFT-100", "c", 0.20)
+        _row("=HYPERLINK(1)", "d", 0.30)
+        return worker
+
+    def _refs(self, client, **params):
+        return [r["subject_ref"] for r in client.get(RESULTS, {"ordering": "score", **params}).json()["results"]]
+
+    def test_only_the_latest_check_of_a_product_unless_history_is_asked(self, admin_client, rows):
+        assert self._refs(admin_client, worker=rows.key) == ["GIFT-50", "GIFT-100", "=HYPERLINK(1)"]
+        assert self._refs(admin_client, worker=rows.key, latest="false") == [
+            "GIFT-50",
+            "GIFT-50",
+            "GIFT-100",
+            "=HYPERLINK(1)",
+        ]
+        totals = admin_client.get(RESULTS + "verdicts/", {"worker": rows.key}).json()
+        assert totals == {"total": 3, "verdicts": {"pass": 3}}
+
+    def test_search_takes_part_of_the_sku(self, admin_client, rows):
+        assert self._refs(admin_client, worker=rows.key, search="gift-1") == ["GIFT-100"]
+
+    def test_score_range(self, admin_client, rows):
+        assert self._refs(admin_client, worker=rows.key, score_min=0.15, score_max=0.25) == ["GIFT-50", "GIFT-100"]
+        assert admin_client.get(RESULTS, {"score_min": 0.1}).status_code == 400
+
+    def test_csv_export_of_the_whole_list(self, admin_client, rows):
+        response = admin_client.get(RESULTS + "export/", {"worker": rows.key, "ordering": "-score"})
+        assert response.status_code == 200
+        assert response["Content-Type"].startswith("text/csv")
+        lines = list(csv.reader(io.StringIO(b"".join(response.streaming_content).decode())))
+        assert lines[0] == [
+            "worker_key",
+            "subject_ref",
+            "verdict",
+            "reason",
+            "score",
+            "source",
+            "worker_version",
+            "task_id",
+            "checked_at",
+            "input_sha1",
+            "score",
+            "white",
+        ]
+        assert [line[1] for line in lines[1:]] == ["'=HYPERLINK(1)", "GIFT-100", "GIFT-50"]
+        assert lines[2][4] == "0.2"
+
+    def test_csv_export_refuses_a_score_range_without_a_worker(self, admin_client, rows):
+        assert admin_client.get(RESULTS + "export/", {"score_max": 0.2}).status_code == 400
