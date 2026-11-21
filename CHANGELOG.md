@@ -16,6 +16,8 @@
   results, run hash and worker version; they get no task.
 - `comfy` worker options `window` (`HH:MM-HH:MM`, local time a task may start in), `batch` (pictures per spawned
   task, default 100) and `auto_spawn` (default on). They only schedule work: no version bump, no re-run.
+- `django_enrichment.__version__` (the installed package version): munin reports it, so the CMS shows the screens of
+  this release (Picture checks) only on a service that has it.
 - Kind hooks `Kind.lane` (a fixed run lane), `Kind.may_start(worker)` (hold a task back before planning),
   `Kind.unversioned_options` and `Kind.skip_edited_subjects`.
 
