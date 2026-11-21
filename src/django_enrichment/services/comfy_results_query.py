@@ -168,11 +168,11 @@ _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 def export_rows(where: ResultFilter, ordering: str = "-checked_at") -> Iterator[list]:
     """The matching results as CSV rows (header first, at most `EXPORT_CAP`): the fixed columns, `checked_at`,
-    `input_sha1`, then one column per metric key. A text cell a spreadsheet would read as a formula is prefixed `'`."""
+    `input_sha1`, then one `metric_<key>` column per metric key. A text cell a spreadsheet would read as a formula is prefixed `'`."""
     rows = list_results(where, ordering)[:EXPORT_CAP]
     keys = sorted({key for metrics in rows.values_list("metrics", flat=True) for key in (metrics or {})})
     workers = {w.key: w for w in Worker.objects.all()}  # a handful of rows; each worker names its own score
-    yield [*_EXPORT_COLUMNS, "checked_at", "input_sha1", *keys]
+    yield [*_EXPORT_COLUMNS, "checked_at", "input_sha1", *(f"metric_{key}" for key in keys)]
     for row in rows.iterator(chunk_size=1000):
         score = row.metrics.get(_score_key(workers.get(row.worker_key)))
         fixed = [getattr(row, name, None) for name in _EXPORT_COLUMNS]

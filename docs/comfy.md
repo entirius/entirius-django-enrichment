@@ -158,7 +158,7 @@ API (`IsAdminUser`, area `enrichment.proposals`):
 |---|---|
 | `GET comfy-results/` | paginated; `worker`, `verdict`, `source`, `reason`, `subject_ref` (exact), `search` (part of the SKU), `task`, `score_min` / `score_max`, `latest` (default true), `ordering` (`-checked_at` default, `checked_at`, `score`, `-score`); a score order or range needs `worker` |
 | `GET comfy-results/verdicts/` | `{total, verdicts: {verdict: n}}` under the same filters, the verdict filter ignored |
-| `GET comfy-results/export/` | the whole filtered list as CSV (at most 50 000 rows): worker, SKU, verdict, reason, score, source, worker version, task, checked at, sha1, then one column per metric; a text cell starting like a formula gets a leading `'` |
+| `GET comfy-results/export/` | the whole filtered list as CSV (at most 50 000 rows): worker, SKU, verdict, reason, score, source, worker version, task, checked at, sha1, then one `metric_<key>` column per metric; a text cell starting like a formula gets a leading `'` |
 
 `latest` (default) lists only the newest check of each product per worker: a product whose main picture was replaced,
 or that ran again under an edited workflow, keeps its older results as history (`latest=false`).

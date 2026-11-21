@@ -883,8 +883,8 @@ class TestResultsListing:
             "task_id",
             "checked_at",
             "input_sha1",
-            "score",
-            "white",
+            "metric_score",
+            "metric_white",
         ]
         assert [line[1] for line in lines[1:]] == ["'=HYPERLINK(1)", "GIFT-100", "GIFT-50"]
         assert lines[2][4] == "0.2"
