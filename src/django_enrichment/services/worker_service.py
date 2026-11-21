@@ -90,5 +90,28 @@ def _bump_version(worker: Worker) -> None:
     if worker.pk is None:
         return
     previous = Worker.objects.filter(pk=worker.pk).values("version", *VERSIONED_FIELDS).first()
-    if previous and any(previous[name] != getattr(worker, name) for name in VERSIONED_FIELDS):
+    if previous and any(_shaping(worker, name, previous[name]) != _shaping(worker, name) for name in VERSIONED_FIELDS):
         worker.version = previous["version"] + 1
+
+
+_CURRENT = object()
+
+
+def _shaping(worker: Worker, name: str, value: Any = _CURRENT) -> Any:
+    """The part of a versioned field that shapes results: options without the kind's scheduling options."""
+    value = getattr(worker, name) if value is _CURRENT else value
+    if name != "options" or not isinstance(value, dict):
+        return value
+    skipped = get_kind(worker.kind).unversioned_options
+    return {key: item for key, item in value.items() if key not in skipped}
+
+
+def fixed_lane(task_type: str) -> str:
+    """The lane the active worker's kind runs every task on; blank = by size."""
+    worker = find_active(task_type)
+    return get_kind(worker.kind).lane if worker is not None else ""
+
+
+def may_start(worker: Worker) -> bool:
+    """Whether a task of this worker may be planned now (its kind can hold it back, e.g. outside a time window)."""
+    return get_kind(worker.kind)().may_start(worker)

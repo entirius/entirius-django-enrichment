@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Kind `comfy` is an ordinary task type (`docs/comfy.md`): started from the CMS for a product list, a filter or a
+  spawn rule like any other worker; a stored result still stops a second run of the same file.
+- `task.counts` of a `comfy` task: `checked`, one key per verdict (`set`, `review`, `pass`, `escalate`,
+  `propose_picture`), `cached` (a stored result, no GPU) and `prefiltered`, also in a dry run.
+- `GET comfy-results/` (filters `worker`, `verdict`, `source`, `reason`, `subject_ref`, `task`; `ordering` by check
+  time or score) with the score and a thumbnail of the checked file per row, and `GET comfy-results/verdicts/`
+  (totals per verdict). The thumbnail comes from the new optional adapter extra `pictures_by_sha1(*, sha1s)` (PIM
+  3.10.0).
+- `ComfyResult.task` (migration `0007`, nullable): the task that judged the file last. Existing rows keep their
+  results, run hash and worker version; they get no task.
+- `comfy` worker options `window` (`HH:MM-HH:MM`, local time a task may start in), `batch` (pictures per spawned
+  task, default 100) and `auto_spawn` (default on). They only schedule work: no version bump, no re-run.
+- Kind hooks `Kind.lane` (a fixed run lane), `Kind.may_start(worker)` (hold a task back before planning) and
+  `Kind.unversioned_options`.
+
+### Changed
+
+- Every task of a `comfy` worker runs on the bulk lane, whatever lane was asked for: one picture on the GPU at a time.
+- A `comfy` task created outside its worker's `window` waits `open` and is planned once the window opens; the
+  `enrichment.comfy_spawn` beat starts nothing outside it. Schedule the beat around the clock
+  (`crontab(minute="*/15")`) and move the night window to the worker.
+
+### Removed
+
+- Setting `ENRICHMENT_COMFY_SPAWN_LIMIT`: the worker's `batch` option replaces it.
+
 ## 2.4.0 — 2026-11-20
 
 ### Added

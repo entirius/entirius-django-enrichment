@@ -305,6 +305,8 @@ external workers pull them the same way: **claim → (heartbeat) → complete | 
 | POST | `workers/fail/` | `{token, code, message, retryable=true}` | 200 `{unit_id, status, attempts, not_before}` · 409 `LEASE_LOST` |
 | GET | `workers/status/` | — | list of `{key, label, mode, state (running\|paused), paused_reason, paused_at, online_instances, queued_units, oldest_queued_age_s, leased_units, failed_units_24h, nobody_taking}` |
 | POST | `workers/{key}/resume/` | — | 200 status row · 404 |
+| GET | `comfy-results/` | — | page of `{id, worker_key, target_module, subject_ref, input_sha1, source, verdict, reason, score, metrics, worker_version, task_id, checked_at, thumbnail_url}`; filters `worker`, `verdict`, `source`, `reason`, `subject_ref`, `task`, `ordering` (`-checked_at`, `checked_at`, `score`, `-score`; score needs `worker`) · 400 |
+| GET | `comfy-results/verdicts/` | — | `{total, verdicts: {verdict: n}}`, same filters, the verdict filter ignored |
 
 Claim 200: `{unit_id, token, lease_until, attempt, task_id, type, params, scope_module, subject_refs, context}`
 (`context` = the worker's `kind`, `version`, `system_prompt`, `model`, `options`). The lease lasts

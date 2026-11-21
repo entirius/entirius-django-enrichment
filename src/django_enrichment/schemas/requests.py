@@ -423,3 +423,17 @@ class FailRequest(LeaseRequest):
     code: str = Field(pattern=r"^[A-Z0-9_]{1,64}$", examples=["TIMEOUT"])
     message: str = Field(max_length=300, description="Plain words for the operator, never raw exception text")
     retryable: bool = True
+
+
+class ComfyResultsQuery(BaseModel):
+    """`GET comfy-results/` and `comfy-results/verdicts/` query parameters; blank = any."""
+
+    worker: str = Field("", max_length=64, description="Worker key", examples=["pim.packshot_quality"])
+    verdict: str = Field("", max_length=32, description="set | review | escalate | pass | propose_picture")
+    source: Literal["", "prefilter", "workflow"] = ""
+    reason: str = Field("", max_length=64, description="Escalation reason", examples=["replace_size"])
+    subject_ref: str = Field("", max_length=255, examples=["SKU-1"])
+    task: int | None = Field(None, ge=1, description="Task that judged the file last")
+    ordering: Literal["-checked_at", "checked_at", "score", "-score"] = Field(
+        "-checked_at", description="`score` / `-score` need `worker`"
+    )

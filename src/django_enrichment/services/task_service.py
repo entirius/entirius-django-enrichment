@@ -108,7 +108,7 @@ def spawn(
     type, params = resolve_type_and_params(type, params or {}, template)
     if retry_of is not None:
         params = {**params, RETRY_OF: retry_of}
-    lane = lane_service.resolve(lane, scope_spec)
+    lane = lane_service.resolve(worker_service.fixed_lane(type) or lane, scope_spec)
 
     if batch_key:
         open_task = EnrichmentTask.objects.filter(batch_key=batch_key, status=TaskStatus.OPEN.value).first()
@@ -344,7 +344,12 @@ def mark_done(task: EnrichmentTask) -> EnrichmentTask:
 
 
 def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTask:
-    """Atomically bump a progress counter in `task.counts` (e.g. 'proposed').
+    """Atomically bump a progress counter in `task.counts` (e.g. 'proposed')."""
+    return increment_counts(task, {key: by})
+
+
+def increment_counts(task: EnrichmentTask, bumps: dict[str, int]) -> EnrichmentTask:
+    """Atomically bump several progress counters in `task.counts` under one row lock.
 
     Read-modify-write under a row lock: concurrent worker intake (n8n submits proposals in parallel,
     each calling this for the same task) would lose updates with a plain `counts[key] += 1` + `save()`
@@ -354,7 +359,8 @@ def increment_count(task: EnrichmentTask, key: str, by: int = 1) -> EnrichmentTa
 
     with transaction.atomic():
         locked = EnrichmentTask.objects.select_for_update().get(pk=task.pk)
-        locked.counts[key] = locked.counts.get(key, 0) + by
+        for key, by in bumps.items():
+            locked.counts[key] = locked.counts.get(key, 0) + by
         locked.save(update_fields=["counts", "modified_at"])
     task.counts = locked.counts
     return task

@@ -52,7 +52,8 @@ def find(key: ResultKey) -> ComfyResult | None:
 
 
 def save(key: ResultKey, **values) -> ComfyResult:
-    """Create or update the row of `key`; `values` = `source`, `metrics`, `verdict`, `reason`, `worker_version`."""
+    """Create or update the row of `key`; `values` = `source`, `metrics`, `verdict`, `reason`, `worker_version`, `task`
+    (the task that judged it last)."""
     result, _ = ComfyResult.objects.update_or_create(**_fields(key), defaults=values)
     return result
 

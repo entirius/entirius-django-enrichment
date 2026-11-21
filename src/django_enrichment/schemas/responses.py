@@ -537,3 +537,36 @@ class WorkerStatusResponse(BaseModel):
     leased_units: int
     failed_units_24h: int
     nobody_taking: bool = Field(description="Work waits past the stale limit and no instance is online")
+
+
+class ComfyResultResponse(BaseModel):
+    """`GET comfy-results/` item — what a `comfy` worker found for one product's picture file."""
+
+    id: int
+    worker_key: str = Field(examples=["pim.packshot_quality"])
+    target_module: str = Field(description="Adapter key of the worker; blank = worker gone", examples=["pim"])
+    subject_ref: str = Field(examples=["SKU-1"])
+    input_sha1: str = Field(description="sha1 of the checked file")
+    source: str = Field(description="prefilter | workflow", examples=["workflow"])
+    verdict: str = Field(description="set | review | escalate | pass | propose_picture", examples=["review"])
+    reason: str = Field(description="Escalation reason", examples=[""])
+    score: float | None = Field(description="The metric the thresholds compare; null = none", examples=[0.21])
+    metrics: dict = Field(examples=[{"score": 0.21, "white_share": 0.7}])
+    worker_version: int
+    task_id: int | None = Field(description="Task that judged the file last; null before 2.5.0")
+    checked_at: datetime
+    thumbnail_url: str = Field(description="The checked file; blank = not available")
+
+
+class ComfyResultListResponse(BaseModel):
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[ComfyResultResponse]
+
+
+class ComfyVerdictTotalsResponse(BaseModel):
+    """`GET comfy-results/verdicts/` — results per verdict under the same filters (the verdict filter ignored)."""
+
+    total: int
+    verdicts: dict[str, int] = Field(examples=[{"pass": 3800, "review": 120, "escalate": 40}])

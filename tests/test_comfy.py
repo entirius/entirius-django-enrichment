@@ -6,6 +6,7 @@
 work queue, `auto_apply`, stored results and their re-judging, and the spawn (`enrichment.comfy_spawn`)."""
 
 import base64
+import datetime
 import hashlib
 import json
 
@@ -13,6 +14,7 @@ import httpx
 import pytest
 import respx
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 
 from django_enrichment.enums import ProposalStatus, TaskStatus
@@ -24,6 +26,7 @@ from django_enrichment.services import (
     comfyui_client,
     task_service,
     toolbox_calls,
+    unit_planner,
     worker_service,
 )
 from django_enrichment.tasks import comfy_spawn_task
@@ -301,6 +304,7 @@ class TestVerdicts:
         assert light.source == f"worker:pim.packshot@v{worker.version}"
         verdicts = dict(ComfyResult.objects.values_list("subject_ref", "verdict"))
         assert verdicts == {"LIGHT": "set", "EDGE": "review", "DARK": "pass"}
+        assert task.counts == {"checked": 3, "set": 1, "review": 1, "pass": 1, "proposed": 2}
         assert ComfyResult.objects.get(subject_ref="LIGHT").metrics == {"score": 0.42, "out": len(_OUT)}
 
     def test_pass_proposes_false_only_over_a_true_flag(self, make_comfy, catalogue, scores, fake_adapter):
@@ -349,9 +353,10 @@ class TestVerdicts:
         by_image[_picture(1)] = 0.9
         with respx.mock() as router:
             _mock_comfy(router)
-            _run(make_comfy(dry_run=True), "LIGHT")
+            task = _run(make_comfy(dry_run=True), "LIGHT")
         assert _proposals() == []
         assert ComfyResult.objects.get().verdict == "set"
+        assert task.counts == {"checked": 1, "set": 1}
 
 
 @pytest.mark.django_db
@@ -362,8 +367,9 @@ class TestPrefilterAndEscalation:
         gate[_picture(1)] = comfy.Prefiltered("pass", metrics={"off": 0.01})
         with respx.mock(assert_all_called=False) as router:
             _, prompt, _ = _mock_comfy(router)
-            _run(make_comfy(prefilter="format"), "PLAIN")
+            task = _run(make_comfy(prefilter="format"), "PLAIN")
         assert prompt.call_count == 0
+        assert task.counts == {"checked": 1, "pass": 1, "prefiltered": 1}
         result = ComfyResult.objects.get()
         assert (result.source, result.verdict, result.metrics) == ("prefilter", "pass", {"off": 0.01})
 
@@ -410,7 +416,7 @@ class TestFailuresAndCache:
             task = _run(make_comfy(), "LIGHT")
         assert ComfyResult.objects.count() == 0
         assert _proposals() == []
-        assert task.counts["failed"] == 1
+        assert task.counts == {"failed": 1}
         assert task.errors[0]["code"] == "COMFYUI_UNAVAILABLE"
 
     def test_a_stored_result_is_rejudged_without_comfyui(self, make_comfy, catalogue, scores):
@@ -425,8 +431,9 @@ class TestFailuresAndCache:
         worker = worker_service.save_worker(worker)
         with respx.mock(assert_all_called=False) as router:
             _, prompt, _ = _mock_comfy(router)
-            _run(worker, "EDGE")
+            task = _run(worker, "EDGE")
         assert prompt.call_count == 0
+        assert task.counts == {"checked": 1, "set": 1, "cached": 1, "proposed": 1}
         assert [(p.status, p.proposed_value) for p in _proposals()] == [
             ("superseded", {"value": True}),
             ("applied", {"value": True}),
@@ -575,3 +582,154 @@ class TestSpawn:
             router.get(f"{COMFY}/system_stats").mock(return_value=httpx.Response(200, json={}))
             summary = comfy_spawn_task()
         assert summary == {"spawned": ["pim.packshot"], "skipped": [], "failed": ["pim.broken"]}
+
+
+RESULTS = "/api/enrichment/v2/admin/comfy-results/"
+
+
+@pytest.mark.django_db
+class TestResultsApi:
+    @pytest.fixture
+    def checked(self, make_comfy, catalogue, scores, fake_adapter, monkeypatch):
+        """A dry run over three pictures (set / review / pass) and a thumbnail lookup that knows two of them."""
+        by_image, _ = scores
+        catalogue.update({"LIGHT": _picture(1), "EDGE": _picture(2), "DARK": _picture(3)})
+        by_image.update({_picture(1): 0.42, _picture(2): 0.2, _picture(3): 0.01})
+        urls = {_sha1(_picture(1)): "/media/light.png", _sha1(_picture(2)): "/media/edge.png"}
+        calls = []
+
+        def _by_sha1(*, sha1s):
+            calls.append(sha1s)
+            return {sha1: urls[sha1] for sha1 in sha1s if sha1 in urls}
+
+        monkeypatch.setattr(fake_adapter, "pictures_by_sha1", _by_sha1, raising=False)
+        worker = make_comfy(dry_run=True)
+        with respx.mock() as router:
+            _mock_comfy(router)
+            task = _run(worker, "LIGHT", "EDGE", "DARK")
+        return worker, task, calls
+
+    def test_lists_score_thumbnail_and_task(self, admin_client, checked):
+        worker, task, calls = checked
+        body = admin_client.get(RESULTS, {"worker": worker.key, "ordering": "-score"}).json()
+        assert body["count"] == 3
+        rows = body["results"]
+        assert [(r["subject_ref"], r["verdict"], r["score"]) for r in rows] == [
+            ("LIGHT", "set", 0.42),
+            ("EDGE", "review", 0.2),
+            ("DARK", "pass", 0.01),
+        ]
+        assert [r["thumbnail_url"] for r in rows] == ["/media/light.png", "/media/edge.png", ""]
+        assert {r["task_id"] for r in rows} == {task.pk}
+        assert rows[0]["target_module"] == "pim"
+        assert len(calls) == 1  # one lookup per page and module
+
+    def test_filters_by_verdict_and_task(self, admin_client, checked):
+        _, task, _ = checked
+        assert [r["subject_ref"] for r in admin_client.get(RESULTS, {"verdict": "review"}).json()["results"]] == [
+            "EDGE"
+        ]
+        assert admin_client.get(RESULTS, {"task": task.pk + 1}).json()["count"] == 0
+
+    def test_verdict_totals_ignore_the_verdict_filter(self, admin_client, checked):
+        worker, _, _ = checked
+        body = admin_client.get(RESULTS + "verdicts/", {"worker": worker.key, "verdict": "set"}).json()
+        assert body == {"total": 3, "verdicts": {"set": 1, "review": 1, "pass": 1}}
+
+    def test_a_score_ordering_needs_a_worker(self, admin_client, checked):
+        assert admin_client.get(RESULTS, {"ordering": "score"}).status_code == 400
+        assert admin_client.get(RESULTS, {"ordering": "name"}).status_code == 400
+
+    def test_a_rejudging_task_takes_the_result_over(self, make_comfy, catalogue, scores, checked):
+        worker, first, _ = checked
+        with respx.mock(assert_all_called=False) as router:
+            _mock_comfy(router)
+            second = _run(worker, "EDGE")
+        assert set(ComfyResult.objects.values_list("subject_ref", "task_id")) == {
+            ("LIGHT", first.pk),
+            ("EDGE", second.pk),
+            ("DARK", first.pk),
+        }
+
+    def test_requires_admin(self, regular_client):
+        assert regular_client.get(RESULTS).status_code == 403
+
+
+@pytest.mark.django_db
+class TestOrdinaryTask:
+    """A `comfy` worker as a task type like any other: always the bulk lane, held outside its window, scheduled by its
+    own options (which never bump its version)."""
+
+    @pytest.fixture
+    def at(self, monkeypatch):
+        def _at(hhmm: str):
+            monkeypatch.setattr(comfy, "_local_now", lambda: datetime.time.fromisoformat(hhmm))
+
+        return _at
+
+    @pytest.mark.parametrize(
+        ("window", "now", "inside"),
+        [
+            ("", "12:00", True),
+            ("22:00-06:00", "23:30", True),
+            ("22:00-06:00", "05:59", True),
+            ("22:00-06:00", "06:00", False),
+            ("22:00-06:00", "12:00", False),
+            ("09:00-17:00", "09:00", True),
+            ("09:00-17:00", "17:00", False),
+        ],
+    )
+    def test_window(self, window, now, inside):
+        assert comfy.in_window(window, datetime.time.fromisoformat(now)) is inside
+
+    def test_a_malformed_window_is_refused(self, make_comfy):
+        with pytest.raises(ValidationError):
+            make_comfy(window="22-06")
+
+    def test_every_task_runs_on_the_bulk_lane(self, make_comfy):
+        worker = make_comfy()
+        task = task_service.spawn(
+            type=worker.key, scope_spec={"mode": "list", "module": "pim", "refs": ["A"]}, params={}, lane="now"
+        )
+        assert task.lane == "queue"
+
+    def test_schedule_options_do_not_bump_the_version(self, make_comfy):
+        worker = make_comfy()
+        version = worker.version
+        worker.options = {**worker.options, "window": "22:00-06:00", "batch": 40, "auto_spawn": False}
+        assert worker_service.save_worker(worker).version == version
+        worker.options = {**worker.options, "thresholds": [{"min": 0.5, "action": "set"}]}
+        assert worker_service.save_worker(worker).version == version + 1
+
+    def test_a_task_outside_the_window_waits_unplanned(self, make_comfy, catalogue, scores, at):
+        by_image, _ = scores
+        catalogue["A"] = _picture(1)
+        by_image[_picture(1)] = 0.01
+        worker = make_comfy(window="22:00-06:00")
+        task = task_service.spawn(
+            type=worker.key, scope_spec={"mode": "list", "module": "pim", "refs": ["A"]}, params={}
+        )
+        at("12:00")
+        assert unit_planner.plan_task(task.pk) == 0
+        task.refresh_from_db()
+        assert (task.status, task.work_units.count()) == (TaskStatus.OPEN.value, 0)
+        at("23:00")
+        with respx.mock() as router:
+            _mock_comfy(router)
+            task = run_queue(task)
+        assert (task.status, task.counts["checked"]) == (TaskStatus.DONE.value, 1)
+
+    def test_the_spawn_takes_batch_window_and_auto_spawn_from_the_worker(self, make_comfy, catalogue, at):
+        for n, sku in enumerate(["A", "B", "C"], start=1):
+            catalogue[sku] = _picture(n)
+        worker = make_comfy(window="22:00-06:00", batch=2)
+        with respx.mock(assert_all_called=False) as router:
+            router.get(f"{COMFY}/system_stats").mock(return_value=httpx.Response(200, json={}))
+            at("12:00")
+            assert comfy_spawn_service.spawn(worker) is None
+            at("23:00")
+            assert comfy_spawn_service.spawn(worker).scope_spec["refs"] == ["A", "B"]
+            EnrichmentTask.objects.update(status=TaskStatus.DONE.value)
+            worker.options = {**worker.options, "auto_spawn": False}
+            worker = worker_service.save_worker(worker)
+            assert comfy_spawn_service.spawn(worker) is None

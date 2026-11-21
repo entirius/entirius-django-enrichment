@@ -26,6 +26,15 @@ class ComfyResult(BaseModel):
     verdict = models.CharField(max_length=32)
     reason = models.CharField(max_length=64, blank=True, default="")
     worker_version = models.PositiveIntegerField()
+    # The task that judged this file last (a later task re-judging a stored result takes it over); NULL for rows
+    # written before 2.5.0 and once that task is pruned.
+    task = models.ForeignKey(
+        "django_enrichment.EnrichmentTask",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="comfy_results",
+    )
 
     class Meta:
         constraints = [

@@ -123,4 +123,4 @@ keeps the cleanup beat and a future partition cheap.
 
 | Model | Key fields |
 |---|---|
-| `ComfyResult` | `subject_ref`, `input_sha1`, `worker_key`, `run_hash` (sha256 of `workflow.json` and the run-shaping options) — unique together; `source` (prefilter / workflow), `metrics`, `verdict`, `reason`, `worker_version`. Only `comfy_result_service` writes it; a row exists only after an answer (`docs/comfy.md`) |
+| `ComfyResult` | `subject_ref`, `input_sha1`, `worker_key`, `run_hash` (sha256 of `workflow.json` and the run-shaping options) — unique together; `source` (prefilter / workflow), `metrics`, `verdict`, `reason`, `worker_version`, `task` (nullable FK, the task that judged the file last; 2.5.0). Only `comfy_result_service` writes it; a row exists only after an answer (`docs/comfy.md`) |

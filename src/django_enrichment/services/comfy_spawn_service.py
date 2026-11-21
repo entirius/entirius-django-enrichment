@@ -4,26 +4,23 @@
 
 """Spawn of the `comfy` workers (`enrichment.comfy_spawn` beat): which main pictures are still to be checked.
 
-For each active internal `comfy` worker that is not paused and has no task open or in progress: when ComfyUI answers,
-page the adapter's `main_pictures(channel, page)` and take up to `ENRICHMENT_COMFY_SPAWN_LIMIT` products whose main
-picture's sha1 has no `ComfyResult` under the current run hash and worker version, then spawn one `list` task on the
-bulk lane. A product of the worker's previous task that is still unchecked (it failed there) goes after every other,
-so pictures that fail every time do not hold the rest back and are still retried. The host's beat schedule is the time
-window.
+For each active internal `comfy` worker with `auto_spawn` that is not paused, has no task open or in progress and is
+inside its `window`: when ComfyUI answers, page the adapter's `main_pictures(channel, page)` and take up to `batch`
+products whose main picture's sha1 has no `ComfyResult` under the current run hash and worker version, then spawn one
+`list` task on the bulk lane. A product of the worker's previous task that is still unchecked (it failed there) goes
+after every other, so pictures that fail every time do not hold the rest back and are still retried. The window and
+the batch are the worker's options; the host schedules the beat around the clock (every 15 minutes).
 """
 
 import logging
 
-from django.conf import settings
-
 from django_enrichment.adapters import get_adapter
 from django_enrichment.enums import TaskLane, TaskStatus, WorkerMode
-from django_enrichment.kinds.comfy import KIND, ComfyOptions, load_run
+from django_enrichment.kinds.comfy import KIND, ComfyKind, ComfyOptions, load_run
 from django_enrichment.models import EnrichmentTask, Worker
 from django_enrichment.services import comfy_result_service, comfyui_client, task_service
 
 _logger = logging.getLogger("process")
-_DEFAULT_LIMIT = 100
 _RUNNING = (TaskStatus.OPEN.value, TaskStatus.IN_PROGRESS.value)
 
 
@@ -42,13 +39,17 @@ def spawn_all() -> dict[str, list[str]]:
 
 
 def spawn(worker: Worker) -> EnrichmentTask | None:
-    """The worker's next task, or None: one still runs, ComfyUI does not answer, or nothing is left to check."""
+    """The worker's next task, or None: spawn off or outside the window, one still runs, ComfyUI does not answer, or
+    nothing is left to check."""
+    options = ComfyOptions.model_validate(worker.options)
+    if not (options.auto_spawn and ComfyKind().may_start(worker)):
+        return None
     if EnrichmentTask.objects.filter(type=worker.key, status__in=_RUNNING).exists():
         return None
     if not comfyui_client.available():
         _logger.info("comfy_spawn: ComfyUI not answering, %s waits for the next beat", worker.key)
         return None
-    refs = unchecked_refs(worker, limit=getattr(settings, "ENRICHMENT_COMFY_SPAWN_LIMIT", _DEFAULT_LIMIT))
+    refs = unchecked_refs(worker, limit=options.batch)
     if not refs:
         return None
     scope = {"mode": "list", "module": worker.target_module, "refs": refs}

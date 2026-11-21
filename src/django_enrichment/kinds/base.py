@@ -53,10 +53,20 @@ def unreadable_picture(subject_ref: str) -> SubjectError:
 
 
 class Kind:
-    """Base kind. Subclasses set `Options` / `Params` and implement `run`."""
+    """Base kind. Subclasses set `Options` / `Params` and implement `run`.
+
+    Optional, for a kind whose work shares a scarce resource: `lane` fixes the run lane of every task (blank = by
+    size), `unversioned_options` names the options that only schedule work (a change does not bump the worker's
+    `version`), and `may_start` holds a task back before planning (the reaper asks again every minute).
+    """
 
     Options: type[BaseModel]
     Params: type[BaseModel]
+    lane: str = ""
+    unversioned_options: frozenset[str] = frozenset()
+
+    def may_start(self, worker: Any) -> bool:  # noqa: ARG002 — every task may start unless a kind says otherwise
+        return True
 
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         raise NotImplementedError
