@@ -102,16 +102,17 @@ def _shaping(worker: Worker, name: str, value: Any = _CURRENT) -> Any:
     value = getattr(worker, name) if value is _CURRENT else value
     if name != "options" or not isinstance(value, dict):
         return value
-    skipped = get_kind(worker.kind).unversioned_options
+    skipped = getattr(get_kind(worker.kind), "unversioned_options", frozenset())
     return {key: item for key, item in value.items() if key not in skipped}
 
 
 def fixed_lane(task_type: str) -> str:
     """The lane the active worker's kind runs every task on; blank = by size."""
     worker = find_active(task_type)
-    return get_kind(worker.kind).lane if worker is not None else ""
+    return getattr(get_kind(worker.kind), "lane", "") if worker is not None else ""
 
 
 def may_start(worker: Worker) -> bool:
     """Whether a task of this worker may be planned now (its kind can hold it back, e.g. outside a time window)."""
-    return get_kind(worker.kind)().may_start(worker)
+    may_start = getattr(get_kind(worker.kind)(), "may_start", None)
+    return may_start is None or may_start(worker)

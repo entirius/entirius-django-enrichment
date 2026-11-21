@@ -16,8 +16,8 @@
   results, run hash and worker version; they get no task.
 - `comfy` worker options `window` (`HH:MM-HH:MM`, local time a task may start in), `batch` (pictures per spawned
   task, default 100) and `auto_spawn` (default on). They only schedule work: no version bump, no re-run.
-- Kind hooks `Kind.lane` (a fixed run lane), `Kind.may_start(worker)` (hold a task back before planning) and
-  `Kind.unversioned_options`.
+- Kind hooks `Kind.lane` (a fixed run lane), `Kind.may_start(worker)` (hold a task back before planning),
+  `Kind.unversioned_options` and `Kind.skip_edited_subjects`.
 
 ### Changed
 
@@ -25,6 +25,10 @@
 - A `comfy` task created outside its worker's `window` waits `open` and is planned once the window opens; the
   `enrichment.comfy_spawn` beat starts nothing outside it. Schedule the beat around the clock
   (`crontab(minute="*/15")`) and move the night window to the worker.
+
+- A `comfy` worker runs a product even when an operator edited one of its proposals there; the edited proposal is
+  still kept. Before, such a product never got a stored result and the spawn offered it again every 15 minutes.
+- The reaper's kick of unplanned tasks takes the oldest first and skips tasks a kind still holds back.
 
 ### Removed
 

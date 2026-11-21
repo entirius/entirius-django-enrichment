@@ -34,7 +34,8 @@ _PARAMS = [
 
 
 def _query(request: Request) -> ComfyResultsQuery:
-    params = {key: value for key, value in request.query_params.dict().items() if key in ComfyResultsQuery.model_fields}
+    fields = ComfyResultsQuery.model_fields
+    params = {key: value for key, value in request.query_params.dict().items() if key in fields and value != ""}
     try:
         return ComfyResultsQuery(**params)
     except ValidationError as exc:

@@ -24,6 +24,9 @@ from django_enrichment.models import ComfyResult, ContentProposal, EnrichmentTas
 from django_enrichment.services import (
     comfy_spawn_service,
     comfyui_client,
+    queue_dispatch,
+    queue_reaper,
+    revision_service,
     task_service,
     toolbox_calls,
     unit_planner,
@@ -115,6 +118,16 @@ def make_comfy(make_worker, comfy_settings, scores):
         return make_worker(key=key, label="Packshot", kind="comfy", options={**base, **options})
 
     return _make
+
+
+@pytest.fixture
+def at(monkeypatch):
+    """Sets the local time the `comfy` window is judged against."""
+
+    def _at(hhmm: str):
+        monkeypatch.setattr(comfy, "_local_now", lambda: datetime.time.fromisoformat(hhmm))
+
+    return _at
 
 
 def _sha1(data: bytes) -> str:
@@ -660,13 +673,6 @@ class TestOrdinaryTask:
     """A `comfy` worker as a task type like any other: always the bulk lane, held outside its window, scheduled by its
     own options (which never bump its version)."""
 
-    @pytest.fixture
-    def at(self, monkeypatch):
-        def _at(hhmm: str):
-            monkeypatch.setattr(comfy, "_local_now", lambda: datetime.time.fromisoformat(hhmm))
-
-        return _at
-
     @pytest.mark.parametrize(
         ("window", "now", "inside"),
         [
@@ -733,3 +739,79 @@ class TestOrdinaryTask:
             worker.options = {**worker.options, "auto_spawn": False}
             worker = worker_service.save_worker(worker)
             assert comfy_spawn_service.spawn(worker) is None
+
+
+@pytest.mark.django_db
+class TestReviewFixes:
+    def test_a_unit_run_again_counts_its_pictures_once(self, make_comfy, catalogue, scores):
+        by_image, _ = scores
+        catalogue["A"] = _picture(1)
+        by_image[_picture(1)] = 0.9
+        worker = make_comfy(dry_run=True)
+        with respx.mock() as router:
+            _mock_comfy(router)
+            task = _run(worker, "A")
+        comfy.ComfyKind().run(worker, task, "A")  # the same subject again in the same task (a lost lease)
+        task.refresh_from_db()
+        assert task.counts == {"checked": 1, "set": 1}
+
+    def test_a_subject_with_an_edited_proposal_still_gets_a_result(self, make_comfy, catalogue, scores):
+        by_image, _ = scores
+        catalogue["EDGE"] = _picture(1)
+        by_image[_picture(1)] = 0.2
+        worker = make_comfy()
+        with respx.mock() as router:
+            _mock_comfy(router)
+            _run(worker, "EDGE")
+        [proposal] = _proposals()
+        revision_service.add_revision(proposal, {"value": True}, author_kind="user")
+        ComfyResult.objects.all().delete()
+        with respx.mock(assert_all_called=False) as router:
+            _mock_comfy(router)
+            task = _run(worker, "EDGE")
+        assert ComfyResult.objects.filter(subject_ref="EDGE").exists()
+        assert task.counts["checked"] == 1
+        assert [p.status for p in _proposals()] == ["pending"]  # the edited proposal is kept
+
+    def test_a_window_that_starts_when_it_ends_is_refused(self, make_comfy):
+        with pytest.raises(ValidationError):
+            make_comfy(window="22:00-22:00")
+
+    def test_held_tasks_do_not_take_the_reapers_places(self, make_comfy, at, monkeypatch):
+        worker = make_comfy(window="22:00-06:00")
+        at("12:00")
+        old = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        task = EnrichmentTask.objects.create(type=worker.key, status=TaskStatus.OPEN.value, lane="queue")
+        EnrichmentTask.objects.filter(pk=task.pk).update(created_at=old)
+        planned = []
+        monkeypatch.setattr(queue_dispatch, "kick_plan", planned.append)
+        queue_reaper.reap()
+        assert planned == []
+        at("23:00")
+        queue_reaper.reap()
+        assert [t.pk for t in planned] == [task.pk]
+
+
+@pytest.mark.django_db
+class TestResultsApiEdges:
+    def test_blank_filters_mean_any(self, admin_client):
+        response = admin_client.get(RESULTS, {"task": "", "ordering": "", "verdict": ""})
+        assert response.status_code == 200
+        assert admin_client.get(RESULTS + "verdicts/", {"task": ""}).status_code == 200
+
+    def test_a_result_without_a_score_goes_last_both_ways(self, admin_client, make_comfy):
+        worker = make_comfy()
+        for ref, metrics in (("NONE", {}), ("LOW", {"score": 0.1}), ("HIGH", {"score": 0.9})):
+            ComfyResult.objects.create(
+                subject_ref=ref,
+                input_sha1=ref.ljust(40, "0"),
+                worker_key=worker.key,
+                run_hash="h",
+                source="prefilter" if not metrics else "workflow",
+                metrics=metrics,
+                verdict="pass",
+                worker_version=worker.version,
+            )
+        for ordering, expected in (("-score", ["HIGH", "LOW", "NONE"]), ("score", ["LOW", "HIGH", "NONE"])):
+            body = admin_client.get(RESULTS, {"worker": worker.key, "ordering": ordering}).json()
+            assert [r["subject_ref"] for r in body["results"]] == expected

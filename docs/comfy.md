@@ -39,7 +39,7 @@ A `Worker` row (`kind=comfy`, `mode=internal`, `target_module` = the adapter, `k
 | `feature` | BOOL feature of `set` / `review` / `pass` | re-judged |
 | `escalate_feature`, `escalate_ok` | select feature of `escalate` (the option = the reason); the option written back when a picture is fine again | re-judged |
 | `dry_run` | results only, no proposals (a first run on production); `metrics` workflows only | re-judged |
-| `window` | local time `HH:MM-HH:MM` a task may start in (`22:00-06:00` spans midnight); blank = any time | nothing |
+| `window` | local time `HH:MM-HH:MM` a task may start in (`22:00-06:00` spans midnight; start = end is refused); blank = any time | nothing |
 | `batch` | pictures per task the spawn beat starts (1-500, default 100) | nothing |
 | `auto_spawn` | the beat walks every unchecked main picture (default on); off = tasks by hand or by spawn rules only | nothing |
 
@@ -66,8 +66,8 @@ A `comfy` task is an ordinary task, with two rules of its own because ComfyUI is
 - **Always the bulk lane.** Whatever the caller asks for (`lane: now` too), every task of a `comfy` worker runs on
   `queue` (`ENRICHMENT_BULK_QUEUE`, concurrency 1): one picture on the GPU at a time.
 - **Only inside the window.** A task created outside `window` stays `open` with no units; the reaper
-  (`enrichment.reap`, every minute) offers it to the planner again, and it is planned once the window opens. A task
-  that started inside the window runs to its end.
+  (`enrichment.reap`, every minute) offers it to the planner again once the window is open, and it is planned then.
+  A task that started inside the window runs to its end.
 
 Ways to start one:
 
@@ -94,7 +94,14 @@ Per picture the kind bumps, also in a dry run:
 | `prefiltered` | from the prefilter, no GPU |
 
 Besides the bus's own `failed` (ComfyUI down, timeout, unreadable picture: `task.errors` has the code), `proposed` and
-`kept_edited`. A task of 100 pictures that all came back shows `checked: 100` split by verdict.
+`kept_edited`. A task of 100 pictures that all came back shows `checked: 100` split by verdict. A picture is counted
+once per task: a unit run again after a lost lease finds the result its task already stored and does not count it
+again. The counters are what was checked, so a task cancelled mid-unit keeps them although that unit's proposals are
+discarded.
+
+Unlike the text kinds, a `comfy` worker runs a product even when an operator edited one of its proposals there
+(`Kind.skip_edited_subjects = False`): every picture must get a stored result, or the spawn would offer it forever.
+The edited proposal itself is kept at intake (`kept_edited`).
 
 ## Verdicts and proposals
 

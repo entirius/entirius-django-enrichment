@@ -20,6 +20,7 @@ from django_enrichment.services import (
     queue_log,
     task_progress_service,
     work_queue_service,
+    worker_service,
 )
 
 EXPIRED = "LEASE_EXPIRED"
@@ -87,11 +88,13 @@ def _kick_consumers() -> int:
 
 
 def _kick_unplanned() -> int:
-    """Open tasks of an active worker that never got units (the planner crashed or its message was lost)."""
+    """Open tasks of an active worker that never got units (the planner crashed or its message was lost, or the
+    worker's kind held them back until now), oldest first. A worker whose kind still holds its tasks is skipped, so
+    held tasks never take the places of lost ones."""
     cutoff = timezone.now() - timedelta(seconds=_UNPLANNED_AFTER_S)
-    keys = Worker.objects.filter(active=True).values_list("key", flat=True)
+    keys = [worker.key for worker in Worker.objects.filter(active=True) if worker_service.may_start(worker)]
     tasks = EnrichmentTask.objects.filter(status=TaskStatus.OPEN.value, type__in=keys, created_at__lt=cutoff)
-    tasks = tasks.filter(~Exists(WorkUnit.objects.filter(task=OuterRef("pk"))))[:20]
+    tasks = tasks.filter(~Exists(WorkUnit.objects.filter(task=OuterRef("pk")))).order_by("created_at")[:20]
     for task in tasks:
         queue_dispatch.kick_plan(task)
     return len(tasks)

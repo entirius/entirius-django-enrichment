@@ -328,8 +328,10 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **A kind can pin its lane, hold a task back and keep scheduling options out of the version** — `Kind.lane`
   (`task_service.spawn` takes it over any asked lane), `Kind.may_start(worker)` (checked by `unit_planner` before
   planning; a held task stays `open` without units and the reaper's unplanned kick asks again every minute) and
-  `Kind.unversioned_options` (`worker_service` ignores them in the version bump). Kind `comfy` uses all three:
-  bulk lane, the worker's `window`, `window` / `batch` / `auto_spawn`.
+  `Kind.unversioned_options` (`worker_service` ignores them in the version bump); `Kind.skip_edited_subjects = False`
+  runs a subject despite an operator's edit (intake still keeps the edited target). Kind `comfy` uses all four:
+  bulk lane, the worker's `window`, `window` / `batch` / `auto_spawn`, every picture recorded. The hooks are read with
+  `getattr`, so a kind registered without the `Kind` base keeps the defaults.
 - **Kind `comfy` writes `ComfyResult` only after ComfyUI answered** — a failure leaves no row so the spawn retries;
   the bus knows no metric, the host registers it (`register_comfy_metric`) before any comfy `Worker` is saved
   (options validation checks the name). Details: `docs/comfy.md`.

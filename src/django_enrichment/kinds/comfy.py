@@ -127,6 +127,8 @@ class ComfyOptions(BaseModel):
             raise ValueError("an `escalate` threshold needs `escalate_feature`")
         if any(t.action == ESCALATE and not t.reason for t in self.thresholds):
             raise ValueError("an `escalate` threshold needs a `reason`")
+        if self.window and len(set(self.window.split("-"))) == 1:
+            raise ValueError("a window that starts when it ends never opens; leave it blank for any time")
         return self
 
 
@@ -171,9 +173,13 @@ class ComfyKind(Kind):
     Params = ComfyParams
     lane = "queue"  # the bulk lane, one task at a time: ComfyUI is one GPU
     unversioned_options = SCHEDULE_FIELDS
+    # Every picture must get a stored result, or the spawn offers it again forever; an edited flag keeps its value at
+    # intake anyway (`kept_edited`).
+    skip_edited_subjects = False
 
     def may_start(self, worker: Any) -> bool:
-        return in_window(ComfyOptions.model_validate(worker.options).window, _local_now())
+        # The window alone, not the whole options: the reaper asks for every worker every minute.
+        return in_window((worker.options or {}).get("window", ""), _local_now())
 
     def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         options = ComfyOptions.model_validate(worker.options)
@@ -183,8 +189,10 @@ class ComfyKind(Kind):
         workflow, run_hash = load_run(options)
         sha1 = hashlib.sha1(subject.image, usedforsecurity=False).hexdigest()
         key = comfy_result_service.ResultKey(subject_ref, sha1, worker.key, run_hash)
-        outcome = _outcome(Run(worker, task, options), key, subject, workflow)
-        _count(task, outcome)
+        stored = comfy_result_service.find(key)
+        outcome = _outcome(Run(worker, task, options), key, subject, workflow, stored)
+        if stored is None or stored.task_id != task.pk:  # a unit run again (lost lease) counts its pictures once
+            _count(task, outcome)
         return [] if options.dry_run else _drafts(adapter, worker, options, subject, outcome)
 
 
@@ -208,10 +216,10 @@ def load_run(options: ComfyOptions) -> tuple[dict, str]:
     return workflow, run_hash
 
 
-def _outcome(run: Run, key: Any, subject: Subject, workflow: dict) -> Outcome:
+def _outcome(run: Run, key: Any, subject: Subject, workflow: dict, stored: Any) -> Outcome:
     """The stored result re-judged, else a new one (prefilter, else the workflow); stored before any draft. A stored
     picture whose proposal never landed (an intake that failed) runs again: the output itself is not kept."""
-    stored, prefilter = comfy_result_service.find(key), run.options.prefilter
+    prefilter = run.options.prefilter
     if stored is not None and (stored.verdict != PROPOSE_PICTURE or _picture_proposed(run, subject)):
         return _rejudge(run, key, stored)
     if prefilter and (decision := _PREFILTERS[prefilter](subject.image)):

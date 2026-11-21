@@ -13,7 +13,7 @@ blank.
 
 from dataclasses import dataclass, replace
 
-from django.db.models import Count, FloatField, QuerySet
+from django.db.models import Count, F, FloatField, QuerySet
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast
 
@@ -21,7 +21,13 @@ from django_enrichment.adapters import get_adapter
 from django_enrichment.models import ComfyResult, Worker
 
 ORDERINGS = frozenset({"-checked_at", "checked_at", "score", "-score"})
-_ORDER_FIELDS = {"-checked_at": "-modified_at", "checked_at": "modified_at", "score": "score", "-score": "-score"}
+# A result without a score (a prefilter verdict) goes last both ways; PostgreSQL puts NULLs first when descending.
+_ORDER_FIELDS = {
+    "-checked_at": F("modified_at").desc(),
+    "checked_at": F("modified_at").asc(),
+    "score": F("score").asc(nulls_last=True),
+    "-score": F("score").desc(nulls_last=True),
+}
 
 
 @dataclass(frozen=True)
@@ -89,10 +95,20 @@ def _thumbnails(rows: list[ComfyResult], workers: dict[str, Worker]) -> dict[tup
             by_module.setdefault(worker.target_module, set()).add(row.input_sha1)
     urls: dict[tuple[str, str], str] = {}
     for module, sha1s in by_module.items():
-        lookup = getattr(get_adapter(module), "pictures_by_sha1", None)
-        found = lookup(sha1s=sorted(sha1s)) if lookup is not None else {}
+        if (lookup := _lookup(module)) is None:
+            continue
+        found = lookup(sha1s=sorted(sha1s))
         urls.update({(module, sha1): url for sha1, url in found.items()})
     return urls
+
+
+def _lookup(module: str):
+    """The module's `pictures_by_sha1`, or None: no such extra, or no adapter registered any more (a worker left
+    behind by a removed module must not break the list)."""
+    try:
+        return getattr(get_adapter(module), "pictures_by_sha1", None)
+    except ValueError:
+        return None
 
 
 def _row(row: ComfyResult, worker: Worker | None, thumbnails: dict[tuple[str, str], str]) -> dict:
