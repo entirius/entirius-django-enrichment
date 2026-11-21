@@ -13,7 +13,7 @@ from django.http import StreamingHttpResponse
 from django_utils.api.v2_errors import raise_pydantic_as_drf
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from pydantic import ValidationError
-from rest_framework import viewsets
+from rest_framework import renderers, viewsets
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -50,11 +50,26 @@ def _filter(query: ComfyResultsQuery) -> comfy_results_query.ResultFilter:
     return comfy_results_query.ResultFilter(**query.model_dump(exclude={"ordering"}))
 
 
+class _CsvRenderer(renderers.BaseRenderer):
+    """Lets `Accept: text/csv` through content negotiation; the export answers a streamed response itself."""
+
+    media_type = "text/csv"
+    format = "csv"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):  # noqa: ARG002 — never rendered
+        return data
+
+
 class ComfyResultViewSet(viewsets.ViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAdminUser]
     access_area = "enrichment.proposals"
     serializer_class = None
+
+    def get_renderers(self):
+        if self.action == "export":
+            return [_CsvRenderer(), *super().get_renderers()]
+        return super().get_renderers()
 
     @extend_schema(
         tags=_TAGS,
@@ -75,16 +90,13 @@ class ComfyResultViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=_TAGS,
-        summary="Comfy results per verdict",
+        summary="Comfy results per verdict and per escalation reason",
         parameters=_PARAMS,
         responses={200: ComfyVerdictTotalsResponse, 400: None},
     )
     def verdicts(self, request: Request) -> Response:
-        try:
-            totals = comfy_results_query.verdict_totals(_filter(_query(request)))
-        except ValueError as exc:
-            raise_as_drf(exc)
-        body = ComfyVerdictTotalsResponse(total=sum(totals.values()), verdicts=totals)
+        totals = comfy_results_query.totals(_filter(_query(request)))
+        body = ComfyVerdictTotalsResponse(total=sum(totals["verdicts"].values()), **totals)
         return Response(body.model_dump(mode="json"))
 
     @extend_schema(

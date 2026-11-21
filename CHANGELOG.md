@@ -10,12 +10,12 @@
   `propose_picture`), `cached` (a stored result, no GPU) and `prefiltered`, also in a dry run.
 - `GET comfy-results/` (filters `worker`, `verdict`, `source`, `reason`, `subject_ref`, `search`, `task`, a score
   range, `latest` = only the newest check per product by default; `ordering` by check time or score) with the score
-  and a thumbnail of the checked file per row, `GET comfy-results/verdicts/` (totals per verdict) and
+  and a thumbnail of the checked file per row, `GET comfy-results/verdicts/` (totals per verdict and per escalation reason) and
   `GET comfy-results/export/` (the whole filtered list as CSV). The thumbnail comes from the new optional adapter extra `pictures_by_sha1(*, sha1s)` (PIM
   3.10.0).
-- `ComfyResult.task` (migration `0007`, nullable, plus an index on worker and product): the task that judged the file
-  last. Existing rows keep their
-  results, run hash and worker version; they get no task.
+- `ComfyResult.score` and `ComfyResult.task` (migration `0007`, both nullable, indexes on worker + product and
+  worker + score): the score as a sortable number, filled for existing rows from their metrics, and the task that
+  judged the file last. Existing rows keep their results, run hash and worker version; they get no task.
 - `comfy` worker options `window` (`HH:MM-HH:MM`, local time a task may start in), `batch` (pictures per spawned
   task, default 100) and `auto_spawn` (default on). They only schedule work: no version bump, no re-run.
 - `django_enrichment.__version__` (the installed package version): munin reports it, so the CMS shows the screens of

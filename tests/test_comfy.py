@@ -9,12 +9,14 @@ import base64
 import csv
 import datetime
 import hashlib
+import importlib
 import io
 import json
 
 import httpx
 import pytest
 import respx
+from django.apps import apps as django_apps
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
@@ -24,6 +26,7 @@ from django_enrichment.kinds import comfy
 from django_enrichment.kinds.base import ProposalDraft, SubjectError
 from django_enrichment.models import ComfyResult, ContentProposal, EnrichmentTask
 from django_enrichment.services import (
+    comfy_results_query,
     comfy_spawn_service,
     comfyui_client,
     queue_dispatch,
@@ -649,10 +652,10 @@ class TestResultsApi:
     def test_verdict_totals_ignore_the_verdict_filter(self, admin_client, checked):
         worker, _, _ = checked
         body = admin_client.get(RESULTS + "verdicts/", {"worker": worker.key, "verdict": "set"}).json()
-        assert body == {"total": 3, "verdicts": {"set": 1, "review": 1, "pass": 1}}
+        assert body == {"total": 3, "verdicts": {"set": 1, "review": 1, "pass": 1}, "reasons": {}}
 
-    def test_a_score_ordering_needs_a_worker(self, admin_client, checked):
-        assert admin_client.get(RESULTS, {"ordering": "score"}).status_code == 400
+    def test_an_unknown_ordering_is_refused(self, admin_client, checked):
+        assert admin_client.get(RESULTS, {"ordering": "score"}).status_code == 200
         assert admin_client.get(RESULTS, {"ordering": "name"}).status_code == 400
 
     def test_a_rejudging_task_takes_the_result_over(self, make_comfy, catalogue, scores, checked):
@@ -811,6 +814,7 @@ class TestResultsApiEdges:
                 run_hash="h",
                 source="prefilter" if not metrics else "workflow",
                 metrics=metrics,
+                score=metrics.get("score"),
                 verdict="pass",
                 worker_version=worker.version,
             )
@@ -835,6 +839,7 @@ class TestResultsListing:
                 run_hash="h",
                 source="workflow",
                 metrics={"score": score, "white": 0.5},
+                score=score,
                 verdict="pass",
                 worker_version=worker.version,
                 **extra,
@@ -858,14 +863,13 @@ class TestResultsListing:
             "=HYPERLINK(1)",
         ]
         totals = admin_client.get(RESULTS + "verdicts/", {"worker": rows.key}).json()
-        assert totals == {"total": 3, "verdicts": {"pass": 3}}
+        assert totals == {"total": 3, "verdicts": {"pass": 3}, "reasons": {}}
 
     def test_search_takes_part_of_the_sku(self, admin_client, rows):
         assert self._refs(admin_client, worker=rows.key, search="gift-1") == ["GIFT-100"]
 
     def test_score_range(self, admin_client, rows):
         assert self._refs(admin_client, worker=rows.key, score_min=0.15, score_max=0.25) == ["GIFT-50", "GIFT-100"]
-        assert admin_client.get(RESULTS, {"score_min": 0.1}).status_code == 400
 
     def test_csv_export_of_the_whole_list(self, admin_client, rows):
         response = admin_client.get(RESULTS + "export/", {"worker": rows.key, "ordering": "-score"})
@@ -889,5 +893,79 @@ class TestResultsListing:
         assert [line[1] for line in lines[1:]] == ["'=HYPERLINK(1)", "GIFT-100", "GIFT-50"]
         assert lines[2][4] == "0.2"
 
-    def test_csv_export_refuses_a_score_range_without_a_worker(self, admin_client, rows):
-        assert admin_client.get(RESULTS + "export/", {"score_max": 0.2}).status_code == 400
+    def test_csv_export_answers_accept_text_csv(self, admin_client, rows):
+        response = admin_client.get(RESULTS + "export/", {"worker": rows.key}, HTTP_ACCEPT="text/csv")
+        assert response.status_code == 200
+        assert admin_client.get(RESULTS + "export/", {"ordering": "name"}).status_code == 400
+
+
+@pytest.mark.django_db
+class TestSecondReviewFixes:
+    def test_a_picture_that_came_back_is_due_again_and_becomes_the_latest(self, make_comfy, catalogue, scores):
+        by_image, _ = scores
+        by_image.update({_picture(1): 0.9, _picture(2): 0.01})
+        worker = make_comfy(dry_run=True)
+        with respx.mock(assert_all_called=False) as router:
+            _mock_comfy(router)
+            for picture in (1, 2, 1):  # A, B, back to A
+                catalogue["SKU"] = _picture(picture)
+                assert comfy_spawn_service.unchecked_refs(worker, limit=10) == ["SKU"]
+                _run(worker, "SKU")
+            assert comfy_spawn_service.unchecked_refs(worker, limit=10) == []
+            assert prompt_calls(router) == 2  # A came back from its stored result, no GPU
+        latest = comfy_results_query.list_results(comfy_results_query.ResultFilter(worker=worker.key))
+        assert [(r.input_sha1, r.verdict) for r in latest] == [(_sha1(_picture(1)), "set")]
+
+    def test_a_score_that_is_no_number_is_stored_as_none(self, make_comfy, catalogue, scores):
+        _, gate = scores
+        catalogue["SKU"] = _picture(1)
+        gate[_picture(1)] = comfy.Prefiltered("pass", metrics={"score": "n/a"})
+        with respx.mock(assert_all_called=False) as router:
+            _mock_comfy(router)
+            _run(make_comfy(prefilter="format"), "SKU")
+        assert ComfyResult.objects.get().score is None
+
+    def test_the_migration_fills_the_score_of_older_rows(self, make_comfy):
+        worker = make_comfy(score="contrast")
+        fields = {"input_sha1": "a" * 40, "worker_key": worker.key, "run_hash": "h", "source": "workflow"}
+        old = ComfyResult.objects.create(
+            subject_ref="A", metrics={"contrast": 0.4, "score": 9}, verdict="set", worker_version=1, **fields
+        )
+        odd = ComfyResult.objects.create(
+            subject_ref="B", metrics={"contrast": True}, verdict="pass", worker_version=1, **fields
+        )
+        migration = importlib.import_module("django_enrichment.migrations.0007_comfy_result_task")
+        migration.fill_scores(django_apps, None)
+        old.refresh_from_db()
+        odd.refresh_from_db()
+        assert (old.score, odd.score) == (0.4, None)
+
+    def test_reason_totals_ignore_the_reason_filter(self, admin_client, make_comfy):
+        worker = make_comfy()
+        for ref, reason in (("A", "replace_size"), ("B", "replace_size"), ("C", "replace_background"), ("D", "")):
+            ComfyResult.objects.create(
+                subject_ref=ref,
+                input_sha1=ref * 40,
+                worker_key=worker.key,
+                run_hash="h",
+                source="prefilter",
+                verdict="escalate" if reason else "pass",
+                reason=reason,
+                worker_version=worker.version,
+            )
+        body = admin_client.get(RESULTS + "verdicts/", {"worker": worker.key, "reason": "replace_size"}).json()
+        assert body["reasons"] == {"replace_size": 2, "replace_background": 1}
+        assert body["verdicts"] == {"escalate": 2}
+
+    def test_a_broken_worker_does_not_stop_the_reaper(self, make_comfy, monkeypatch):
+        make_comfy()
+
+        def _boom(worker):
+            raise ValueError("unknown worker kind")
+
+        monkeypatch.setattr(worker_service, "may_start", _boom)
+        assert "kicked" in queue_reaper.reap()
+
+
+def prompt_calls(router) -> int:
+    return sum(route.call_count for route in router.routes if "/prompt" in str(route.pattern))

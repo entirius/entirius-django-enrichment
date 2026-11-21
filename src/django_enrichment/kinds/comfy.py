@@ -280,6 +280,7 @@ def _store(run: Run, key: Any, outcome: Outcome, *, source: str, metrics: dict) 
         reason=outcome.reason,
         worker_version=run.worker.version,
         task=run.task,
+        score=comfy_result_service.score_of(metrics, run.options.score),
     )
 
 

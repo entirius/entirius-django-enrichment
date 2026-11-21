@@ -566,7 +566,9 @@ class ComfyResultListResponse(BaseModel):
 
 
 class ComfyVerdictTotalsResponse(BaseModel):
-    """`GET comfy-results/verdicts/` — results per verdict under the same filters (the verdict filter ignored)."""
+    """`GET comfy-results/verdicts/` — results per verdict (the verdict filter ignored) and per escalation reason (the
+    reason filter ignored, blank reasons left out) under the same filters."""
 
-    total: int
+    total: int = Field(description="Sum of `verdicts`")
     verdicts: dict[str, int] = Field(examples=[{"pass": 3800, "review": 120, "escalate": 40}])
+    reasons: dict[str, int] = Field(examples=[{"replace_size": 31, "replace_background": 9}])

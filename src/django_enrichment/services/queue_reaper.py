@@ -5,6 +5,7 @@
 """Reaper (beat, every minute): expired leases go back to the queue or fail, stalled work is escalated,
 consumers are restarted where work waits and nothing is leased (recovery after a crash or restart)."""
 
+import logging
 from datetime import timedelta
 
 from django.db import transaction
@@ -23,6 +24,7 @@ from django_enrichment.services import (
     worker_service,
 )
 
+_logger = logging.getLogger("process")
 EXPIRED = "LEASE_EXPIRED"
 _EXPIRED_MESSAGE = "The worker stopped answering; the work was put back in the queue."
 _BATCH = 100
@@ -87,12 +89,22 @@ def _kick_consumers() -> int:
     return len(kicked)
 
 
+def _may_start(worker: Worker) -> bool:
+    """A worker whose kind cannot answer (unregistered kind, an options row written past validation) may start: the
+    planner then fails its task in the open instead of the reaper stopping for every worker."""
+    try:
+        return worker_service.may_start(worker)
+    except Exception:  # noqa: BLE001 — one broken worker must not stop the reap
+        _logger.exception("reaper: may_start of worker %s failed", worker.key)
+        return True
+
+
 def _kick_unplanned() -> int:
     """Open tasks of an active worker that never got units (the planner crashed or its message was lost, or the
     worker's kind held them back until now), oldest first. A worker whose kind still holds its tasks is skipped, so
     held tasks never take the places of lost ones."""
     cutoff = timezone.now() - timedelta(seconds=_UNPLANNED_AFTER_S)
-    keys = [worker.key for worker in Worker.objects.filter(active=True) if worker_service.may_start(worker)]
+    keys = [worker.key for worker in Worker.objects.filter(active=True) if _may_start(worker)]
     tasks = EnrichmentTask.objects.filter(status=TaskStatus.OPEN.value, type__in=keys, created_at__lt=cutoff)
     tasks = tasks.filter(~Exists(WorkUnit.objects.filter(task=OuterRef("pk")))).order_by("created_at")[:20]
     for task in tasks:

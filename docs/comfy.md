@@ -156,14 +156,16 @@ API (`IsAdminUser`, area `enrichment.proposals`):
 
 | Endpoint | Meaning |
 |---|---|
-| `GET comfy-results/` | paginated; `worker`, `verdict`, `source`, `reason`, `subject_ref` (exact), `search` (part of the SKU), `task`, `score_min` / `score_max`, `latest` (default true), `ordering` (`-checked_at` default, `checked_at`, `score`, `-score`); a score order or range needs `worker` |
-| `GET comfy-results/verdicts/` | `{total, verdicts: {verdict: n}}` under the same filters, the verdict filter ignored |
+| `GET comfy-results/` | paginated; `worker`, `verdict`, `source`, `reason`, `subject_ref` (exact), `search` (part of the SKU), `task`, `score_min` / `score_max`, `latest` (default true), `ordering` (`-checked_at` default, `checked_at`, `score`, `-score`; no score last). Scores compare within one worker only |
+| `GET comfy-results/verdicts/` | `{total, verdicts: {verdict: n}, reasons: {reason: n}}` under the same filters; each total ignores its own filter |
 | `GET comfy-results/export/` | the whole filtered list as CSV (at most 50 000 rows): worker, SKU, verdict, reason, score, source, worker version, task, checked at, sha1, then one `metric_<key>` column per metric; a text cell starting like a formula gets a leading `'` |
 
 `latest` (default) lists only the newest check of each product per worker: a product whose main picture was replaced,
-or that ran again under an edited workflow, keeps its older results as history (`latest=false`).
+or that ran again under an edited workflow, keeps its older results as history (`latest=false`). A picture that comes
+back (A, B, A) is offered by the spawn again and re-judged from its stored result, so the newest row is always the
+picture the product has. The export also answers `Accept: text/csv`.
 
-Each item has `score` (`metrics[<worker's score>]`) and `thumbnail_url` from the adapter's optional extra
+Each item has `score` (the stored `ComfyResult.score`: `metrics[<worker's score>]` when it is a number, else null) and `thumbnail_url` from the adapter's optional extra
 `pictures_by_sha1(*, sha1s) -> {sha1: url}` (PIM 3.10.0), one call per page; blank without the extra or once the file
 is gone.
 
