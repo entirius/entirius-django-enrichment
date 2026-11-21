@@ -33,22 +33,31 @@ file again. Nothing is ever judged without an answer.
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import time
 from typing import Any, Literal
 
 from django.core.files.base import ContentFile
+from django.utils import timezone
 from pydantic import BaseModel, Field, model_validator
 
 from django_enrichment.adapters import get_adapter
 from django_enrichment.kinds import extras
 from django_enrichment.kinds.base import Kind, ProposalDraft, SubjectError
 from django_enrichment.kinds.image import DERIVED_OP, main_picture_ref, read_picture
-from django_enrichment.services import comfy_result_service, comfyui_client
+from django_enrichment.services import comfy_result_service, comfyui_client, task_service
 
 KIND = "comfy"
 SET, REVIEW, ESCALATE, PASS, PROPOSE_PICTURE = "set", "review", "escalate", "pass", "propose_picture"
 # The options that shape a stored result: a change runs the workflow again (thresholds and features only re-judge).
 RUN_FIELDS = frozenset({"input_node", "output", "metric", "score", "prefilter"})
+# The options that only schedule work: a change neither runs again nor bumps the worker version.
+SCHEDULE_FIELDS = frozenset({"window", "batch", "auto_spawn"})
+_WINDOW = r"^$|^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$"
+DEFAULT_BATCH, MAX_BATCH = 100, 500
 SOURCE_PREFILTER, SOURCE_WORKFLOW = "prefilter", "workflow"
+# Task counters (`task.counts`) besides one per verdict: every subject with a verdict, a stored result reused, a
+# prefilter verdict. A subject that failed is in the bus's own `failed`.
+CHECKED, CACHED, PREFILTERED = "checked", "cached", "prefiltered"
 FLAG_KIND, PICTURE_KIND = "attribute_value", "picture"
 NO_SCORE = "COMFY_NO_SCORE"
 
@@ -97,6 +106,14 @@ class ComfyOptions(BaseModel):
     escalate_feature: str = Field("", description="Select feature of `escalate`")
     escalate_ok: str = Field("", max_length=64, description="Option of `escalate_feature` for a picture now fine")
     dry_run: bool = Field(False, description="Store results only, no proposals")
+    window: str = Field(
+        "",
+        pattern=_WINDOW,
+        description="Local time `HH:MM-HH:MM` a task of this worker may start in (may span midnight); blank = any time",
+        examples=["22:00-06:00"],
+    )
+    batch: int = Field(DEFAULT_BATCH, ge=1, le=MAX_BATCH, description="Pictures per task the spawn beat starts")
+    auto_spawn: bool = Field(True, description="The spawn beat checks every unchecked main picture; off = by hand only")
 
     @model_validator(mode="after")
     def _consistent(self) -> "ComfyOptions":
@@ -110,6 +127,8 @@ class ComfyOptions(BaseModel):
             raise ValueError("an `escalate` threshold needs `escalate_feature`")
         if any(t.action == ESCALATE and not t.reason for t in self.thresholds):
             raise ValueError("an `escalate` threshold needs a `reason`")
+        if self.window and len(set(self.window.split("-"))) == 1:
+            raise ValueError("a window that starts when it ends never opens; leave it blank for any time")
         return self
 
 
@@ -129,6 +148,16 @@ class Outcome:
     verdict: str
     reason: str = ""
     picture: bytes | None = None  # the workflow's output, only fresh from ComfyUI with output `picture`
+    origin: str = SOURCE_WORKFLOW  # `cached` (a stored result) | `prefilter` | `workflow`
+
+
+@dataclass(frozen=True)
+class Run:
+    """One subject's run: the worker, the task it counts in (the result remembers it), the validated options."""
+
+    worker: Any
+    task: Any
+    options: ComfyOptions
 
 
 @dataclass(frozen=True)
@@ -142,8 +171,17 @@ class Subject:
 class ComfyKind(Kind):
     Options = ComfyOptions
     Params = ComfyParams
+    lane = "queue"  # the bulk lane, one task at a time: ComfyUI is one GPU
+    unversioned_options = SCHEDULE_FIELDS
+    # Every picture must get a stored result, or the spawn offers it again forever; an edited flag keeps its value at
+    # intake anyway (`kept_edited`).
+    skip_edited_subjects = False
 
-    def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:  # noqa: ARG002 — task unused
+    def may_start(self, worker: Any) -> bool:
+        # The window alone, not the whole options: the reaper asks for every worker every minute.
+        return in_window((worker.options or {}).get("window", ""), _local_now())
+
+    def run(self, worker: Any, task: Any, subject_ref: str) -> list[ProposalDraft]:
         options = ComfyOptions.model_validate(worker.options)
         adapter = get_adapter(worker.target_module)
         picture_ref = main_picture_ref(adapter, subject_ref, options.channel)
@@ -151,8 +189,23 @@ class ComfyKind(Kind):
         workflow, run_hash = load_run(options)
         sha1 = hashlib.sha1(subject.image, usedforsecurity=False).hexdigest()
         key = comfy_result_service.ResultKey(subject_ref, sha1, worker.key, run_hash)
-        outcome = _outcome(worker, options, key, subject, workflow)
+        stored = comfy_result_service.find(key)
+        outcome = _outcome(Run(worker, task, options), key, subject, workflow, stored)
+        if stored is None or stored.task_id != task.pk:  # a unit run again (lost lease) counts its pictures once
+            _count(task, outcome)
         return [] if options.dry_run else _drafts(adapter, worker, options, subject, outcome)
+
+
+def _local_now() -> time:
+    return timezone.localtime().time()
+
+
+def in_window(window: str, now: time) -> bool:
+    """`now` inside `HH:MM-HH:MM` (start included, end excluded; a start after the end spans midnight)."""
+    if not window:
+        return True
+    start, end = (time.fromisoformat(part) for part in window.split("-"))
+    return start <= now < end if start <= end else now >= start or now < end
 
 
 def load_run(options: ComfyOptions) -> tuple[dict, str]:
@@ -163,38 +216,39 @@ def load_run(options: ComfyOptions) -> tuple[dict, str]:
     return workflow, run_hash
 
 
-def _outcome(worker: Any, options: ComfyOptions, key: Any, subject: Subject, workflow: dict) -> Outcome:
+def _outcome(run: Run, key: Any, subject: Subject, workflow: dict, stored: Any) -> Outcome:
     """The stored result re-judged, else a new one (prefilter, else the workflow); stored before any draft. A stored
     picture whose proposal never landed (an intake that failed) runs again: the output itself is not kept."""
-    stored = comfy_result_service.find(key)
-    if stored is not None and (stored.verdict != PROPOSE_PICTURE or _picture_proposed(worker, options, subject)):
-        return _rejudge(worker, options, key, stored)
-    if options.prefilter and (decision := _PREFILTERS[options.prefilter](subject.image)):
-        outcome = Outcome(decision.action, decision.reason)
-        _store(worker, key, outcome, source=SOURCE_PREFILTER, metrics=decision.metrics)
+    prefilter = run.options.prefilter
+    if stored is not None and (stored.verdict != PROPOSE_PICTURE or _picture_proposed(run, subject)):
+        return _rejudge(run, key, stored)
+    if prefilter and (decision := _PREFILTERS[prefilter](subject.image)):
+        outcome = Outcome(decision.action, decision.reason, origin=SOURCE_PREFILTER)
+        _store(run, key, outcome, source=SOURCE_PREFILTER, metrics=decision.metrics)
         return outcome
-    return _run_workflow(worker, options, key, subject, workflow)
+    return _run_workflow(run, key, subject, workflow)
 
 
-def _rejudge(worker: Any, options: ComfyOptions, key: Any, stored: Any) -> Outcome:
+def _rejudge(run: Run, key: Any, stored: Any) -> Outcome:
     """A stored workflow score meets the current thresholds; a prefilter verdict and a proposed picture stand."""
-    if stored.source == SOURCE_WORKFLOW and options.output == "metrics":
-        outcome = _judge(options, stored.metrics)
+    if stored.source == SOURCE_WORKFLOW and run.options.output == "metrics":
+        outcome = _judge(run.options, stored.metrics)
     else:
         outcome = Outcome(stored.verdict, stored.reason)
-    _store(worker, key, outcome, source=stored.source, metrics=stored.metrics)
-    return outcome
+    _store(run, key, outcome, source=stored.source, metrics=stored.metrics)
+    return Outcome(outcome.verdict, outcome.reason, origin=CACHED)
 
 
-def _run_workflow(worker: Any, options: ComfyOptions, key: Any, subject: Subject, workflow: dict) -> Outcome:
+def _run_workflow(run: Run, key: Any, subject: Subject, workflow: dict) -> Outcome:
+    options = run.options
     filename = f"enrichment-{key.input_sha1}.{subject.mime.rsplit('/', 1)[-1]}"
     output = comfyui_client.run(workflow, input_node=options.input_node, image=subject.image, filename=filename)
     if options.output == "picture":
-        _store(worker, key, Outcome(PROPOSE_PICTURE), source=SOURCE_WORKFLOW, metrics={})
+        _store(run, key, Outcome(PROPOSE_PICTURE), source=SOURCE_WORKFLOW, metrics={})
         return Outcome(PROPOSE_PICTURE, picture=output)
     metrics = _METRICS[options.metric](subject.image, output)
     outcome = _judge(options, metrics)
-    _store(worker, key, outcome, source=SOURCE_WORKFLOW, metrics=metrics)
+    _store(run, key, outcome, source=SOURCE_WORKFLOW, metrics=metrics)
     return outcome
 
 
@@ -207,14 +261,26 @@ def _judge(options: ComfyOptions, metrics: dict) -> Outcome:
     return Outcome(PASS)
 
 
-def _store(worker: Any, key: Any, outcome: Outcome, *, source: str, metrics: dict) -> None:
+def _count(task: Any, outcome: Outcome) -> None:
+    """`checked`, the verdict, and where it came from when the GPU was not needed — also in a dry run."""
+    bumps = {CHECKED: 1, outcome.verdict: 1}
+    if outcome.origin == CACHED:
+        bumps[CACHED] = 1
+    elif outcome.origin == SOURCE_PREFILTER:
+        bumps[PREFILTERED] = 1
+    task_service.increment_counts(task, bumps)
+
+
+def _store(run: Run, key: Any, outcome: Outcome, *, source: str, metrics: dict) -> None:
     comfy_result_service.save(
         key,
         source=source,
         metrics=metrics,
         verdict=outcome.verdict,
         reason=outcome.reason,
-        worker_version=worker.version,
+        worker_version=run.worker.version,
+        task=run.task,
+        score=comfy_result_service.score_of(metrics, run.options.score),
     )
 
 
@@ -274,9 +340,9 @@ def _picture_locator(worker: Any, options: ComfyOptions, subject: Subject) -> di
     }
 
 
-def _picture_proposed(worker: Any, options: ComfyOptions, subject: Subject) -> bool:
-    locator = _picture_locator(worker, options, subject)
-    return comfy_result_service.proposal_exists(worker.target_module, subject.ref, PICTURE_KIND, locator)
+def _picture_proposed(run: Run, subject: Subject) -> bool:
+    locator = _picture_locator(run.worker, run.options, subject)
+    return comfy_result_service.proposal_exists(run.worker.target_module, subject.ref, PICTURE_KIND, locator)
 
 
 def _picture_draft(worker: Any, options: ComfyOptions, subject: Subject, png: bytes) -> ProposalDraft:

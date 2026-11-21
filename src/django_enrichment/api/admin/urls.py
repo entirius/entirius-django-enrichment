@@ -7,6 +7,7 @@
 from django.urls import path
 
 from django_enrichment.api.admin.views.catalog_views import CatalogViewSet
+from django_enrichment.api.admin.views.comfy_result_views import ComfyResultViewSet
 from django_enrichment.api.admin.views.memory_views import MemoryViewSet
 from django_enrichment.api.admin.views.profile_views import ProfileViewSet
 from django_enrichment.api.admin.views.proposal_views import ProposalViewSet
@@ -31,6 +32,17 @@ urlpatterns = [
     # AI usage this month (CMS header counter)
     path("usage/month/", AIUsageViewSet.as_view({"get": "month"}), name="admin-usage-month"),
     # Workers
+    path("comfy-results/", ComfyResultViewSet.as_view({"get": "list"}), name="admin-comfy-results-list"),
+    path(
+        "comfy-results/export/",
+        ComfyResultViewSet.as_view({"get": "export"}),
+        name="admin-comfy-results-export",
+    ),
+    path(
+        "comfy-results/verdicts/",
+        ComfyResultViewSet.as_view({"get": "verdicts"}),
+        name="admin-comfy-results-verdicts",
+    ),
     path("workers/", WorkerViewSet.as_view({"get": "list"}), name="admin-workers-list"),
     path("workers/status/", WorkerViewSet.as_view({"get": "status"}), name="admin-workers-status"),
     path("workers/<str:key>/resume/", WorkerViewSet.as_view({"post": "resume"}), name="admin-workers-resume"),

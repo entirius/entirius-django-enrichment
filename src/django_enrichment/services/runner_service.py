@@ -37,7 +37,11 @@ def run_subject(worker: Worker, kind: Kind, task: EnrichmentTask, subject_ref: s
     (`ENRICHMENT_TRANSIENT_ERROR_CODES`) is retried `ENRICHMENT_TRANSIENT_RETRIES` times; a failure is logged with
     an error id and returned, never raised."""
     prefix = f"worker:{worker.key}@"
-    if proposal_service.subject_has_operator_edits(worker.target_module, subject_ref, prefix):
+    # A kind registered without the `Kind` base has the base's defaults.
+    edited = getattr(kind, "skip_edited_subjects", True) and proposal_service.subject_has_operator_edits(
+        worker.target_module, subject_ref, prefix
+    )
+    if edited:
         task_service.increment_count(task, "kept_edited")
         return SubjectResult(subject_ref)
     retries = queue_config.get("ENRICHMENT_TRANSIENT_RETRIES")

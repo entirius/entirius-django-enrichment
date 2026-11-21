@@ -26,6 +26,18 @@ class ComfyResult(BaseModel):
     verdict = models.CharField(max_length=32)
     reason = models.CharField(max_length=64, blank=True, default="")
     worker_version = models.PositiveIntegerField()
+    # `metrics[<the worker's options.score>]` when it is a number, else NULL (a prefilter verdict): the value the list
+    # sorts and filters by. The score key is a run-shaping option, so a row's score never changes meaning.
+    score = models.FloatField(null=True, blank=True)
+    # The task that judged this file last (a later task re-judging a stored result takes it over); NULL for rows
+    # written before 2.5.0 and once that task is pruned.
+    task = models.ForeignKey(
+        "django_enrichment.EnrichmentTask",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="comfy_results",
+    )
 
     class Meta:
         constraints = [
@@ -36,6 +48,8 @@ class ComfyResult(BaseModel):
         indexes = [
             models.Index(fields=["worker_key", "run_hash", "input_sha1"], name="enr_comfy_run_idx"),
             models.Index(fields=["worker_key", "verdict"], name="enr_comfy_worker_verdict_idx"),
+            models.Index(fields=["worker_key", "subject_ref"], name="enr_comfy_worker_subject_idx"),
+            models.Index(fields=["worker_key", "score"], name="enr_comfy_worker_score_idx"),
         ]
 
     def __str__(self) -> str:

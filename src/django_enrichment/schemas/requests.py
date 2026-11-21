@@ -423,3 +423,21 @@ class FailRequest(LeaseRequest):
     code: str = Field(pattern=r"^[A-Z0-9_]{1,64}$", examples=["TIMEOUT"])
     message: str = Field(max_length=300, description="Plain words for the operator, never raw exception text")
     retryable: bool = True
+
+
+class ComfyResultsQuery(BaseModel):
+    """`GET comfy-results/` and `comfy-results/verdicts/` query parameters; blank = any."""
+
+    worker: str = Field("", max_length=64, description="Worker key", examples=["pim.packshot_quality"])
+    verdict: str = Field("", max_length=32, description="set | review | escalate | pass | propose_picture")
+    source: Literal["", "prefilter", "workflow"] = ""
+    reason: str = Field("", max_length=64, description="Escalation reason", examples=["replace_size"])
+    subject_ref: str = Field("", max_length=255, description="Exact SKU", examples=["SKU-1"])
+    search: str = Field("", max_length=255, description="Part of the SKU", examples=["GIFT"])
+    task: int | None = Field(None, ge=1, description="Task that judged the file last")
+    score_min: float | None = Field(None, description="Score at least (compares within one worker)", examples=[0.12])
+    score_max: float | None = Field(None, description="Score at most (compares within one worker)", examples=[0.18])
+    latest: bool = Field(True, description="Only the latest check of each product; false = the history too")
+    ordering: Literal["-checked_at", "checked_at", "score", "-score"] = Field(
+        "-checked_at", description="`score` / `-score`: results without a score last"
+    )

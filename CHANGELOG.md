@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.5.0 — 2026-11-21
+
+### Added
+
+- Kind `comfy` is an ordinary task type (`docs/comfy.md`): started from the CMS for a product list, a filter or a
+  spawn rule like any other worker; a stored result still stops a second run of the same file.
+- `task.counts` of a `comfy` task: `checked`, one key per verdict (`set`, `review`, `pass`, `escalate`,
+  `propose_picture`), `cached` (a stored result, no GPU) and `prefiltered`, also in a dry run.
+- `GET comfy-results/` (filters `worker`, `verdict`, `source`, `reason`, `subject_ref`, `search`, `task`, a score
+  range, `latest` = only the newest check per product by default; `ordering` by check time or score) with the score
+  and a thumbnail of the checked file per row, `GET comfy-results/verdicts/` (totals per verdict and per escalation reason) and
+  `GET comfy-results/export/` (the whole filtered list as CSV). The thumbnail comes from the new optional adapter extra `pictures_by_sha1(*, sha1s)` (PIM
+  3.10.0).
+- `ComfyResult.score` and `ComfyResult.task` (migration `0007`, both nullable, indexes on worker + product and
+  worker + score): the score as a sortable number, filled for existing rows from their metrics, and the task that
+  judged the file last. Existing rows keep their results, run hash and worker version; they get no task.
+- `comfy` worker options `window` (`HH:MM-HH:MM`, local time a task may start in), `batch` (pictures per spawned
+  task, default 100) and `auto_spawn` (default on). They only schedule work: no version bump, no re-run.
+- `django_enrichment.__version__` (the installed package version): munin reports it, so the CMS shows the screens of
+  this release (Picture checks) only on a service that has it.
+- Kind hooks `Kind.lane` (a fixed run lane), `Kind.may_start(worker)` (hold a task back before planning),
+  `Kind.unversioned_options` and `Kind.skip_edited_subjects`.
+
+### Changed
+
+- Every task of a `comfy` worker runs on the bulk lane, whatever lane was asked for: one picture on the GPU at a time.
+- A `comfy` task created outside its worker's `window` waits `open` and is planned once the window opens; the
+  `enrichment.comfy_spawn` beat starts nothing outside it. Schedule the beat around the clock
+  (`crontab(minute="*/15")`) and move the night window to the worker.
+
+- A `comfy` worker runs a product even when an operator edited one of its proposals there; the edited proposal is
+  still kept. Before, such a product never got a stored result and the spawn offered it again every 15 minutes.
+- The reaper's kick of unplanned tasks takes the oldest first and skips tasks a kind still holds back.
+
+### Removed
+
+- Setting `ENRICHMENT_COMFY_SPAWN_LIMIT`: the worker's `batch` option replaces it.
+
 ## 2.4.0 — 2026-11-20
 
 ### Added

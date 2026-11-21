@@ -57,13 +57,14 @@ src/django_enrichment/
 │                       # ai_usage_service (this month's toolbox usage, CMS header counter),
 │                       # image_bundle (a cover's variants as one staged zip),
 │                       # comfyui_client (the only ComfyUI door) + comfy_result_service + comfy_spawn_service
+│                       # + comfy_results_query (the CMS list: score, thumbnails, verdict totals)
 ├── augmentations/      # registry (register_augmentation, run_all, params.augment) + seo_brief (+ seo_prompts),
 │                       # cover_product
 ├── adapters/           # registry (get_adapter, lazy/DIP) + base.py (Protocol) + artifact.py (built-in "enrichment")
 ├── tasks/              # apply_tasks (canvas), cleanup + gap_autospawn + comfy_tasks (beats), worker_runner (run_task),
 │                       # revise_tasks
 ├── api/admin/          # JWT + IsAdminUser ViewSets: views/ (task, proposal, revision, spawn_rule, worker, template, catalog,
-│                       # workflow, profile, memory, usage), urls, throttling, pagination
+│                       # workflow, profile, memory, usage, comfy_result), urls, throttling, pagination
 ├── admin/              # EnrichmentTaskAdmin, ContentProposalAdmin, SpawnRuleAdmin, WorkerAdmin, TaskTemplateAdmin,
 │                       # WorkflowDefinitionAdmin, WorkflowRunAdmin (read-only)
 ├── testing/            # adapter_conformance — shared adapter test kit other modules subclass
@@ -206,7 +207,6 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 | `ENRICHMENT_TASK_MAX_COST_USD` | `"5.00"` | a task at this cost stops (queued units cancelled, notification) |
 | `ENRICHMENT_RETENTION_DAYS` | `30` | undo window = retention |
 | `ENRICHMENT_COMFYUI_URL` / `_TIMEOUT_S` | `""` / `180` | ComfyUI of the `comfy` kind (blank = off) and how long one prompt may take |
-| `ENRICHMENT_COMFY_SPAWN_LIMIT` | `100` | pictures per task the `enrichment.comfy_spawn` beat spawns |
 | `ENRICHMENT_MAX_CSV_BYTES` | 10 MB | CSV import size cap |
 | `ENRICHMENT_SPAWN_DEFAULT_LIMIT` | `200` | gap-task budget when a rule sets no `limit` |
 | `ENRICHMENT_SPAWN_COOLDOWN_DAYS` | `7` | gap cooldown when a rule sets no `cooldown_days` |
@@ -325,6 +325,13 @@ Read in `src/django_enrichment/settings.py`; all optional except `ENRICHMENT_ADA
 - **`auto_apply` is the only write without a person** — a `ProposalDraft` flag the runner applies right after intake
   (kind `comfy`'s `set` / `escalate`); a media draft refuses it. A refused write leaves the proposal pending. Never
   apply from a kind.
+- **A kind can pin its lane, hold a task back and keep scheduling options out of the version** — `Kind.lane`
+  (`task_service.spawn` takes it over any asked lane), `Kind.may_start(worker)` (checked by `unit_planner` before
+  planning; a held task stays `open` without units and the reaper's unplanned kick asks again every minute) and
+  `Kind.unversioned_options` (`worker_service` ignores them in the version bump); `Kind.skip_edited_subjects = False`
+  runs a subject despite an operator's edit (intake still keeps the edited target). Kind `comfy` uses all four:
+  bulk lane, the worker's `window`, `window` / `batch` / `auto_spawn`, every picture recorded. The hooks are read with
+  `getattr`, so a kind registered without the `Kind` base keeps the defaults.
 - **Kind `comfy` writes `ComfyResult` only after ComfyUI answered** — a failure leaves no row so the spawn retries;
   the bus knows no metric, the host registers it (`register_comfy_metric`) before any comfy `Worker` is saved
   (options validation checks the name). Details: `docs/comfy.md`.

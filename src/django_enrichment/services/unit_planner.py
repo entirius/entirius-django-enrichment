@@ -26,6 +26,7 @@ from django_enrichment.services import (
     task_progress_service,
     task_service,
     toolbox_calls,
+    worker_service,
 )
 
 _logger = logging.getLogger("process")
@@ -47,6 +48,9 @@ def _plan(task_id: int) -> int:
         task = EnrichmentTask.objects.select_for_update().get(pk=task_id)
         worker = Worker.objects.filter(key=task.type, active=True).first()
         if worker is None or task.status != TaskStatus.OPEN.value or (task.work_units.exists() and not task.batch_key):
+            return 0
+        if not worker_service.may_start(worker):
+            queue_log.log("held", task=task.pk, worker=task.type)
             return 0
         created = plan_units(task)
         queue_log.log("planned", task=task.pk, worker=task.type, lane=task.lane, units=created)
