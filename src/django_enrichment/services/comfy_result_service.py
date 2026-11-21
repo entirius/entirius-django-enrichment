@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from django.conf import settings
+from django.db.models import OuterRef, QuerySet, Subquery
 
 from django_enrichment.enums import ProposalStatus
 from django_enrichment.kinds.base import SubjectError
@@ -52,17 +53,32 @@ def find(key: ResultKey) -> ComfyResult | None:
 
 
 def save(key: ResultKey, **values) -> ComfyResult:
-    """Create or update the row of `key`; `values` = `source`, `metrics`, `verdict`, `reason`, `worker_version`."""
+    """Create or update the row of `key`; `values` = `source`, `metrics`, `verdict`, `reason`, `worker_version`, `score`, `task`
+    (the task that judged it last)."""
     result, _ = ComfyResult.objects.update_or_create(**_fields(key), defaults=values)
     return result
 
 
 def checked(*, worker_key: str, run_hash: str, worker_version: int, sha1s: set[str]) -> set[tuple[str, str]]:
-    """The `(subject_ref, input_sha1)` pairs among `sha1s` that have a result under this run hash and worker version."""
+    """The `(subject_ref, input_sha1)` pairs among `sha1s` whose result under this run hash and worker version is the
+    product's newest: a picture that came back after another one (A, B, A) is due again, so its re-judged result
+    becomes the newest and the list shows the picture the product has now."""
     rows = ComfyResult.objects.filter(
         worker_key=worker_key, run_hash=run_hash, worker_version=worker_version, input_sha1__in=sha1s
-    )
+    ).filter(pk=Subquery(latest_of_product()))
     return set(rows.values_list("subject_ref", "input_sha1"))
+
+
+def latest_of_product() -> QuerySet[ComfyResult]:
+    """Subquery: the pk of the newest result of the outer row's product and worker."""
+    same = ComfyResult.objects.filter(worker_key=OuterRef("worker_key"), subject_ref=OuterRef("subject_ref"))
+    return same.order_by("-modified_at", "-pk").values("pk")[:1]
+
+
+def score_of(metrics: dict, key: str) -> float | None:
+    """`metrics[key]` as the stored score: a real number (not a bool), else None."""
+    value = (metrics or {}).get(key)
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def proposal_exists(target_module: str, subject_ref: str, target_kind: str, locator: dict) -> bool:

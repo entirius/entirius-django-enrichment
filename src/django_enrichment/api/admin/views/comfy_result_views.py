@@ -1,0 +1,131 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+"""Admin API — what the `comfy` workers found (`ComfyResult`): the list with score and thumbnail, verdict totals.
+
+Read-only: results are written by the kind only. Thin layer: ZERO Django models imported.
+"""
+
+import csv
+
+from django.http import StreamingHttpResponse
+from django_utils.api.v2_errors import raise_pydantic_as_drf
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from pydantic import ValidationError
+from rest_framework import renderers, viewsets
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from django_enrichment.api.admin.pagination import AdminPageNumberPagination
+from django_enrichment.api.admin.permissions import IsAdminUser
+from django_enrichment.api.admin.views._helpers import raise_as_drf
+from django_enrichment.schemas.requests import ComfyResultsQuery
+from django_enrichment.schemas.responses import (
+    ComfyResultListResponse,
+    ComfyResultResponse,
+    ComfyVerdictTotalsResponse,
+)
+from django_enrichment.services import comfy_results_query
+
+_TAGS = ["Enrichment Comfy Results"]
+_TYPES = {"task": int, "score_min": float, "score_max": float, "latest": bool}
+_PARAMS = [
+    OpenApiParameter(name, _TYPES.get(name, str), OpenApiParameter.QUERY, required=False)
+    for name in ComfyResultsQuery.model_fields
+]
+
+
+def _query(request: Request) -> ComfyResultsQuery:
+    fields = ComfyResultsQuery.model_fields
+    params = {key: value for key, value in request.query_params.dict().items() if key in fields and value != ""}
+    try:
+        return ComfyResultsQuery(**params)
+    except ValidationError as exc:
+        raise_pydantic_as_drf(exc)
+
+
+def _filter(query: ComfyResultsQuery) -> comfy_results_query.ResultFilter:
+    return comfy_results_query.ResultFilter(**query.model_dump(exclude={"ordering"}))
+
+
+class _CsvRenderer(renderers.BaseRenderer):
+    """Lets `Accept: text/csv` through content negotiation; the export answers a streamed response itself."""
+
+    media_type = "text/csv"
+    format = "csv"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):  # noqa: ARG002 — never rendered
+        return data
+
+
+class ComfyResultViewSet(viewsets.ViewSet):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminUser]
+    access_area = "enrichment.proposals"
+    serializer_class = None
+
+    def get_renderers(self):
+        if self.action == "export":
+            return [_CsvRenderer(), *super().get_renderers()]
+        return super().get_renderers()
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="List comfy results",
+        parameters=_PARAMS,
+        responses={200: ComfyResultListResponse, 400: None},
+    )
+    def list(self, request: Request) -> Response:
+        query = _query(request)
+        try:
+            rows = comfy_results_query.list_results(_filter(query), query.ordering)
+        except ValueError as exc:
+            raise_as_drf(exc)
+        paginator = AdminPageNumberPagination()
+        page = paginator.paginate_queryset(rows, request)
+        items = [ComfyResultResponse(**row).model_dump(mode="json") for row in comfy_results_query.describe(page)]
+        return paginator.get_paginated_response(items)
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Comfy results per verdict and per escalation reason",
+        parameters=_PARAMS,
+        responses={200: ComfyVerdictTotalsResponse, 400: None},
+    )
+    def verdicts(self, request: Request) -> Response:
+        totals = comfy_results_query.totals(_filter(_query(request)))
+        body = ComfyVerdictTotalsResponse(total=sum(totals["verdicts"].values()), **totals)
+        return Response(body.model_dump(mode="json"))
+
+    @extend_schema(
+        tags=_TAGS,
+        summary="Comfy results as CSV (the whole filtered list, at most 50 000 rows)",
+        parameters=_PARAMS,
+        responses={(200, "text/csv"): str, 400: None},
+    )
+    def export(self, request: Request) -> StreamingHttpResponse:
+        query = _query(request)
+        try:
+            rows = comfy_results_query.export_rows(_filter(query), query.ordering)
+            first = next(rows)  # validates the filters before the response starts
+        except ValueError as exc:
+            raise_as_drf(exc)
+        writer = csv.writer(_Echo())
+        lines = (writer.writerow(row) for row in _chain(first, rows))
+        response = StreamingHttpResponse(lines, content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = 'attachment; filename="comfy-results.csv"'
+        return response
+
+
+class _Echo:
+    """A file-like object whose `write` hands the line back: `csv.writer` over a streamed response."""
+
+    def write(self, value: str) -> str:
+        return value
+
+
+def _chain(first: list, rest):
+    yield first
+    yield from rest

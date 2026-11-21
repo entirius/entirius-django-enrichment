@@ -4,8 +4,9 @@
 
 """`enrichment.comfy_spawn` — the next batch of main pictures for every active `comfy` worker.
 
-The host schedules it, and its schedule is the time window: `crontab(minute="*/15", hour="22-23,0-5")` keeps a
-shared GPU busy only at night. The units it spawns run on the bulk lane (`ENRICHMENT_BULK_QUEUE`, concurrency 1).
+The host schedules it around the clock (`crontab(minute="*/15")`); each worker's `window` option says when it may
+start a task (`22:00-06:00` keeps a shared GPU busy only at night) and `batch` how many pictures one task takes. The
+units run on the bulk lane (`ENRICHMENT_BULK_QUEUE`, concurrency 1).
 """
 
 from celery import shared_task
